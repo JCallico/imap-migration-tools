@@ -155,6 +155,22 @@ def message_exists_in_folder(dest_conn, msg_id, src_size):
         return False
     return False
 
+def sanitize_filename(filename):
+    """
+    Sanitizes a string to be safe for use as a filename.
+    Removes/replaces characters that are illegal in file systems.
+    Truncates to 250 chars.
+    """
+    if not filename:
+        return "untitled"
+    # Replace invalid characters with underscore
+    # Invalid: < > : " / \ | ? * and control chars
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', filename)
+    # Strip leading/trailing whitespaces/dots
+    s = s.strip().strip('.')
+    # Ensure not empty and not too long
+    return s[:250] if s else "untitled"
+
 def detect_trash_folder(imap_conn):
     """
     Attempts to identify the Trash folder in the account.

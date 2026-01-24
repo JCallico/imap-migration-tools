@@ -28,6 +28,12 @@ This repository contains a set of Python scripts designed to migrate emails betw
 3. **`count_imap_emails.py`** (The Investigator)
    - A simple utility to connect to a single account and count emails in all folders. Useful for initial assessment.
 
+4. **`backup_imap_emails.py`** (The Backup)
+   - Downloads emails from an IMAP account to a local disk.
+   - **Format**: Saves emails as individual `.eml` files (RFC 5322), compatible with Outlook, Thunderbird, and Apple Mail.
+   - **Structure**: Replicates the IMAP folder hierarchy locally.
+   - **Incremental**: Skips emails that have already been downloaded (based on UID) so you can run it periodically to fetch new messages.
+
 ## Getting Started
 
 ### 1. Prerequisites
@@ -129,6 +135,11 @@ python3 compare_imap_folders.py --src-host "imap.gmail.com" --dest-host "imap.ot
 python3 count_imap_emails.py --host "imap.gmail.com" --user "me@gmail.com" --pass "secret"
 ```
 
+**Backup:**
+```bash
+python3 backup_imap_emails.py --src-user "me@gmail.com" --dest-path "./my_backup"
+```
+
 ## Usage Examples
 
 ### 1. Full Migration
@@ -165,6 +176,20 @@ Folder Name             | Source Count | Dest Count | Status
 ------------------------------------------------------------
 INBOX                   | 1250         | 1250       | MATCH
 ...
+```
+
+### 5. Local Backup
+Download all your emails to your computer as `.eml` files.
+```bash
+# Set destination path
+export BACKUP_LOCAL_PATH="./backup_folder"
+python3 backup_imap_emails.py
+
+# Or via command line
+python3 backup_imap_emails.py --dest-path "/Users/jdoe/Documents/Emails" 
+
+# Backup single folder
+python3 backup_imap_emails.py --dest-path "./my_backup" "[Gmail]/Sent Mail"
 ```
 
 ## Troubleshooting
