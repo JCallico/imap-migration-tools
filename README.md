@@ -17,6 +17,7 @@ This repository contains a set of Python scripts designed to migrate emails betw
    - **Smart De-duplication**: Checks if a message already exists in the destination (matching Message-ID and Size) and skips it if found.
    - **Robust**: Preserves read/unread status (flags) and original dates.
    - **Cleanup**: Optionally deletes messages from the source after successful transfer (effectively a "Move" operation).
+     - *Improved for Gmail*: Automatically detects "Trash" folders to ensure emails are properly binned rather than just archived.
    - **Configurable**: Adjustable concurrency and batch sizes to respect server rate limits.
 
 2. **`compare_imap_folders.py`** (The Validator)
@@ -177,6 +178,12 @@ INBOX                   | 1250         | 1250       | MATCH
 
 - **Timeouts / Socket Errors**:
   Migrating 100k+ emails is network intensive. If the script crashes, simply run it again. The built-in de-duplication will skip already migrated messages and resume where it left off.
+
+### Gmail "All Mail" & Deletion
+If you are migrating **from** a Gmail account and using the `--delete` option:
+- The script attempts to detect your Trash folder (e.g., `[Gmail]/Trash` or `[Gmail]/Bin`).
+- Instead of simply marking emails as deleted (which Gmail often treats as "Archive"), the script **copies the email to the Trash folder** and then marks the original as deleted.
+- This ensures that the storage count in `[Gmail]/All Mail` actually decreases, as the emails are moved to the Trash (which is auto-emptied by Google after 30 days) rather than remaining in your "All Mail" archive.
 
 ## License
 
