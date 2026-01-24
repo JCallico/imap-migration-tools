@@ -23,15 +23,8 @@ Usage:
 import imaplib
 import os
 import sys
-import re
-
-def normalize_folder_name(folder_info_str):
-    # Regex to extract folder name: (flags) "delimiter" name
-    list_pattern = re.compile(r'\((?P<flags>.*?)\) "(?P<delimiter>.*)" "?(?P<name>.*)"?')
-    match = list_pattern.search(folder_info_str)
-    if match:
-        return match.group('name').strip('"')
-    return folder_info_str.split()[-1].strip('"')
+import argparse
+import imap_common
 
 def get_email_count(conn, folder_name):
     try:
@@ -51,20 +44,41 @@ def get_email_count(conn, folder_name):
         # print(f"Error checking {folder_name}: {e}")
         return None
 
-def main():
-    # Source Credentials
-    SRC_HOST = os.getenv("SRC_IMAP_SERVER")
-    SRC_USER = os.getenv("SRC_IMAP_USERNAME")
-    SRC_PASS = os.getenv("SRC_IMAP_PASSWORD")
+def parser = argparse.ArgumentParser(description="Compare email counts between two IMAP accounts.")
 
-    # Dest Credentials
-    DEST_HOST = os.getenv("DEST_IMAP_SERVER")
-    DEST_USER = os.getenv("DEST_IMAP_USERNAME")
-    DEST_PASS = os.getenv("DEST_IMAP_PASSWORD")
+    # Source args
+    parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_SERVER"), help="Source IMAP Server")
+    parser.add_argument("--src-user", default=os.getenv("SRC_IMAP_USERNAME"), help="Source Username")
+    parser.add_argument("--src-pass", default=os.getenv("SRC_IMAP_PASSWORD"), help="Source Password")
+    
+    # Dest args
+    parser.add_argument("--dest-host", default=os.getenv("DEST_IMAP_SERVER"), help="Destination IMAP Server")
+    parser.add_argument("--dest-user", default=os.getenv("DEST_IMAP_USERNAME"), help="Destination Username")
+    parser.add_argument("--dest-pass", default=os.getenv("DEST_IMAP_PASSWORD"), help="Destination Password")
 
-    if not all([SRC_HOST, SRC_USER, SRC_PASS, DEST_HOST, DEST_USER, DEST_PASS]):
-        print("Error: Missing environment variables.")
-        print("Please ensure SRC_* and DEST_* variables are set (same as migration script).")
+    args = parser.parse_args()
+
+    # Assign to variables
+    SRC_HOST = args.src_host
+    SRC_USER = args.src_user
+    SRC_PASS = args.src_pass
+    DEST_HOST = args.dest_host
+    DEST_USER = args.dest_user
+    DEST_PASS = args.dest_pass
+
+    # Validation
+    missing_vars = []
+    if not SRC_HOST: missing_vars.append("SRC_IMAP_SERVER")
+    if not SRC_USER: missing_vars.append("SRC_IMAP_USERNAME")
+    if not SRC_PASS: missing_vars.append("SRC_IMAP_PASSWORD")
+    if not DEST_HOST: missing_vars.append("DEST_IMAP_SERVER")
+    if not DEST_USER: missing_vars.append("DEST_IMAP_USERNAME")
+    if not DEST_PASS: missing_vars.append("DEST_IMAP_PASSWORD")
+
+    if missing_vars:
+        print(f"Error: Missing configuration variables: {', '.join(missing_vars)}")
+        print("Please provide them via environment variables or command-line arguments.") "DEST_IMAP_SERVER", "DEST_IMAP_USERNAME", "DEST_IMAP_PASSWORD"
+    ]):
         sys.exit(1)
 
     print("\n--- Configuration Comparison Summary ---")
@@ -78,13 +92,13 @@ def main():
     try:
         # Connect to Source
         print("Connecting to Source...")
-        src = imaplib.IMAP4_SSL(SRC_HOST)
-        src.login(SRC_USER, SRC_PASS)
+        src = imap_common.get_imap_connection(SRC_HOST, SRC_USER, SRC_PASS)
+        if not src: return
 
         # Connect to Dest
         print("Connecting to Destination...")
-        dest = imaplib.IMAP4_SSL(DEST_HOST)
-        dest.login(DEST_USER, DEST_PASS)
+        dest = imap_common.get_imap_connection(DEST_HOST, DEST_USER, DEST_PASS)
+        if not dest: return
 
         # List Source Folders
         print("Listing folders in Source...")
@@ -104,8 +118,7 @@ def main():
 
         # Iterate through Source folders
         for folder_info in folders:
-            folder_info_str = folder_info.decode('utf-8')
-            folder_name = normalize_folder_name(folder_info_str)
+            folder_name = imap_common.normalize_folder_name(folder_info)
             
             # Get Counts
             src_count = get_email_count(src, folder_name)

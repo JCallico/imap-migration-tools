@@ -44,14 +44,15 @@ import sys
 import re
 import email
 from email.parser import BytesParser
-from email.header import decode_header
 import concurrent.futures
 import threading
+import argparse
+import imap_common
 
 # Configuration defaults
 DELETE_FROM_SOURCE_DEFAULT = False
-MAX_WORKERS = int(os.getenv("MAX_WORKERS", 10))  # Number of concurrent threads
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", 10))  # Emails per batch per thread
+MAX_WORKERS = 10  # Initial default, updated in main
+BATCH_SIZE = 10   # Initial default, updated in main
 
 # Thread-local storage for IMAP connections
 thread_local = threading.local()
@@ -64,125 +65,25 @@ def safe_print(message):
     with print_lock:
         print(f"[{short_name}] {message}")
 
-def decode_mime_header(header_value):
-    if not header_value:
-        return "(No Subject)"
-    try:
-        decoded_list = decode_header(header_value)
-        default_charset = 'utf-8'
-        text_parts = []
-        for bytes_data, encoding in decoded_list:
-            if isinstance(bytes_data, bytes):
-                if encoding:
-                    try:
-                        text_parts.append(bytes_data.decode(encoding, errors='ignore'))
-                    except LookupError:
-                        text_parts.append(bytes_data.decode(default_charset, errors='ignore'))
-                else:
-                    text_parts.append(bytes_data.decode(default_charset, errors='ignore'))
-            else:
-                text_parts.append(str(bytes_data))
-        return "".join(text_parts)
-    except Exception:
-        return str(header_value)
-
-def get_connection(host, user, password):
-    try:
-        conn = imaplib.IMAP4_SSL(host)
-        conn.login(user, password)
-        return conn
-    except Exception as e:
-        safe_print(f"Connection error to {host}: {e}")
-        return None
-
 def get_thread_connections(src_conf, dest_conf):
     # Initialize connections for this thread if they don't exist or are closed
     if not hasattr(thread_local, "src") or thread_local.src is None:
-        thread_local.src = get_connection(*src_conf)
+        thread_local.src = imap_common.get_imap_connection(*src_conf)
     if not hasattr(thread_local, "dest") or thread_local.dest is None:
-        thread_local.dest = get_connection(*dest_conf)
+        thread_local.dest = imap_common.get_imap_connection(*dest_conf)
     
     # Simple check if alive (noop)
     try:
         if thread_local.src: thread_local.src.noop()
     except:
-        thread_local.src = get_connection(*src_conf)
+        thread_local.src = imap_common.get_imap_connection(*src_conf)
 
     try:
         if thread_local.dest: thread_local.dest.noop()
     except:
-        thread_local.dest = get_connection(*dest_conf)
+        thread_local.dest = imap_common.get_imap_connection(*dest_conf)
 
     return thread_local.src, thread_local.dest
-
-def normalize_folder_name(folder_info_str):
-    # Regex to extract folder name: (flags) "delimiter" name
-    list_pattern = re.compile(r'\((?P<flags>.*?)\) "(?P<delimiter>.*)" "?(?P<name>.*)"?')
-    match = list_pattern.search(folder_info_str)
-    if match:
-        return match.group('name').strip('"')
-    return folder_info_str.split()[-1].strip('"')
-
-def get_msg_details(imap_conn, uid):
-    # Fetch headers (ID, Subject, Size)
-    # BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT)] prevents marking as read
-    resp, data = imap_conn.uid('fetch', uid, '(RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT)])')
-    
-    if resp != 'OK':
-        return None, None, None
-        
-    msg_id = None
-    subject = "(No Subject)"
-    size = 0
-    
-    for item in data:
-        if isinstance(item, tuple):
-            content = item[0].decode('utf-8', errors='ignore')
-            
-            # Parse Size
-            size_match = re.search(r'RFC822\.SIZE\s+(\d+)', content)
-            if size_match:
-                size = int(size_match.group(1))
-            
-            # Parse Headers
-            msg_bytes = item[1]
-            parser = BytesParser()
-            email_obj = parser.parsebytes(msg_bytes)
-            msg_id = email_obj.get('Message-ID')
-            raw_subject = email_obj.get('Subject')
-            if raw_subject:
-                subject = decode_mime_header(raw_subject)
-            
-    return msg_id, size, subject
-
-def message_exists_in_dest(dest_conn, msg_id, src_size):
-    if not msg_id:
-        return False
-    
-    clean_id = msg_id.replace('"', '\\"')
-    try:
-        typ, data = dest_conn.search(None, f'(HEADER Message-ID "{clean_id}")')
-        if typ != 'OK':
-            return False
-            
-        dest_ids = data[0].split()
-        if not dest_ids:
-            return False
-            
-        for did in dest_ids:
-            resp, items = dest_conn.fetch(did, '(RFC822.SIZE)')
-            if resp == 'OK':
-                for item in items:
-                    if isinstance(item, bytes):
-                        content = item.decode('utf-8', errors='ignore')
-                    else: 
-                        content = item[0].decode('utf-8', errors='ignore')
-                    size_match = re.search(r'RFC822\.SIZE\s+(\d+)', content)
-                    if size_match and int(size_match.group(1)) == src_size:
-                        return True
-    except Exception:
-        return False
-    return False
 
 def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source):
     src, dest = get_thread_connections(src_conf, dest_conf)
@@ -201,14 +102,14 @@ def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source):
     deleted_count = 0
     for uid in uids:
         try:
-            msg_id, size, subject = get_msg_details(src, uid)
+            msg_id, size, subject = imap_common.get_msg_details(src, uid)
             
             # Format size for display
             size_str = f"{size/1024:.1f}KB" if size else "0KB"
             
             is_duplicate = False
             if msg_id and size:
-                is_duplicate = message_exists_in_dest(dest, msg_id, size)
+                is_duplicate = imap_common.message_exists_in_folder(dest, msg_id, size)
             
             if is_duplicate:
                 safe_print(f"[{folder_name}] {'SKIP (Dup)':<18} | {size_str:<8} | {subject[:40]}")
@@ -328,20 +229,62 @@ def migrate_folder(src, dest, folder_name, delete_from_source, src_conf, dest_co
             safe_print(f"Error Expunging: {e}")
 
 def main():
-    # Source Credentials
-    SRC_HOST = os.getenv("SRC_IMAP_SERVER")
-    SRC_USER = os.getenv("SRC_IMAP_USERNAME")
-    SRC_PASS = os.getenv("SRC_IMAP_PASSWORD")
-
-    # Dest Credentials
-    DEST_HOST = os.getenv("DEST_IMAP_SERVER")
-    DEST_USER = os.getenv("DEST_IMAP_USERNAME")
-    DEST_PASS = os.getenv("DEST_IMAP_PASSWORD")
+    parser = argparse.ArgumentParser(description="Migrate emails between IMAP accounts.")
     
-    DELETE_SOURCE = os.getenv("DELETE_FROM_SOURCE", "false").lower() == "true"
+    # Positional arg for folder (optional) to keep backward compatibility with previous quick-fix
+    parser.add_argument("folder", nargs="?", help="Specific folder to migrate (e.g. '[Gmail]/Important')")
 
-    if not all([SRC_HOST, SRC_USER, SRC_PASS, DEST_HOST, DEST_USER, DEST_PASS]):
-        print("Error: Missing environment variables.")
+    # Source args
+    parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_SERVER"), help="Source IMAP Server")
+    parser.add_argument("--src-user", default=os.getenv("SRC_IMAP_USERNAME"), help="Source Username")
+    parser.add_argument("--src-pass", default=os.getenv("SRC_IMAP_PASSWORD"), help="Source Password")
+    
+    # Dest args
+    parser.add_argument("--dest-host", default=os.getenv("DEST_IMAP_SERVER"), help="Destination IMAP Server")
+    parser.add_argument("--dest-user", default=os.getenv("DEST_IMAP_USERNAME"), help="Destination Username")
+    parser.add_argument("--dest-pass", default=os.getenv("DEST_IMAP_PASSWORD"), help="Destination Password")
+
+    # Options
+    # Check env var for boolean default (msg "true" -> True)
+    env_delete = os.getenv("DELETE_FROM_SOURCE", "false").lower() == "true"
+    parser.add_argument("--delete", action="store_true", default=env_delete, help="Delete from source after migration (default: False)")
+    
+    parser.add_argument("--workers", type=int, default=int(os.getenv("MAX_WORKERS", 10)), help="Number of concurrent threads")
+    parser.add_argument("--batch", type=int, default=int(os.getenv("BATCH_SIZE", 10)), help="Batch size per thread")
+
+    args = parser.parse_args()
+
+    # Assign to variables
+    SRC_HOST = args.src_host
+    SRC_USER = args.src_user
+    SRC_PASS = args.src_pass
+    DEST_HOST = args.dest_host
+    DEST_USER = args.dest_user
+    DEST_PASS = args.dest_pass
+    DELETE_SOURCE = args.delete
+    
+    # Folder priority: CLI Arg > Env Var
+    TARGET_FOLDER = args.folder
+    if not TARGET_FOLDER and os.getenv("MIGRATE_ONLY_FOLDER"):
+        TARGET_FOLDER = os.getenv("MIGRATE_ONLY_FOLDER")
+
+    # Update Globals
+    global MAX_WORKERS, BATCH_SIZE
+    MAX_WORKERS = args.workers
+    BATCH_SIZE = args.batch
+
+    # Validation
+    missing_vars = []
+    if not SRC_HOST: missing_vars.append("SRC_IMAP_SERVER")
+    if not SRC_USER: missing_vars.append("SRC_IMAP_USERNAME")
+    if not SRC_PASS: missing_vars.append("SRC_IMAP_PASSWORD")
+    if not DEST_HOST: missing_vars.append("DEST_IMAP_SERVER")
+    if not DEST_USER: missing_vars.append("DEST_IMAP_USERNAME")
+    if not DEST_PASS: missing_vars.append("DEST_IMAP_PASSWORD")
+
+    if missing_vars:
+        print(f"Error: Missing configuration variables: {', '.join(missing_vars)}")
+        print("Please provide them via environment variables or command-line arguments.")
         sys.exit(1)
 
     print("\n--- Configuration Summary ---")
@@ -350,6 +293,8 @@ def main():
     print(f"Destination Host: {DEST_HOST}")
     print(f"Destination User: {DEST_USER}")
     print(f"Delete fm Source: {DELETE_SOURCE}")
+    if TARGET_FOLDER:
+        print(f"Target Folder   : {TARGET_FOLDER}")
     print("-----------------------------\n")
 
     src_conf = (SRC_HOST, SRC_USER, SRC_PASS)
@@ -358,21 +303,28 @@ def main():
     try:
         # Initial connection to list folders
         safe_print("Connecting to Source to list folders...")
-        src_main = imaplib.IMAP4_SSL(SRC_HOST)
-        src_main.login(SRC_USER, SRC_PASS)
+        src_main = imap_common.get_imap_connection(SRC_HOST, SRC_USER, SRC_PASS)
+        if not src_main:
+             sys.exit(1)
         
         # We need a dummy dest connection just to pass to migrate_folder for folder creation checks?
-        # Actually migrate_folder spawns threads, but it does folder creation validation on main thread first
         safe_print("Connecting to Destination...")
-        dest_main = imaplib.IMAP4_SSL(DEST_HOST)
-        dest_main.login(DEST_USER, DEST_PASS)
+        dest_main = imap_common.get_imap_connection(DEST_HOST, DEST_USER, DEST_PASS)
+        if not dest_main:
+             sys.exit(1)
         
-        typ, folders = src_main.list()
-        
-        if typ == 'OK':
-            for folder_info in folders:
-                name = normalize_folder_name(folder_info.decode('utf-8'))
-                migrate_folder(src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf)
+        if TARGET_FOLDER:
+            # Migration for specific folder
+            safe_print(f"Starting migration for single folder: {TARGET_FOLDER}")
+            # Verify folder exists first? imaplib usually handles select error if not found
+            migrate_folder(src_main, dest_main, TARGET_FOLDER, DELETE_SOURCE, src_conf, dest_conf)
+        else:
+            # Migration for all folders
+            typ, folders = src_main.list()
+            if typ == 'OK':
+                for folder_info in folders:
+                    name = imap_common.normalize_folder_name(folder_info)
+                    migrate_folder(src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf)
         
         src_main.logout()
         dest_main.logout()

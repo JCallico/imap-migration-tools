@@ -21,17 +21,16 @@ Usage Example:
 import imaplib
 import os
 import sys
-import re
+import argparse
+import imap_common
 
 def count_emails(imap_server, username, password):
     try:
         # Connect to the IMAP server (using SSL)
         print(f"Connecting to {imap_server}...")
-        mail = imaplib.IMAP4_SSL(imap_server)
-
-        # Login
-        print(f"Logging in as {username}...")
-        mail.login(username, password)
+        mail = imap_common.get_imap_connection(imap_server, username, password)
+        if not mail:
+             return
 
         # List all mailboxes
         print("Listing mailboxes...")
@@ -45,30 +44,14 @@ def count_emails(imap_server, username, password):
         print(f"{'Folder Name':<40} {'Count':>10}")
         print("-" * 52)
         
-        # Regex to extract folder name: (flags) "delimiter" name
-        # Examples: 
-        # (\HasNoChildren) "/" "INBOX"  -> Name is "INBOX"
-        # (\HasNoChildren) "/" Drafts   -> Name is Drafts
-        list_pattern = re.compile(r'\((?P<flags>.*?)\) "(?P<delimiter>.*)" (?P<name>.*)')
-
         for folder_info in folders:
-            folder_info_str = folder_info.decode('utf-8')
-            match = list_pattern.search(folder_info_str)
-            if match:
-                folder_name = match.group('name')
-            else:
-                # Fallback: simple split if regex fails, assumed last part
-                # This might fail for names with spaces if not quoted properly, but list usually quotes them.
-                parts = folder_info_str.split()
-                folder_name = parts[-1]
-
-            # Display name (remove quotes for printing)
-            display_name = folder_name.strip('"')
+            folder_name = imap_common.normalize_folder_name(folder_info)
+            display_name = folder_name
 
             try:
                 # Select the mailbox (read-only is sufficient for counting)
                 # folder_name extracted from list usually handles quotes correctly for select
-                rv, _ = mail.select(folder_name, readonly=True)
+                rv, _ = mail.select(f'"{folder_name}"', readonly=True)
                 if rv != 'OK':
                     print(f"{display_name:<40} {'Skipped':>10}")
                     continue
@@ -100,16 +83,26 @@ def count_emails(imap_server, username, password):
         print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
-    # Configuration - Replace these with your details
-    # Ideally, load these from environment variables for security
-    IMAP_SERVER = os.getenv("IMAP_SERVER", "imap.gmail.com")
-    USERNAME = os.getenv("IMAP_USERNAME", "")
-    PASSWORD = os.getenv("IMAP_PASSWORD", "")
+    parser = argparse.ArgumentParser(description="Count emails in IMAP account.")
 
-    if PASSWORD == "your_password":
-        print("Please configure the script with your IMAP credentials.")
-        print("You can set environment variables IMAP_SERVER, IMAP_USERNAME, and IMAP_PASSWORD.")
-        print("Or edit the script directly (not recommended for shared code).")
+    # Try to unify var names for defaults. Priority: IMAP_* > SRC_IMAP_* > None
+    default_host = os.getenv("IMAP_SERVER") or os.getenv("SRC_IMAP_SERVER")
+    default_user = os.getenv("IMAP_USERNAME") or os.getenv("SRC_IMAP_USERNAME")
+    default_pass = os.getenv("IMAP_PASSWORD") or os.getenv("SRC_IMAP_PASSWORD")
+
+    parser.add_argument("--host", default=default_host, help="IMAP Server")
+    parser.add_argument("--user", default=default_user, help="Username")
+    parser.add_argument("--pass", dest="password", default=default_pass, help="Password")
+
+    args = parser.parse_args()
+
+    IMAP_SERVER = args.host
+    USERNAME = args.user
+    PASSWORD = args.password
+
+    if not all([IMAP_SERVER, USERNAME, PASSWORD]):
+        print("Error: Missing credentials.")
+        print("Please provide --host, --user, --pass via CLI or set IMAP_* / SRC_IMAP_* environment variables.")
         sys.exit(1)
 
     print("\n--- Configuration Summary ---")

@@ -64,11 +64,13 @@ sudo apt-get install python3
 
 ## Configuration & Running
 
-The scripts use environment variables for configuration. Here is how to set them and run the scripts on different operating systems.
+You can configure the scripts using **Environment Variables** (recommended for security) or **Command Line Arguments**.
 
-### Linux / macOS (Bash/Zsh)
+### Method 1: Environment Variables
 
-1. **Set Environment Variables:**
+#### Linux / macOS (Bash/Zsh)
+
+1. **Set Variables:**
    ```bash
    # Source Account
    export SRC_IMAP_SERVER="imap.gmail.com"
@@ -82,51 +84,77 @@ The scripts use environment variables for configuration. Here is how to set them
 
    # Options (Optional)
    export DELETE_FROM_SOURCE="false"  # Set to "true" to delete from source after copy
-   export MAX_WORKERS=4               # Reduce threads if hitting connection limits
+   export MAX_WORKERS=4               # Number of parallel threads
    export BATCH_SIZE=10               # Emails per batch
    ```
 
-2. **Run the Script:**
+2. **Run:**
    ```bash
    python3 migrate_imap_emails.py
    ```
 
-### Windows (PowerShell)
+#### Windows (PowerShell)
 
-1. **Set Environment Variables:**
+1. **Set Variables:**
    ```powershell
    # Source Account
    $env:SRC_IMAP_SERVER="imap.gmail.com"
    $env:SRC_IMAP_USERNAME="source@gmail.com"
    $env:SRC_IMAP_PASSWORD="your-app-password"
 
-   # Destination Account
-   $env:DEST_IMAP_SERVER="imap.destination.com"
-   $env:DEST_IMAP_USERNAME="dest@domain.com"
-   $env:DEST_IMAP_PASSWORD="dest-app-password"
-
-   # Options (Optional)
-   $env:DELETE_FROM_SOURCE="false"   # Set to "true" to delete from source after copy
-   $env:MAX_WORKERS=4                # Reduce threads if hitting connection limits
-   $env:BATCH_SIZE=10                # Emails per batch
+   # Same for DEST_* ...
    ```
 
-2. **Run the Script:**
+2. **Run:**
    ```powershell
    python migrate_imap_emails.py
    ```
 
-## Usage
+### Method 2: Command Line Arguments (Overrides)
+All scripts support command-line arguments which take precedence over environment variables.
 
-### 1. Run the Migration
-The main migration process. It will create folders on the destination if they don't exist.
+**Migration:**
+```bash
+python3 migrate_imap_emails.py --src-user "me@gmail.com" --dest-user "you@domain.com" --workers 4 --delete
+```
+
+**Comparison:**
+```bash
+python3 compare_imap_folders.py --src-host "imap.gmail.com" --dest-host "imap.other.com"
+```
+
+**Counting:**
+```bash
+python3 count_imap_emails.py --host "imap.gmail.com" --user "me@gmail.com" --pass "secret"
+```
+
+## Usage Examples
+
+### 1. Full Migration
+Migrate all folders from Source to Destination.
 ```bash
 python3 migrate_imap_emails.py
 ```
-*Note: If you interrupt the script (Ctrl+C), it handles the shutdown gracefully, finishing current batches before exiting.*
 
-### 2. Verify the Migration
-After migration, run this to see if the counts match up.
+### 2. Single Folder Migration
+Migrate ONLY a specific folder (e.g., trying to fix just "Important" or "Sent").
+```bash
+# Syntax: python3 migrate_imap_emails.py "[Folder Name]"
+python3 migrate_imap_emails.py "[Gmail]/Important"
+```
+
+### 3. Move Instead of Copy
+Migrate and **delete** from source immediately after verifying the copy.
+```bash
+# Using flag
+python3 migrate_imap_emails.py --delete
+
+# Or specific folder with delete
+python3 migrate_imap_emails.py "Inbox" --delete
+```
+
+### 4. Verify Migration
+Compare counts between source and destination.
 ```bash
 python3 compare_imap_folders.py
 ```
@@ -135,14 +163,7 @@ python3 compare_imap_folders.py
 Folder Name             | Source Count | Dest Count | Status
 ------------------------------------------------------------
 INBOX                   | 1250         | 1250       | MATCH
-[Gmail]/Sent Mail       | 5432         | 5432       | MATCH
-Archive                 | 200          | 150        | DIFF
-```
-
-### 3. Quick Count
-To just check the source mailbox:
-```bash
-python3 count_imap_emails.py
+...
 ```
 
 ## Troubleshooting
