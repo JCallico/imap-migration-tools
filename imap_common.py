@@ -154,3 +154,44 @@ def message_exists_in_folder(dest_conn, msg_id, src_size):
     except Exception:
         return False
     return False
+
+def detect_trash_folder(imap_conn):
+    """
+    Attempts to identify the Trash folder in the account.
+    Returns the folder name (str) or None if not found.
+    Checks for common names and SPECIAL-USE attributes.
+    """
+    try:
+        status, folders = imap_conn.list()
+        if status != 'OK':
+            return None
+    except Exception:
+        return None
+    
+    trash_candidates = ['[Gmail]/Trash', 'Trash', 'Deleted Items', 'Bin', '[Gmail]/Bin']
+    detected_by_flag = None
+    all_folder_names = []
+
+    for f in folders:
+        if isinstance(f, bytes):
+            f_str = f.decode('utf-8', errors='ignore')
+        else:
+            f_str = str(f)
+            
+        name = normalize_folder_name(f_str)
+        all_folder_names.append(name)
+        
+        # Check for SPECIAL-USE flag \Trash
+        # The flag is usually inside parentheses like (\HasNoChildren \Trash)
+        if '\\Trash' in f_str or '\\Bin' in f_str: 
+            detected_by_flag = name
+            
+    if detected_by_flag:
+        return detected_by_flag
+
+    # Check candidates
+    for candidate in trash_candidates:
+        if candidate in all_folder_names:
+            return candidate
+            
+    return None

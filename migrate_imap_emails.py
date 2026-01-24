@@ -85,7 +85,7 @@ def get_thread_connections(src_conf, dest_conf):
 
     return thread_local.src, thread_local.dest
 
-def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source):
+def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source, trash_folder=None):
     src, dest = get_thread_connections(src_conf, dest_conf)
     if not src or not dest:
         safe_print("Error: Could not establish connections in worker thread.")
@@ -115,6 +115,12 @@ def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source):
                 safe_print(f"[{folder_name}] {'SKIP (Dup)':<18} | {size_str:<8} | {subject[:40]}")
                 # If it's a duplicate, we can still delete source if requested
                 if delete_from_source:
+                    # Move to trash if configured
+                    if trash_folder and folder_name != trash_folder:
+                        try:
+                            src.uid('copy', uid, f'"{trash_folder}"')
+                        except Exception:
+                            pass
                     src.uid('store', uid, '+FLAGS', '(\\Deleted)')
                     deleted_count += 1
             else:
@@ -145,6 +151,12 @@ def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source):
                     safe_print(f"[{folder_name}] {'COPIED':<18} | {size_str:<8} | {subject[:40]}")
                     
                     if delete_from_source:
+                        # Move to trash if configured
+                        if trash_folder and folder_name != trash_folder:
+                            try:
+                                src.uid('copy', uid, f'"{trash_folder}"')
+                            except Exception:
+                                pass
                         src.uid('store', uid, '+FLAGS', '(\\Deleted)')
                         deleted_count += 1
 
@@ -158,7 +170,7 @@ def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source):
         except Exception as e:
             safe_print(f"[{folder_name}] ERROR Expunge: {e}")
 
-def migrate_folder(src, dest, folder_name, delete_from_source, src_conf, dest_conf):
+def migrate_folder(src, dest, folder_name, delete_from_source, src_conf, dest_conf, trash_folder=None):
     safe_print(f"--- Preparing Folder: {folder_name} ---")
     
     # Maintain folder structure
@@ -204,7 +216,8 @@ def migrate_folder(src, dest, folder_name, delete_from_source, src_conf, dest_co
                 folder_name, 
                 src_conf, 
                 dest_conf, 
-                delete_from_source
+                delete_from_source,
+                trash_folder
             ))
         
         # Wait for all batches to complete
@@ -307,6 +320,16 @@ def main():
         if not src_main:
              sys.exit(1)
         
+        # Detect Trash Folder if deletion is enabled
+        trash_folder = None
+        if DELETE_SOURCE:
+            safe_print("Deletion enabled. Attempting to detect Trash folder for proper moving...")
+            trash_folder = imap_common.detect_trash_folder(src_main)
+            if trash_folder:
+                safe_print(f"Trash folder detected: '{trash_folder}'. Deleted emails will be moved here first.")
+            else:
+                safe_print("Warning: Could not detect Trash folder. Emails will be marked \\Deleted only (standard IMAP delete).")
+        
         # We need a dummy dest connection just to pass to migrate_folder for folder creation checks?
         safe_print("Connecting to Destination...")
         dest_main = imap_common.get_imap_connection(DEST_HOST, DEST_USER, DEST_PASS)
@@ -317,14 +340,18 @@ def main():
             # Migration for specific folder
             safe_print(f"Starting migration for single folder: {TARGET_FOLDER}")
             # Verify folder exists first? imaplib usually handles select error if not found
-            migrate_folder(src_main, dest_main, TARGET_FOLDER, DELETE_SOURCE, src_conf, dest_conf)
+            migrate_folder(src_main, dest_main, TARGET_FOLDER, DELETE_SOURCE, src_conf, dest_conf, trash_folder)
         else:
             # Migration for all folders
             typ, folders = src_main.list()
             if typ == 'OK':
                 for folder_info in folders:
                     name = imap_common.normalize_folder_name(folder_info)
-                    migrate_folder(src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf)
+                    # Don't migrate the trash folder itself if we are moving TO it? 
+                    # Actually, user might want to migrate trash. 
+                    # But if we move emails into Trash while migrating Trash, we might get infinite loops?
+                    # Since we fetch UIDs at start of folder migration, it should be fine.
+                    migrate_folder(src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf, trash_folder)
         
         src_main.logout()
         dest_main.logout()
