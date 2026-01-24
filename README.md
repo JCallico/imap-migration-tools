@@ -80,12 +80,12 @@ You can configure the scripts using **Environment Variables** (recommended for s
 1. **Set Variables:**
    ```bash
    # Source Account
-   export SRC_IMAP_SERVER="imap.gmail.com"
+   export SRC_IMAP_HOST="imap.gmail.com"
    export SRC_IMAP_USERNAME="source@gmail.com"
    export SRC_IMAP_PASSWORD="your-app-password"
 
    # Destination Account
-   export DEST_IMAP_SERVER="imap.destination.com"
+   export DEST_IMAP_HOST="imap.destination.com"
    export DEST_IMAP_USERNAME="dest@domain.com"
    export DEST_IMAP_PASSWORD="dest-app-password"
 
@@ -105,7 +105,7 @@ You can configure the scripts using **Environment Variables** (recommended for s
 1. **Set Variables:**
    ```powershell
    # Source Account
-   $env:SRC_IMAP_SERVER="imap.gmail.com"
+   $env:SRC_IMAP_HOST="imap.gmail.com"
    $env:SRC_IMAP_USERNAME="source@gmail.com"
    $env:SRC_IMAP_PASSWORD="your-app-password"
 

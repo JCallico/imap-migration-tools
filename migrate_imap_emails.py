@@ -12,12 +12,12 @@ Features:
 
 Configuration (Environment Variables):
   Source Account:
-    SRC_IMAP_SERVER     : Source IMAP Host (e.g., imap.gmail.com)
+    SRC_IMAP_HOST       : Source IMAP Host (e.g., imap.gmail.com)
     SRC_IMAP_USERNAME   : Source Username/Email
     SRC_IMAP_PASSWORD   : Source Password (or App Password)
 
   Destination Account:
-    DEST_IMAP_SERVER    : Destination IMAP Host
+    DEST_IMAP_HOST      : Destination IMAP Host
     DEST_IMAP_USERNAME  : Destination Username/Email
     DEST_IMAP_PASSWORD  : Destination Password
 
@@ -28,10 +28,10 @@ Configuration (Environment Variables):
     BATCH_SIZE          : Number of emails to process in a batch per thread (default: 10).
 
 Usage Example:
-  export SRC_IMAP_SERVER="imap.gmail.com"
+  export SRC_IMAP_HOST="imap.gmail.com"
   export SRC_IMAP_USERNAME="user@gmail.com"
   export SRC_IMAP_PASSWORD="secretpassword"
-  export DEST_IMAP_SERVER="imap.other.com"
+  export DEST_IMAP_HOST="imap.other.com"
   export DEST_IMAP_USERNAME="user@other.com"
   export DEST_IMAP_PASSWORD="otherpassword"
   
@@ -248,12 +248,12 @@ def main():
     parser.add_argument("folder", nargs="?", help="Specific folder to migrate (e.g. '[Gmail]/Important')")
 
     # Source args
-    parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_SERVER"), help="Source IMAP Server")
+    parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_HOST"), help="Source IMAP Host")
     parser.add_argument("--src-user", default=os.getenv("SRC_IMAP_USERNAME"), help="Source Username")
     parser.add_argument("--src-pass", default=os.getenv("SRC_IMAP_PASSWORD"), help="Source Password")
     
     # Dest args
-    parser.add_argument("--dest-host", default=os.getenv("DEST_IMAP_SERVER"), help="Destination IMAP Server")
+    parser.add_argument("--dest-host", default=os.getenv("DEST_IMAP_HOST"), help="Destination IMAP Host")
     parser.add_argument("--dest-user", default=os.getenv("DEST_IMAP_USERNAME"), help="Destination Username")
     parser.add_argument("--dest-pass", default=os.getenv("DEST_IMAP_PASSWORD"), help="Destination Password")
 
@@ -288,10 +288,10 @@ def main():
 
     # Validation
     missing_vars = []
-    if not SRC_HOST: missing_vars.append("SRC_IMAP_SERVER")
+    if not SRC_HOST: missing_vars.append("SRC_IMAP_HOST")
     if not SRC_USER: missing_vars.append("SRC_IMAP_USERNAME")
     if not SRC_PASS: missing_vars.append("SRC_IMAP_PASSWORD")
-    if not DEST_HOST: missing_vars.append("DEST_IMAP_SERVER")
+    if not DEST_HOST: missing_vars.append("DEST_IMAP_HOST")
     if not DEST_USER: missing_vars.append("DEST_IMAP_USERNAME")
     if not DEST_PASS: missing_vars.append("DEST_IMAP_PASSWORD")
 
@@ -301,7 +301,7 @@ def main():
         sys.exit(1)
 
     print("\n--- Configuration Summary ---")
-    print(f"Source Server   : {SRC_HOST}")
+    print(f"Source Host     : {SRC_HOST}")
     print(f"Source User     : {SRC_USER}")
     print(f"Destination Host: {DEST_HOST}")
     print(f"Destination User: {DEST_USER}")

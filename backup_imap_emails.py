@@ -12,7 +12,7 @@ Features:
 - Parallel Processing: Uses multithreading for fast downloads.
 
 Configuration:
-  SRC_IMAP_SERVER, SRC_IMAP_USERNAME, SRC_IMAP_PASSWORD: Source credentials.
+  SRC_IMAP_HOST, SRC_IMAP_USERNAME, SRC_IMAP_PASSWORD: Source credentials.
   BACKUP_LOCAL_PATH: Destination local directory.
   
 Usage:
@@ -215,7 +215,7 @@ def main():
     parser = argparse.ArgumentParser(description="Backup IMAP emails to local .eml files.")
     
     # Source
-    parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_SERVER"), help="Source IMAP Server")
+    parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_HOST"), help="Source IMAP Server")
     parser.add_argument("--src-user", default=os.getenv("SRC_IMAP_USERNAME"), help="Source Username")
     parser.add_argument("--src-pass", default=os.getenv("SRC_IMAP_PASSWORD"), help="Source Password")
     
@@ -232,7 +232,7 @@ def main():
     
     # Validate
     missing = []
-    if not args.src_host: missing.append("SRC_IMAP_SERVER")
+    if not args.src_host: missing.append("SRC_IMAP_HOST")
     if not args.src_user: missing.append("SRC_IMAP_USERNAME")
     if not args.src_pass: missing.append("SRC_IMAP_PASSWORD")
     
@@ -261,12 +261,13 @@ def main():
             print(f"Error creating backup directory: {e}")
             sys.exit(1)
             
-    print("\n--- Backup Configuration ---")
-    print(f"Source: {args.src_host} ({args.src_user})")
-    print(f"Destination: {local_path}")
+    print("\n--- Configuration Summary ---")
+    print(f"Source Host     : {args.src_host}")
+    print(f"Source User     : {args.src_user}")
+    print(f"Destination Path: {local_path}")
     if args.folder:
-        print(f"Folder: {args.folder}")
-    print("----------------------------\n")
+        print(f"Target Folder   : {args.folder}")
+    print("-----------------------------\n")
             
     try:
         src = imap_common.get_imap_connection(*src_conf)

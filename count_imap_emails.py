@@ -6,12 +6,12 @@ and counts the number of emails in each. It provides a progressive output of cou
 per folder and a grand total at the end.
 
 Configuration (Environment Variables):
-  IMAP_SERVER   : IMAP Host (e.g., imap.gmail.com)
+  IMAP_HOST     : IMAP Host (e.g., imap.gmail.com)
   IMAP_USERNAME : Username/Email
   IMAP_PASSWORD : Password (or App Password)
 
 Usage Example:
-  export IMAP_SERVER="imap.gmail.com"
+  export IMAP_HOST="imap.gmail.com"
   export IMAP_USERNAME="user@gmail.com"
   export IMAP_PASSWORD="secretpassword"
   
@@ -86,7 +86,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Count emails in IMAP account.")
 
     # Try to unify var names for defaults. Priority: IMAP_* > SRC_IMAP_* > None
-    default_host = os.getenv("IMAP_SERVER") or os.getenv("SRC_IMAP_SERVER")
+    default_host = os.getenv("IMAP_HOST") or os.getenv("SRC_IMAP_HOST")
     default_user = os.getenv("IMAP_USERNAME") or os.getenv("SRC_IMAP_USERNAME")
     default_pass = os.getenv("IMAP_PASSWORD") or os.getenv("SRC_IMAP_PASSWORD")
 
@@ -106,8 +106,8 @@ if __name__ == "__main__":
         sys.exit(1)
 
     print("\n--- Configuration Summary ---")
-    print(f"IMAP Server : {IMAP_SERVER}")
-    print(f"Username    : {USERNAME}")
+    print(f"Host            : {IMAP_SERVER}")
+    print(f"User            : {USERNAME}")
     print("-----------------------------\n")
 
     count_emails(IMAP_SERVER, USERNAME, PASSWORD)
