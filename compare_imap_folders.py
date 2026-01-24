@@ -44,7 +44,8 @@ def get_email_count(conn, folder_name):
         # print(f"Error checking {folder_name}: {e}")
         return None
 
-def parser = argparse.ArgumentParser(description="Compare email counts between two IMAP accounts.")
+def main():
+    parser = argparse.ArgumentParser(description="Compare email counts between two IMAP accounts.")
 
     # Source args
     parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_SERVER"), help="Source IMAP Server")
@@ -77,8 +78,7 @@ def parser = argparse.ArgumentParser(description="Compare email counts between t
 
     if missing_vars:
         print(f"Error: Missing configuration variables: {', '.join(missing_vars)}")
-        print("Please provide them via environment variables or command-line arguments.") "DEST_IMAP_SERVER", "DEST_IMAP_USERNAME", "DEST_IMAP_PASSWORD"
-    ]):
+        print("Please provide them via environment variables or command-line arguments.")
         sys.exit(1)
 
     print("\n--- Configuration Comparison Summary ---")
