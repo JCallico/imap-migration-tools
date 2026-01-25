@@ -338,6 +338,10 @@ def main():
         
         if TARGET_FOLDER:
             # Migration for specific folder
+            if DELETE_SOURCE and trash_folder and TARGET_FOLDER == trash_folder:
+                 safe_print(f"Aborting: Cannot migrate Trash folder '{TARGET_FOLDER}' while --delete is enabled. This would create a loop.")
+                 sys.exit(1)
+            
             safe_print(f"Starting migration for single folder: {TARGET_FOLDER}")
             # Verify folder exists first? imaplib usually handles select error if not found
             migrate_folder(src_main, dest_main, TARGET_FOLDER, DELETE_SOURCE, src_conf, dest_conf, trash_folder)
@@ -347,10 +351,13 @@ def main():
             if typ == 'OK':
                 for folder_info in folders:
                     name = imap_common.normalize_folder_name(folder_info)
-                    # Don't migrate the trash folder itself if we are moving TO it? 
-                    # Actually, user might want to migrate trash. 
-                    # But if we move emails into Trash while migrating Trash, we might get infinite loops?
-                    # Since we fetch UIDs at start of folder migration, it should be fine.
+                    
+                    # Auto-skip trash folder if we are utilizing it as a dump target
+                    # This prevents re-migrating the emails we just moved to trash
+                    if DELETE_SOURCE and trash_folder and name == trash_folder:
+                        safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
+                        continue
+
                     migrate_folder(src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf, trash_folder)
         
         src_main.logout()
