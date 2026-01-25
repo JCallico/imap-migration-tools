@@ -14,15 +14,17 @@ Usage Example:
   export IMAP_HOST="imap.gmail.com"
   export IMAP_USERNAME="user@gmail.com"
   export IMAP_PASSWORD="secretpassword"
-  
+
   python3 count_imap_emails.py
 """
 
+import argparse
 import imaplib
 import os
 import sys
-import argparse
+
 import imap_common
+
 
 def count_emails(imap_server, username, password):
     try:
@@ -30,12 +32,12 @@ def count_emails(imap_server, username, password):
         print(f"Connecting to {imap_server}...")
         mail = imap_common.get_imap_connection(imap_server, username, password)
         if not mail:
-             return
+            return
 
         # List all mailboxes
         print("Listing mailboxes...")
         status, folders = mail.list()
-        
+
         if status != "OK":
             print("Failed to list mailboxes.")
             return
@@ -43,7 +45,7 @@ def count_emails(imap_server, username, password):
         total_all_folders = 0
         print(f"{'Folder Name':<40} {'Count':>10}")
         print("-" * 52)
-        
+
         for folder_info in folders:
             folder_name = imap_common.normalize_folder_name(folder_info)
             display_name = folder_name
@@ -52,13 +54,13 @@ def count_emails(imap_server, username, password):
                 # Select the mailbox (read-only is sufficient for counting)
                 # folder_name extracted from list usually handles quotes correctly for select
                 rv, _ = mail.select(f'"{folder_name}"', readonly=True)
-                if rv != 'OK':
+                if rv != "OK":
                     print(f"{display_name:<40} {'Skipped':>10}")
                     continue
-                
+
                 # Search for all emails
                 status, data = mail.search(None, "ALL")
-                
+
                 if status == "OK":
                     # data[0] is space separated IDs
                     email_ids = data[0].split()
@@ -66,7 +68,7 @@ def count_emails(imap_server, username, password):
                     print(f"{display_name:<40} {count:>10}")
                     total_all_folders += count
                 else:
-                     print(f"{display_name:<40} {'Error':>10}")
+                    print(f"{display_name:<40} {'Error':>10}")
 
             except imaplib.IMAP4.error:
                 print(f"{display_name:<40} {'Error':>10}")
@@ -81,6 +83,7 @@ def count_emails(imap_server, username, password):
         print(f"IMAP Error: {e}")
     except Exception as e:
         print(f"An error occurred: {e}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Count emails in IMAP account.")

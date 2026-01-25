@@ -1,5 +1,9 @@
 # IMAP Email Migration Tools
 
+![CI](https://github.com/YOUR_USERNAME/imap-migration-tools/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 ## Background
 I was in need of migrating a Google account with more than 100,000 emails, and none of the freely available solutions worked reliably for me. They often timed out, crashed, or couldn't handle the volume. Hence, I created these simple, robust Python scripts that got the job done effectively.
 
@@ -209,6 +213,90 @@ If you are migrating **from** a Gmail account and using the `--delete` option:
 - The script attempts to detect your Trash folder (e.g., `[Gmail]/Trash` or `[Gmail]/Bin`).
 - Instead of simply marking emails as deleted (which Gmail often treats as "Archive"), the script **copies the email to the Trash folder** and then marks the original as deleted.
 - This ensures that the storage count in `[Gmail]/All Mail` actually decreases, as the emails are moved to the Trash (which is auto-emptied by Google after 30 days) rather than remaining in your "All Mail" archive.
+
+## Development & Testing
+
+### Setting Up the Development Environment
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/imap-migration-tools.git
+   cd imap-migration-tools
+   ```
+
+2. **Create a virtual environment:**
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+
+3. **Install development dependencies:**
+   ```bash
+   pip install -r requirements.txt
+   # Or using Make:
+   make install-dev
+   ```
+
+### Running Tests
+
+The project uses `pytest` for testing with a custom mock IMAP server for integration tests.
+
+```bash
+# Run all tests
+make test
+
+# Run tests with verbose output
+PYTHONPATH=src pytest test/ -v
+
+# Run tests with coverage report
+make coverage
+
+# Run a specific test file
+PYTHONPATH=src pytest test/test_migrate_imap_emails.py -v
+
+# Run a specific test
+PYTHONPATH=src pytest test/test_imap_common.py::TestNormalizeFolderName -v
+```
+
+### Code Quality
+
+```bash
+# Run linter
+make lint
+
+# Auto-format code
+make format
+
+# Check formatting without modifying
+make format-check
+
+# Run security scan
+make security
+
+# Run type checker
+make typecheck
+
+# Run all CI checks locally
+make ci
+```
+
+### Test Structure
+
+| Test File | Description |
+|-----------|-------------|
+| `test_migrate_imap_emails.py` | Email migration tests (basic, duplicates, deletion, folders) |
+| `test_backup_imap_emails.py` | Backup functionality tests |
+| `test_count_imap_emails.py` | Email counting tests |
+| `test_compare_imap_folders.py` | Folder comparison tests |
+| `test_imap_common.py` | Shared utility function tests |
+
+### Continuous Integration
+
+The project uses GitHub Actions for CI. On every push and pull request:
+- **Lint**: Code style and formatting checks (Ruff)
+- **Test**: Runs on Python 3.9, 3.10, 3.11, 3.12, and 3.13
+- **Security**: Bandit security scanner
+- **Type Check**: mypy static type analysis
 
 ## License
 

@@ -1,0 +1,240 @@
+"""
+Tests for compare_imap_folders.py
+
+Tests cover:
+- Basic folder comparison between accounts
+- Matching counts
+- Mismatched counts
+- Missing folders on destination
+- Empty folder handling
+- Configuration validation
+"""
+
+import imaplib
+import os
+import sys
+
+import pytest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
+
+import compare_imap_folders
+from conftest import make_mock_connection
+
+
+class TestFolderComparison:
+    """Tests for folder comparison functionality."""
+
+    def test_matching_counts(self, mock_server_factory, monkeypatch, capsys):
+        """Test comparison when source and destination have matching counts."""
+        data = {
+            "INBOX": [b"Subject: 1\r\n\r\nB", b"Subject: 2\r\n\r\nB"],
+            "Sent": [b"Subject: 3\r\n\r\nB"],
+        }
+        src_server, dest_server, p1, p2 = mock_server_factory(data, data.copy())
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(sys, "argv", ["compare_imap_folders.py"])
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        compare_imap_folders.main()
+
+        captured = capsys.readouterr()
+        assert "INBOX" in captured.out
+        assert "Sent" in captured.out
+
+    def test_mismatched_counts(self, mock_server_factory, monkeypatch, capsys):
+        """Test comparison when counts differ."""
+        src_data = {
+            "INBOX": [b"Subject: 1\r\n\r\nB", b"Subject: 2\r\n\r\nB", b"Subject: 3\r\n\r\nB"],
+        }
+        dest_data = {
+            "INBOX": [b"Subject: 1\r\n\r\nB"],
+        }
+        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(sys, "argv", ["compare_imap_folders.py"])
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        compare_imap_folders.main()
+
+        captured = capsys.readouterr()
+        # Source has 3, dest has 1
+        assert "3" in captured.out
+        assert "1" in captured.out
+
+    def test_folder_missing_on_destination(self, mock_server_factory, monkeypatch, capsys):
+        """Test when a folder exists on source but not destination."""
+        src_data = {
+            "INBOX": [b"Subject: 1\r\n\r\nB"],
+            "Archive": [b"Subject: 2\r\n\r\nB"],
+        }
+        dest_data = {
+            "INBOX": [b"Subject: 1\r\n\r\nB"],
+        }
+        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(sys, "argv", ["compare_imap_folders.py"])
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        compare_imap_folders.main()
+
+        captured = capsys.readouterr()
+        # Archive should show N/A for destination
+        assert "Archive" in captured.out
+        assert "N/A" in captured.out
+
+
+class TestEmptyFolders:
+    """Tests for empty folder handling."""
+
+    def test_empty_folders(self, mock_server_factory, monkeypatch, capsys):
+        """Test comparison with empty folders."""
+        src_data = {"INBOX": [], "Empty": []}
+        dest_data = {"INBOX": [], "Empty": []}
+
+        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(sys, "argv", ["compare_imap_folders.py"])
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        compare_imap_folders.main()
+
+        captured = capsys.readouterr()
+        assert "INBOX" in captured.out
+        assert "0" in captured.out
+
+
+class TestGetEmailCount:
+    """Tests for get_email_count function."""
+
+    def test_successful_count(self, single_mock_server):
+        """Test successful email count."""
+        data = {"INBOX": [b"Subject: 1\r\n\r\nB", b"Subject: 2\r\n\r\nB"]}
+        server, port = single_mock_server(data)
+
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+
+        result = compare_imap_folders.get_email_count(conn, "INBOX")
+        assert result == 2
+
+        conn.logout()
+
+    def test_nonexistent_folder(self, single_mock_server):
+        """Test count for non-existent folder returns None."""
+        data = {"INBOX": []}
+        server, port = single_mock_server(data)
+
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+
+        result = compare_imap_folders.get_email_count(conn, "NonExistent")
+        assert result is None
+
+        conn.logout()
+
+
+class TestConfigValidation:
+    """Tests for configuration validation."""
+
+    def test_missing_source_credentials(self, monkeypatch, capsys):
+        """Test that missing source credentials cause exit."""
+        env = {
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest",
+            "DEST_IMAP_PASSWORD": "p",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(sys, "argv", ["compare_imap_folders.py"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            compare_imap_folders.main()
+
+        assert exc_info.value.code == 1
+
+    def test_missing_dest_credentials(self, monkeypatch, capsys):
+        """Test that missing destination credentials cause exit."""
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src",
+            "SRC_IMAP_PASSWORD": "p",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(sys, "argv", ["compare_imap_folders.py"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            compare_imap_folders.main()
+
+        assert exc_info.value.code == 1
+
+
+class TestTotals:
+    """Tests for total calculation."""
+
+    def test_total_calculation(self, mock_server_factory, monkeypatch, capsys):
+        """Test that totals are calculated correctly."""
+        src_data = {
+            "INBOX": [b"Subject: 1\r\n\r\nB", b"Subject: 2\r\n\r\nB"],
+            "Sent": [b"Subject: 3\r\n\r\nB", b"Subject: 4\r\n\r\nB", b"Subject: 5\r\n\r\nB"],
+        }
+        dest_data = {
+            "INBOX": [b"Subject: 1\r\n\r\nB"],
+            "Sent": [b"Subject: 3\r\n\r\nB"],
+        }
+        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(sys, "argv", ["compare_imap_folders.py"])
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        compare_imap_folders.main()
+
+        captured = capsys.readouterr()
+        # Total source: 5, Total dest: 2, Diff: 3
+        assert "TOTAL" in captured.out
+        assert "5" in captured.out
+        assert "2" in captured.out

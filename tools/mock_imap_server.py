@@ -1,0 +1,364 @@
+import re
+import socketserver
+import threading
+
+
+class MockIMAPHandler(socketserver.StreamRequestHandler):
+    """
+    A minimal IMAP4rev1 mock server handler for testing purposes.
+    Supports basic commands required for the migration scripts.
+    """
+
+    def handle(self):
+        self.wfile.write(b"* OK [CAPABILITY IMAP4rev1] Mock IMAP Server Ready\r\n")
+        self.selected_folder = None
+        self.current_folders = self.server.folders
+
+        while True:
+            try:
+                line = self.rfile.readline()
+                if not line:
+                    break
+                line = line.decode("utf-8").strip()
+                if not line:
+                    continue
+
+                parts = line.split(" ", 2)
+                tag = parts[0]
+                cmd = parts[1].upper()
+                args = parts[2] if len(parts) > 2 else ""
+
+                if cmd == "LOGIN":
+                    self.send_response(tag, "OK LOGIN completed")
+
+                elif cmd == "LOGOUT":
+                    self.send_response(tag, "OK LOGOUT completed")
+                    break
+
+                elif cmd == "CAPABILITY":
+                    self.wfile.write(b"* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n")
+                    self.send_response(tag, "OK CAPABILITY completed")
+
+                elif cmd == "LIST":
+                    for folder in self.current_folders:
+                        self.wfile.write(f'* LIST (\\HasNoChildren) "/" "{folder}"\r\n'.encode())
+                    self.send_response(tag, "OK LIST completed")
+
+                elif cmd == "SELECT":
+                    folder = args.strip().strip('"')
+                    if folder in self.current_folders:
+                        self.selected_folder = folder
+                        count = len(self.current_folders[folder])
+                        self.wfile.write(f"* {count} EXISTS\r\n".encode())
+                        self.wfile.write(f"* {count} RECENT\r\n".encode())
+                        self.wfile.write(b"* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\n")
+                        self.wfile.write(b"* OK [UIDVALIDITY 1] UIDs valid\r\n")
+                        self.send_response(tag, "OK [READ-WRITE] SELECT completed")
+                    else:
+                        self.send_response(tag, "NO [NONEXISTENT] Folder not found")
+
+                elif cmd == "EXAMINE":
+                    # EXAMINE is like SELECT but read-only
+                    folder = args.strip().strip('"')
+                    if folder in self.current_folders:
+                        self.selected_folder = folder
+                        count = len(self.current_folders[folder])
+                        self.wfile.write(f"* {count} EXISTS\r\n".encode())
+                        self.wfile.write(f"* {count} RECENT\r\n".encode())
+                        self.wfile.write(b"* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\n")
+                        self.wfile.write(b"* OK [UIDVALIDITY 1] UIDs valid\r\n")
+                        self.send_response(tag, "OK [READ-ONLY] EXAMINE completed")
+                    else:
+                        self.send_response(tag, "NO [NONEXISTENT] Folder not found")
+
+                elif cmd == "CREATE":
+                    folder = args.strip().strip('"')
+                    if folder not in self.current_folders:
+                        self.current_folders[folder] = []
+                    self.send_response(tag, "OK CREATE completed")
+
+                elif cmd == "EXPUNGE":
+                    if self.selected_folder:
+                        msgs = self.current_folders[self.selected_folder]
+                        # In-place remove marked deleted
+                        # We use a dictionary-like structure implicitly via dicts in list now
+                        # Check "flags" set in msg object
+                        new_msgs = [m for m in msgs if "\\Deleted" not in m["flags"]]
+                        removed_count = len(msgs) - len(new_msgs)
+                        self.current_folders[self.selected_folder] = new_msgs
+                        # According to IMAP, we should send Expunge indices but we'll skip for mock
+                        self.send_response(tag, "OK EXPUNGE completed")
+                    else:
+                        self.send_response(tag, "NO Select first")
+
+                elif cmd == "UID":
+                    sub_parts = args.split(" ", 1)
+                    sub_cmd = sub_parts[0].upper()
+                    sub_rest = sub_parts[1] if len(sub_parts) > 1 else ""
+
+                    if sub_cmd == "SEARCH":
+                        sub_args = sub_rest
+                        if not self.selected_folder:
+                            self.send_response(tag, "NO Select first")
+                            continue
+                        msgs = self.current_folders[self.selected_folder]
+
+                        # Handle UNDELETED
+                        # If args has UNDELETED, filter flags
+                        valid_uids = []
+                        for m in msgs:
+                            if "UNDELETED" in sub_args and "\\Deleted" in m["flags"]:
+                                continue
+                            valid_uids.append(str(m["uid"]))
+
+                        uids_str = " ".join(valid_uids)
+                        self.wfile.write(f"* SEARCH {uids_str}\r\n".encode())
+                        self.send_response(tag, "OK SEARCH completed")
+
+                    elif sub_cmd == "STORE":
+                        # UID STORE <uid> +FLAGS (\Deleted)
+                        store_parts = sub_rest.split(" ", 2)
+
+                        uid = int(store_parts[0])
+                        action = store_parts[1].upper()  # +FLAGS or -FLAGS
+
+                        # Flags can be "(\Deleted)" or "\Deleted"
+                        flags_str = store_parts[2].strip("()")
+                        flags_list = {f.strip() for f in flags_str.split()}
+
+                        if self.selected_folder:
+                            msgs = self.current_folders[self.selected_folder]
+                            found = False
+                            for m in msgs:
+                                if m["uid"] == uid:
+                                    if action == "+FLAGS":
+                                        m["flags"].update(flags_list)
+                                    elif action == "-FLAGS":
+                                        m["flags"].difference_update(flags_list)
+                                    found = True
+
+                                    # Send update
+                                    flag_output = " ".join(m["flags"])
+                                    self.wfile.write(
+                                        f"* {msgs.index(m) + 1} FETCH (FLAGS ({flag_output}))\r\n".encode()
+                                    )
+                                    break
+                            if found:
+                                self.send_response(tag, "OK STORE completed")
+                            else:
+                                self.send_response(tag, "NO UID not found")
+                        else:
+                            self.send_response(tag, "NO Select first")
+
+                    elif sub_cmd == "FETCH":
+                        # sub_rest is e.g. "1 (RFC822.SIZE BODY.PEEK[...])"
+                        parts = sub_rest.split(" ", 1)
+                        uid_set = parts[0]
+                        opts = parts[1].upper() if len(parts) > 1 else ""
+
+                        if not self.selected_folder:
+                            self.send_response(tag, "NO Select first")
+                            continue
+
+                        msgs = self.current_folders[self.selected_folder]
+                        # Find msg by UID
+                        target_msgs = []
+                        if ":" in uid_set:
+                            # Range logic omitted for brevity, taking all for '*' or simplified assumption
+                            # But since we use UIDs, we should filter.
+                            target_msgs = msgs  # Return all for range
+                        else:
+                            try:
+                                t_uid = int(uid_set)
+                                target_msgs = [m for m in msgs if m["uid"] == t_uid]
+                            except:
+                                pass
+
+                        for m in target_msgs:
+                            # Mock always returns info if iterating all, or specific
+                            # Construction
+                            msg_content = m["content"]
+                            msg_len = len(msg_content)
+                            flags_str = " ".join(m["flags"])
+
+                            resp = (
+                                f"* {msgs.index(m) + 1} FETCH (UID {m['uid']} RFC822.SIZE {msg_len} FLAGS ({flags_str})"
+                            )
+
+                            if "RFC822" in opts or "BODY" in opts:
+                                resp += f" BODY[] {{{msg_len}}}\r\n"
+                                self.wfile.write(resp.encode("utf-8"))
+                                self.wfile.write(msg_content)
+                                self.wfile.write(b")\r\n")
+                            else:
+                                resp += ")\r\n"
+                                self.wfile.write(resp.encode("utf-8"))
+
+                            self.wfile.flush()
+
+                        self.send_response(tag, "OK FETCH completed")
+
+                    elif sub_cmd == "COPY":
+                        # UID COPY <uid> <target>
+                        c_parts = sub_rest.split(" ", 1)
+                        c_uid = int(c_parts[0])
+                        c_dest = c_parts[1].strip().strip('"')
+
+                        if c_dest in self.current_folders and self.selected_folder:
+                            msgs = self.current_folders[self.selected_folder]
+                            found_msg = next((m for m in msgs if m["uid"] == c_uid), None)
+                            if found_msg:
+                                # COPY: create new msg object (new UID usually)
+                                # We need a new UID generator.
+                                # For simplicity, use max_uid + 1
+                                dest_msgs = self.current_folders[c_dest]
+                                max_uid = max([m["uid"] for m in dest_msgs], default=0)
+                                new_msg = found_msg.copy()
+                                new_msg["uid"] = max_uid + 1
+                                new_msg["flags"] = found_msg["flags"].copy()
+                                dest_msgs.append(new_msg)
+                                self.send_response(tag, "OK COPY completed")
+                            else:
+                                self.send_response(tag, "NO UID not found")
+                        else:
+                            self.send_response(tag, "NO Dest not found")
+
+                elif cmd == "APPEND":
+                    try:
+                        match = re.search(r"\{(\d+)\}$", args)
+                        if match:
+                            size = int(match.group(1))
+                            self.wfile.write(b"+ Ready\r\n")
+                            data = self.rfile.read(size)
+
+                            folder_arg = args.split(" ")[0].strip().strip('"')
+                            if folder_arg in self.current_folders:
+                                dest_msgs = self.current_folders[folder_arg]
+                                max_uid = max([m["uid"] for m in dest_msgs], default=0)
+
+                                # IMPORTANT: Reset pointer or copy
+                                new_msg = {"uid": max_uid + 1, "flags": set(), "content": data}
+                                dest_msgs.append(new_msg)
+                                print(f"MOCK APPEND SUCCESS: {folder_arg} now has {len(dest_msgs)}")
+                                self.send_response(tag, "OK APPEND completed")
+                            else:
+                                self.send_response(tag, "NO Folder not found")
+                        else:
+                            self.send_response(tag, "BAD APPEND")
+                    except Exception as e:
+                        print(f"MOCK APPEND ERROR: {e}")
+                        self.send_response(tag, "BAD APPEND")
+
+                elif cmd == "SEARCH":
+                    # Parse SEARCH ALL, SEARCH HEADER Message-ID "...", etc.
+                    # args might be: ALL, HEADER Message-ID "<123>", CHARSETS UTF-8 ...
+
+                    found_indices = []
+
+                    if not self.selected_folder:
+                        self.wfile.write(b"* SEARCH\r\n")
+                        self.send_response(tag, "OK SEARCH completed")
+                        continue
+
+                    msgs = self.current_folders[self.selected_folder]
+
+                    if "ALL" in args.upper():
+                        # Return all message sequence numbers
+                        found_indices = [str(idx + 1) for idx in range(len(msgs))]
+                    elif "HEADER Message-ID" in args:
+                        # Extract value
+                        # Expected: ... HEADER Message-ID "value" ...
+                        try:
+                            # Split by 'MESSAGE-ID' (case insensitive?)
+                            # part after Message-ID
+                            post_mi = args.split("Message-ID", 1)[1].strip()
+                            # Should start with quote or value
+                            if post_mi.startswith('"'):
+                                search_val = post_mi.split('"', 2)[1]
+                            else:
+                                search_val = post_mi.split(" ", 1)[0]
+
+                            search_val = search_val.replace("<", "").replace(">", "")
+
+                            for idx, m in enumerate(msgs):
+                                content_str = m["content"].decode("utf-8", errors="ignore")
+                                if search_val in content_str:
+                                    # Simple substring check is risky but okay for mock
+                                    # Better: regex for Message-ID: <...search_val...>
+                                    found_indices.append(str(idx + 1))
+                        except Exception:
+                            pass
+
+                    indices_str = " ".join(found_indices)
+                    self.wfile.write(f"* SEARCH {indices_str}\r\n".encode())
+                    self.send_response(tag, "OK SEARCH completed")
+
+                elif cmd == "FETCH":
+                    # Non-UID FETCH - args is e.g. "1 (RFC822.SIZE)"
+                    if not self.selected_folder:
+                        self.send_response(tag, "NO Select first")
+                        continue
+
+                    parts = args.split(" ", 1)
+                    msg_num = int(parts[0])
+                    opts = parts[1].upper() if len(parts) > 1 else ""
+
+                    msgs = self.current_folders[self.selected_folder]
+                    if 1 <= msg_num <= len(msgs):
+                        m = msgs[msg_num - 1]  # Convert to 0-indexed
+                        msg_content = m["content"]
+                        msg_len = len(msg_content)
+                        flags_str = " ".join(m["flags"])
+
+                        resp = f"* {msg_num} FETCH (UID {m['uid']} RFC822.SIZE {msg_len} FLAGS ({flags_str})"
+
+                        if "RFC822" in opts or "BODY" in opts:
+                            resp += f" BODY[] {{{msg_len}}}\r\n"
+                            self.wfile.write(resp.encode("utf-8"))
+                            self.wfile.write(msg_content)
+                            self.wfile.write(b")\r\n")
+                        else:
+                            resp += ")\r\n"
+                            self.wfile.write(resp.encode("utf-8"))
+                        self.wfile.flush()
+
+                    self.send_response(tag, "OK FETCH completed")
+
+                elif cmd == "NOOP":
+                    self.send_response(tag, "OK NOOP")
+
+                else:
+                    self.send_response(tag, "BAD Command not recognized")
+
+            except Exception:
+                break
+
+    def send_response(self, tag, message):
+        self.wfile.write(f"{tag} {message}\r\n".encode())
+
+
+class MockIMAPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+    def __init__(self, server_address, RequestHandlerClass, initial_folders=None):
+        super().__init__(server_address, RequestHandlerClass)
+        self.folders = {}
+        if initial_folders:
+            for fname, contents in initial_folders.items():
+                self.folders[fname] = []
+                for i, c in enumerate(contents):
+                    if isinstance(c, bytes):
+                        self.folders[fname].append({"uid": i + 1, "flags": set(), "content": c})
+                    else:
+                        self.folders[fname].append(c)
+        else:
+            self.folders = {"INBOX": []}
+
+
+def start_server_thread(port=10143, initial_folders=None):
+    server = MockIMAPServer(("localhost", port), MockIMAPHandler, initial_folders)
+    t = threading.Thread(target=server.serve_forever)
+    t.daemon = True
+    t.start()
+    return t, server

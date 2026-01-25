@@ -20,29 +20,31 @@ Usage:
   python3 compare_imap_folders.py
 """
 
-import imaplib
+import argparse
 import os
 import sys
-import argparse
+
 import imap_common
+
 
 def get_email_count(conn, folder_name):
     try:
         # Select folder in read-only mode
         # Quote folder name handles spaces
         typ, data = conn.select(f'"{folder_name}"', readonly=True)
-        if typ != 'OK':
+        if typ != "OK":
             return None
-        
+
         # SELECT command returns the number of messages in data[0]
         # data[0] is bytes, e.g. b'123'
         if data and data[0]:
             return int(data[0])
         return 0
 
-    except Exception as e:
+    except Exception:
         # print(f"Error checking {folder_name}: {e}")
         return None
+
 
 def main():
     parser = argparse.ArgumentParser(description="Compare email counts between two IMAP accounts.")
@@ -51,7 +53,7 @@ def main():
     parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_HOST"), help="Source IMAP Server")
     parser.add_argument("--src-user", default=os.getenv("SRC_IMAP_USERNAME"), help="Source Username")
     parser.add_argument("--src-pass", default=os.getenv("SRC_IMAP_PASSWORD"), help="Source Password")
-    
+
     # Dest args
     parser.add_argument("--dest-host", default=os.getenv("DEST_IMAP_HOST"), help="Destination IMAP Server")
     parser.add_argument("--dest-user", default=os.getenv("DEST_IMAP_USERNAME"), help="Destination Username")
@@ -69,12 +71,18 @@ def main():
 
     # Validation
     missing_vars = []
-    if not SRC_HOST: missing_vars.append("SRC_IMAP_HOST")
-    if not SRC_USER: missing_vars.append("SRC_IMAP_USERNAME")
-    if not SRC_PASS: missing_vars.append("SRC_IMAP_PASSWORD")
-    if not DEST_HOST: missing_vars.append("DEST_IMAP_HOST")
-    if not DEST_USER: missing_vars.append("DEST_IMAP_USERNAME")
-    if not DEST_PASS: missing_vars.append("DEST_IMAP_PASSWORD")
+    if not SRC_HOST:
+        missing_vars.append("SRC_IMAP_HOST")
+    if not SRC_USER:
+        missing_vars.append("SRC_IMAP_USERNAME")
+    if not SRC_PASS:
+        missing_vars.append("SRC_IMAP_PASSWORD")
+    if not DEST_HOST:
+        missing_vars.append("DEST_IMAP_HOST")
+    if not DEST_USER:
+        missing_vars.append("DEST_IMAP_USERNAME")
+    if not DEST_PASS:
+        missing_vars.append("DEST_IMAP_PASSWORD")
 
     if missing_vars:
         print(f"Error: Missing configuration variables: {', '.join(missing_vars)}")
@@ -95,17 +103,19 @@ def main():
         # Connect to Source
         print("Connecting to Source...")
         src = imap_common.get_imap_connection(SRC_HOST, SRC_USER, SRC_PASS)
-        if not src: return
+        if not src:
+            return
 
         # Connect to Dest
         print("Connecting to Destination...")
         dest = imap_common.get_imap_connection(DEST_HOST, DEST_USER, DEST_PASS)
-        if not dest: return
+        if not dest:
+            return
 
         # List Source Folders
         print("Listing folders in Source...")
         typ, folders = src.list()
-        if typ != 'OK':
+        if typ != "OK":
             print("Failed to list source folders.")
             return
 
@@ -121,14 +131,14 @@ def main():
         # Iterate through Source folders
         for folder_info in folders:
             folder_name = imap_common.normalize_folder_name(folder_info)
-            
+
             # Get Counts
             src_count = get_email_count(src, folder_name)
             dest_count = get_email_count(dest, folder_name)
 
             # Format for display
             src_str = str(src_count) if src_count is not None else "Err"
-            dest_str = str(dest_count) if dest_count is not None else "N/A" # N/A usually means folder doesn't exist
+            dest_str = str(dest_count) if dest_count is not None else "N/A"  # N/A usually means folder doesn't exist
 
             diff_str = ""
             if src_count is not None and dest_count is not None:
@@ -142,12 +152,12 @@ def main():
             print(f"{folder_name:<40} | {src_str:>10} | {dest_str:>10} | {diff_str:>10}")
 
         print("-" * len(header))
-        print(f"{'TOTAL':<40} | {total_src:>10} | {total_dest:>10} | {total_src-total_dest:>10}")
+        print(f"{'TOTAL':<40} | {total_src:>10} | {total_dest:>10} | {total_src - total_dest:>10}")
 
     except Exception as e:
         print(f"\nFatal Error: {e}")
         if "Too many simultaneous connections" in str(e):
-             print("Tip: Wait a few minutes for previous connections to timeout or check other active scripts.")
+            print("Tip: Wait a few minutes for previous connections to timeout or check other active scripts.")
 
     finally:
         # Check source connection state and logout if possible
@@ -156,13 +166,14 @@ def main():
                 src.logout()
             except Exception:
                 pass
-        
+
         # Check dest connection state and logout if possible
         if dest:
             try:
                 dest.logout()
             except Exception:
                 pass
+
 
 if __name__ == "__main__":
     main()

@@ -6,10 +6,11 @@ Shared functionality for IMAP migration, counting, and comparison scripts.
 
 import imaplib
 import os
-import sys
 import re
+import sys
 from email.header import decode_header
 from email.parser import BytesParser
+
 
 def verify_env_vars(vars_list):
     """
@@ -22,6 +23,7 @@ def verify_env_vars(vars_list):
         print(f"Error: Missing environment variables: {', '.join(missing)}", file=sys.stderr)
         return False
     return True
+
 
 def get_imap_connection(host, user, password):
     """
@@ -40,25 +42,27 @@ def get_imap_connection(host, user, password):
         print(f"Connection error to {host}: {e}")
         return None
 
+
 def normalize_folder_name(folder_info_str):
     """
     Parses the IMAP list response to extract the clean folder name.
     Handles quoted names and flags.
     """
     if isinstance(folder_info_str, bytes):
-        folder_info_str = folder_info_str.decode('utf-8', errors='ignore')
+        folder_info_str = folder_info_str.decode("utf-8", errors="ignore")
 
     # Regex to extract folder name: (flags) "delimiter" name
     # Matches: (\HasNoChildren) "/" "INBOX"  OR  (\HasNoChildren) "/" Drafts
     list_pattern = re.compile(r'\((?P<flags>.*?)\) "(?P<delimiter>.*)" "?(?P<name>.*)"?')
     match = list_pattern.search(folder_info_str)
     if match:
-        name = match.group('name')
+        name = match.group("name")
         # If the regex grabbed a trailing quote, strip it (though the regex tries to handle it)
         return name.rstrip('"').strip()
-    
+
     # Fallback: take the last part
     return folder_info_str.split()[-1].strip('"')
+
 
 def decode_mime_header(header_value):
     """
@@ -68,22 +72,23 @@ def decode_mime_header(header_value):
         return "(No Subject)"
     try:
         decoded_list = decode_header(header_value)
-        default_charset = 'utf-8'
+        default_charset = "utf-8"
         text_parts = []
         for bytes_data, encoding in decoded_list:
             if isinstance(bytes_data, bytes):
                 if encoding:
                     try:
-                        text_parts.append(bytes_data.decode(encoding, errors='ignore'))
+                        text_parts.append(bytes_data.decode(encoding, errors="ignore"))
                     except LookupError:
-                        text_parts.append(bytes_data.decode(default_charset, errors='ignore'))
+                        text_parts.append(bytes_data.decode(default_charset, errors="ignore"))
                 else:
-                    text_parts.append(bytes_data.decode(default_charset, errors='ignore'))
+                    text_parts.append(bytes_data.decode(default_charset, errors="ignore"))
             else:
                 text_parts.append(str(bytes_data))
         return "".join(text_parts)
     except Exception:
         return str(header_value)
+
 
 def get_msg_details(imap_conn, uid):
     """
@@ -91,36 +96,37 @@ def get_msg_details(imap_conn, uid):
     Returns (msg_id, size, subject) tuple.
     """
     try:
-        resp, data = imap_conn.uid('fetch', uid, '(RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT)])')
+        resp, data = imap_conn.uid("fetch", uid, "(RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT)])")
     except Exception:
         return None, None, None
-        
-    if resp != 'OK':
+
+    if resp != "OK":
         return None, None, None
-        
+
     msg_id = None
     subject = "(No Subject)"
     size = 0
-    
+
     for item in data:
         if isinstance(item, tuple):
-            content = item[0].decode('utf-8', errors='ignore')
-            
+            content = item[0].decode("utf-8", errors="ignore")
+
             # Parse Size
-            size_match = re.search(r'RFC822\.SIZE\s+(\d+)', content)
+            size_match = re.search(r"RFC822\.SIZE\s+(\d+)", content)
             if size_match:
                 size = int(size_match.group(1))
-            
+
             # Parse Headers
             msg_bytes = item[1]
             parser = BytesParser()
             email_obj = parser.parsebytes(msg_bytes)
-            msg_id = email_obj.get('Message-ID')
-            raw_subject = email_obj.get('Subject')
+            msg_id = email_obj.get("Message-ID")
+            raw_subject = email_obj.get("Subject")
             if raw_subject:
                 subject = decode_mime_header(raw_subject)
-            
+
     return msg_id, size, subject
+
 
 def message_exists_in_folder(dest_conn, msg_id, src_size):
     """
@@ -129,31 +135,32 @@ def message_exists_in_folder(dest_conn, msg_id, src_size):
     """
     if not msg_id:
         return False
-    
+
     clean_id = msg_id.replace('"', '\\"')
     try:
         typ, data = dest_conn.search(None, f'(HEADER Message-ID "{clean_id}")')
-        if typ != 'OK':
+        if typ != "OK":
             return False
-            
+
         dest_ids = data[0].split()
         if not dest_ids:
             return False
-            
+
         for did in dest_ids:
-            resp, items = dest_conn.fetch(did, '(RFC822.SIZE)')
-            if resp == 'OK':
+            resp, items = dest_conn.fetch(did, "(RFC822.SIZE)")
+            if resp == "OK":
                 for item in items:
                     if isinstance(item, bytes):
-                        content = item.decode('utf-8', errors='ignore')
-                    else: 
-                        content = item[0].decode('utf-8', errors='ignore')
-                    size_match = re.search(r'RFC822\.SIZE\s+(\d+)', content)
+                        content = item.decode("utf-8", errors="ignore")
+                    else:
+                        content = item[0].decode("utf-8", errors="ignore")
+                    size_match = re.search(r"RFC822\.SIZE\s+(\d+)", content)
                     if size_match and int(size_match.group(1)) == src_size:
                         return True
     except Exception:
         return False
     return False
+
 
 def sanitize_filename(filename):
     """
@@ -165,11 +172,12 @@ def sanitize_filename(filename):
         return "untitled"
     # Replace invalid characters with underscore
     # Invalid: < > : " / \ | ? * and control chars
-    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', filename)
+    s = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", filename)
     # Strip leading/trailing whitespaces/dots
-    s = s.strip().strip('.')
+    s = s.strip().strip(".")
     # Ensure not empty and not too long
     return s[:250] if s else "untitled"
+
 
 def detect_trash_folder(imap_conn):
     """
@@ -179,29 +187,29 @@ def detect_trash_folder(imap_conn):
     """
     try:
         status, folders = imap_conn.list()
-        if status != 'OK':
+        if status != "OK":
             return None
     except Exception:
         return None
-    
-    trash_candidates = ['[Gmail]/Trash', 'Trash', 'Deleted Items', 'Bin', '[Gmail]/Bin']
+
+    trash_candidates = ["[Gmail]/Trash", "Trash", "Deleted Items", "Bin", "[Gmail]/Bin"]
     detected_by_flag = None
     all_folder_names = []
 
     for f in folders:
         if isinstance(f, bytes):
-            f_str = f.decode('utf-8', errors='ignore')
+            f_str = f.decode("utf-8", errors="ignore")
         else:
             f_str = str(f)
-            
+
         name = normalize_folder_name(f_str)
         all_folder_names.append(name)
-        
+
         # Check for SPECIAL-USE flag \Trash
         # The flag is usually inside parentheses like (\HasNoChildren \Trash)
-        if '\\Trash' in f_str or '\\Bin' in f_str: 
+        if "\\Trash" in f_str or "\\Bin" in f_str:
             detected_by_flag = name
-            
+
     if detected_by_flag:
         return detected_by_flag
 
@@ -209,5 +217,5 @@ def detect_trash_folder(imap_conn):
     for candidate in trash_candidates:
         if candidate in all_folder_names:
             return candidate
-            
+
     return None
