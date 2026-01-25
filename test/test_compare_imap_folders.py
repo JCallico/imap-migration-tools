@@ -173,63 +173,75 @@ class TestGetEmailCount:
 
 class TestCompareFoldersErrorHandling:
     """Tests for error handling in compare_imap_folders.py"""
-    
+
     def test_connection_failure(self, monkeypatch):
         """Test graceful exit when connection fails."""
         mock_get = MagicMock(return_value=None)
         monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-        
+
         # Test source fail
         env = {
-            "SRC_IMAP_HOST": "h", "SRC_IMAP_USERNAME": "u", "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "h", "DEST_IMAP_USERNAME": "u", "DEST_IMAP_PASSWORD": "p",
+            "SRC_IMAP_HOST": "h",
+            "SRC_IMAP_USERNAME": "u",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "h",
+            "DEST_IMAP_USERNAME": "u",
+            "DEST_IMAP_PASSWORD": "p",
         }
         monkeypatch.setattr(os, "environ", env)
         monkeypatch.setattr(sys, "argv", ["compare_imap_folders.py"])
-        
+
         compare_imap_folders.main()
         # Should call once and exit
         assert mock_get.call_count == 1
-        
+
     def test_dest_connection_failure(self, monkeypatch):
         """Test graceful exit when destination connection fails."""
         # Source OK, Dest None
         mock_src = MagicMock()
         mock_src.list.return_value = ("OK", [rb'(\HasNoChildren) "/" "INBOX"'])
-        
+
         def side_effect(h, u, p):
-            if u == "src_u": return mock_src
+            if u == "src_u":
+                return mock_src
             return None
-            
+
         monkeypatch.setattr("imap_common.get_imap_connection", side_effect)
-        
+
         env = {
-            "SRC_IMAP_HOST": "h", "SRC_IMAP_USERNAME": "src_u", "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "h", "DEST_IMAP_USERNAME": "dest_u", "DEST_IMAP_PASSWORD": "p",
+            "SRC_IMAP_HOST": "h",
+            "SRC_IMAP_USERNAME": "src_u",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "h",
+            "DEST_IMAP_USERNAME": "dest_u",
+            "DEST_IMAP_PASSWORD": "p",
         }
         monkeypatch.setattr(os, "environ", env)
         monkeypatch.setattr(sys, "argv", ["compare_imap_folders.py"])
-        
+
         compare_imap_folders.main()
-        
+
     def test_list_failure(self, monkeypatch, capsys):
         """Test handling of LIST command failure."""
         mock_src = MagicMock()
         mock_src.list.return_value = ("NO", [])
         mock_dest = MagicMock()
-        
-        monkeypatch.setattr("imap_common.get_imap_connection",
-                           lambda h,u,p: mock_src if u == "s" else mock_dest)
-                           
+
+        monkeypatch.setattr("imap_common.get_imap_connection", lambda h, u, p: mock_src if u == "s" else mock_dest)
+
         env = {
-            "SRC_IMAP_HOST": "h", "SRC_IMAP_USERNAME": "s", "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "h", "DEST_IMAP_USERNAME": "d", "DEST_IMAP_PASSWORD": "p",
+            "SRC_IMAP_HOST": "h",
+            "SRC_IMAP_USERNAME": "s",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "h",
+            "DEST_IMAP_USERNAME": "d",
+            "DEST_IMAP_PASSWORD": "p",
         }
         monkeypatch.setattr(os, "environ", env)
         monkeypatch.setattr(sys, "argv", ["compare_imap_folders.py"])
-        
+
         compare_imap_folders.main()
-        
+
         captured = capsys.readouterr()
         assert "Failed to list source folders" in captured.out
 
@@ -239,33 +251,33 @@ class TestCompareFoldersErrorHandling:
         server, port = single_mock_server(data)
         conn = imaplib.IMAP4("localhost", port)
         conn.login("user", "pass")
-        
+
         # Mocking select failure on a real connection object is hard without
         # using a pure mock. So let's use a Mock object instead of real conn.
         mock_conn = MagicMock()
-        mock_conn.select.return_value = ("NO", [b'Error'])
-        
+        mock_conn.select.return_value = ("NO", [b"Error"])
+
         result = compare_imap_folders.get_email_count(mock_conn, "INBOX")
         assert result is None
 
     def test_search_failure(self, single_mock_server):
         """Test get_email_count handles search failure."""
         mock_conn = MagicMock()
-        mock_conn.select.return_value = ("OK", [b'Selected'])
-        mock_conn.search.return_value = ("NO", [b'Error'])
-        
+        mock_conn.select.return_value = ("OK", [b"Selected"])
+        mock_conn.search.return_value = ("NO", [b"Error"])
+
         result = compare_imap_folders.get_email_count(mock_conn, "INBOX")
         assert result is None
-        
+
     def test_imap_exception_in_count(self):
         """Test exception handling in get_email_count."""
         mock_conn = MagicMock()
         mock_conn.select.side_effect = imaplib.IMAP4.error("Crash")
-        
+
         result = compare_imap_folders.get_email_count(mock_conn, "INBOX")
         assert result is None
-        
-        
+
+
 class TestConfigValidation:
     """Tests for configuration validation."""
 

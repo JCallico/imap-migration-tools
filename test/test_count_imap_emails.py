@@ -84,18 +84,18 @@ class TestEmailCountingErrors:
         """Test graceful exit when connection fails."""
         mock_get = MagicMock(return_value=None)
         monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-        
+
         # Should return silently without raising
         count_imap_emails.count_emails("host", "user", "pass")
         mock_get.assert_called_once()
-        
+
     def test_list_command_failure(self, monkeypatch):
         """Test handling of LIST command failure."""
         mock_mail = MagicMock()
         mock_mail.list.return_value = ("NO", [])
         mock_get = MagicMock(return_value=mock_mail)
         monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-        
+
         count_imap_emails.count_emails("host", "user", "pass")
         mock_mail.list.assert_called_once()
         # Should exit early, so select should not be called
@@ -106,14 +106,14 @@ class TestEmailCountingErrors:
         mock_mail = MagicMock()
         mock_mail.list.return_value = ("OK", [rb'(\HasNoChildren) "/" "INBOX"'])
         # Fail selection
-        mock_mail.select.return_value = ("NO", [b'Select failed'])
-        
+        mock_mail.select.return_value = ("NO", [b"Select failed"])
+
         mock_get = MagicMock(return_value=mock_mail)
         monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
         monkeypatch.setattr("imap_common.normalize_folder_name", lambda x: "INBOX")
-        
+
         count_imap_emails.count_emails("host", "user", "pass")
-        
+
         mock_mail.select.assert_called_once()
         # Should skip search for this folder
         mock_mail.search.assert_not_called()
@@ -122,16 +122,16 @@ class TestEmailCountingErrors:
         """Test handling of SEARCH command failure."""
         mock_mail = MagicMock()
         mock_mail.list.return_value = ("OK", [rb'(\HasNoChildren) "/" "INBOX"'])
-        mock_mail.select.return_value = ("OK", [b'Selected'])
+        mock_mail.select.return_value = ("OK", [b"Selected"])
         # Fail search
-        mock_mail.search.return_value = ("NO", [b'Search failed'])
-        
+        mock_mail.search.return_value = ("NO", [b"Search failed"])
+
         mock_get = MagicMock(return_value=mock_mail)
         monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
         monkeypatch.setattr("imap_common.normalize_folder_name", lambda x: "INBOX")
-        
+
         count_imap_emails.count_emails("host", "user", "pass")
-        
+
         captured = capsys.readouterr()
         assert "Error" in captured.out
 
@@ -141,9 +141,9 @@ class TestEmailCountingErrors:
         mock_mail.list.side_effect = imaplib.IMAP4.error("Crash listing")
         mock_get = MagicMock(return_value=mock_mail)
         monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-        
+
         count_imap_emails.count_emails("host", "user", "pass")
-        
+
         captured = capsys.readouterr()
         assert "IMAP Error: Crash listing" in captured.out
 
@@ -152,13 +152,13 @@ class TestEmailCountingErrors:
         mock_mail = MagicMock()
         mock_mail.list.return_value = ("OK", [rb'(\HasNoChildren) "/" "INBOX"'])
         mock_mail.select.side_effect = imaplib.IMAP4.error("Crash selecting")
-        
+
         mock_get = MagicMock(return_value=mock_mail)
         monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
         monkeypatch.setattr("imap_common.normalize_folder_name", lambda x: "INBOX")
-        
+
         count_imap_emails.count_emails("host", "user", "pass")
-        
+
         captured = capsys.readouterr()
         # Should print Error for that folder
         assert "Error" in captured.out
@@ -167,12 +167,11 @@ class TestEmailCountingErrors:
         """Test handling of generic connection/runtime exceptions."""
         mock_get = MagicMock(side_effect=Exception("Generic Crash"))
         monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-        
+
         count_imap_emails.count_emails("host", "user", "pass")
-        
+
         captured = capsys.readouterr()
         assert "An error occurred: Generic Crash" in captured.out
-
 
 
 class TestMainFunction:
