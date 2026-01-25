@@ -1,6 +1,7 @@
 # IMAP Email Migration Tools
 
 ![CI](https://github.com/JCallico/imap-migration-tools/actions/workflows/ci.yml/badge.svg)
+[![codecov](https://codecov.io/github/JCallico/imap-migration-tools/graph/badge.svg?token=SDF29GC5VV)](https://codecov.io/github/JCallico/imap-migration-tools)
 ![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
