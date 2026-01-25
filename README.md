@@ -1,6 +1,6 @@
 # IMAP Email Migration Tools
 
-![CI](https://github.com/YOUR_USERNAME/imap-migration-tools/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/JCallico/imap-migration-tools/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -220,7 +220,7 @@ If you are migrating **from** a Gmail account and using the `--delete` option:
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/YOUR_USERNAME/imap-migration-tools.git
+   git clone https://github.com/JCallico/imap-migration-tools.git
    cd imap-migration-tools
    ```
 
