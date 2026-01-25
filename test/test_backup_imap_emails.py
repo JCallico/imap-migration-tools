@@ -11,6 +11,7 @@ Tests cover:
 
 import os
 import sys
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -247,3 +248,121 @@ class TestGetExistingUids:
 
         result = backup_imap_emails.get_existing_uids(str(tmp_path))
         assert result == {"1"}
+
+    def test_os_error_handling(self, monkeypatch):
+        """Test handling of OS errors during listing."""
+        def mock_listdir(path):
+            raise OSError("Access denied")
+            
+        monkeypatch.setattr(os, "listdir", mock_listdir)
+        
+        uids = backup_imap_emails.get_existing_uids("/some/path")
+        assert len(uids) == 0
+
+
+class TestBackupErrorHandling:
+    """Tests for error handling scenarios in backup."""
+    
+    def test_connection_error_in_worker(self, monkeypatch):
+        """Test worker handles connection failure gracefully."""
+        # Mock get_imap_connection to fail
+        monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: None)
+        
+        # Should return None/Exit without crashing
+        backup_imap_emails.process_batch([], "INBOX", ("h","u","p"), "/tmp")
+
+    def test_select_error_in_worker(self, monkeypatch):
+        """Test worker handles SELECT failure."""
+        mock_conn = MagicMock()
+        mock_conn.select.side_effect = Exception("Select error")
+        monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: mock_conn)
+        
+        # Should log error and return
+        backup_imap_emails.process_batch([], "INBOX", ("h","u","p"), "/tmp")
+        mock_conn.select.assert_called()
+
+    def test_fetch_body_error(self, monkeypatch, tmp_path):
+        """Test handling of fetch body failure."""
+        mock_conn = MagicMock()
+        mock_conn.select.return_value = "OK"
+        # get_msg_details calls fetch headers, make it work
+        monkeypatch.setattr("imap_common.get_msg_details",
+                           lambda conn, uid: (uid, 100, "Subject"))
+        
+        # Fetch body fails
+        mock_conn.uid.return_value = ("NO", [None])
+        
+        monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: mock_conn)
+        
+        # Try processing one UID
+        backup_imap_emails.process_batch([b"1"], "INBOX", ("h","u","p"), str(tmp_path))
+        
+        # File should not exist
+        assert not list(tmp_path.glob("*.eml"))
+
+    def test_write_error(self, monkeypatch, tmp_path):
+        """Test handling of file write error."""
+        mock_conn = MagicMock()
+        monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: mock_conn)
+        
+        # Mock fetched data
+        monkeypatch.setattr("imap_common.get_msg_details",
+                           lambda conn, uid: (uid, 100, "Subject"))
+        mock_conn.uid.return_value = ("OK", [(b"1 (RFC822 {10}", b"Content")])
+        
+        # Mock open to fail
+        def mock_open(*args, **kwargs):
+            raise OSError("Disk full")
+            
+        monkeypatch.setattr("builtins.open", mock_open)
+        
+        backup_imap_emails.process_batch([b"1"], "INBOX", ("h","u","p"), str(tmp_path))
+        
+    def test_folder_creation_error(self, monkeypatch):
+        """Test handling failure to create local folder."""
+        def mock_makedirs(path, exist_ok=False):
+            raise OSError("Permission denied")
+            
+        monkeypatch.setattr(os, "makedirs", mock_makedirs)
+        
+        mock_conn = MagicMock()
+        
+        # backup_folder should return early
+        backup_imap_emails.backup_folder(mock_conn, "INBOX", "/tmp", ("h","u","p"))
+        mock_conn.select.assert_not_called()
+
+    def test_select_folder_error(self, monkeypatch):
+        """Test handling of select folder failure in main loop."""
+        mock_conn = MagicMock()
+        mock_conn.select.side_effect = Exception("Select failed")
+        monkeypatch.setattr(os, "makedirs", lambda p, exist_ok: None)
+        
+        backup_imap_emails.backup_folder(mock_conn, "INBOX", "/tmp", ("h","u","p"))
+        mock_conn.uid.assert_not_called()
+
+    def test_search_error(self, monkeypatch):
+        """Test handling of search failure."""
+        mock_conn = MagicMock()
+        mock_conn.uid.return_value = ("NO", [])
+        monkeypatch.setattr(os, "makedirs", lambda p, exist_ok: None)
+        
+        backup_imap_emails.backup_folder(mock_conn, "INBOX", "/tmp", ("h","u","p"))
+        
+    def test_main_makedirs_error(self, monkeypatch, capsys):
+        """Test failure to create main backup directory."""
+        env = {
+            "SRC_IMAP_HOST": "h", "SRC_IMAP_USERNAME": "u", "SRC_IMAP_PASSWORD": "p",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(sys, "argv", ["backup.py", "--dest-path", "/protected/path"])
+        
+        def mock_makedirs(path):
+            raise OSError("No permission")
+        monkeypatch.setattr(os, "makedirs", mock_makedirs)
+        monkeypatch.setattr(os.path, "exists", lambda p: False)
+        
+        with pytest.raises(SystemExit):
+            backup_imap_emails.main()
+        
+        captured = capsys.readouterr()
+        assert "Error creating backup directory" in captured.out

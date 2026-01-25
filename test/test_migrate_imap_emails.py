@@ -10,8 +10,10 @@ Tests cover:
 - Error handling
 """
 
+import imaplib
 import os
 import sys
+import threading
 
 import pytest
 
@@ -297,3 +299,185 @@ class TestConfigValidation:
             migrate_imap_emails.main()
 
         assert exc_info.value.code == 1
+
+
+class TestMigrateErrorHandling:
+    """Tests for error handling during migration."""
+
+    def test_connection_error_in_worker(self, mock_server_factory, monkeypatch):
+        """Test error handling when worker fails to connect."""
+        src_data = {"INBOX": [b"Subject: Test\r\nMessage-ID: <1>\r\n\r\nBody"]}
+        dest_data = {"INBOX": []}
+
+        _, _, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        # Proper setup for main thread connection
+        real_mock_conn = make_mock_connection(p1, p2)
+
+        def side_effect(*args, **kwargs):
+            if threading.current_thread() is threading.main_thread():
+                return real_mock_conn(*args, **kwargs)
+            return None  # Simulate connection failure in worker
+
+        monkeypatch.setattr("imap_common.get_imap_connection", side_effect)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+            "MAX_WORKERS": "1",
+        }
+        monkeypatch.setattr(os, "environ", env)
+
+        # Should not crash, but log error
+        migrate_imap_emails.main()
+
+    def test_select_error_in_worker(self, mock_server_factory, monkeypatch):
+        """Test error handling when folder selection fails in worker."""
+        src_data = {"INBOX": [b"Subject: Test\r\nMessage-ID: <1>\r\n\r\nBody"]}
+        dest_data = {"INBOX": []}
+
+        _, _, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        # Patch imaplib.IMAP4.select globally but condition on thread
+        original_select = imaplib.IMAP4.select
+
+        def side_effect_select(self, mailbox, readonly=False):
+            if threading.current_thread() is not threading.main_thread():
+                raise Exception("Select failed")
+            return original_select(self, mailbox, readonly)
+
+        monkeypatch.setattr(imaplib.IMAP4, "select", side_effect_select)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+            "MAX_WORKERS": "1",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+    def test_fetch_error_in_worker(self, mock_server_factory, monkeypatch):
+        """Test error handling when fetching message details fails."""
+        src_data = {"INBOX": [b"Subject: Test\r\nMessage-ID: <1>\r\n\r\nBody"]}
+        dest_data = {"INBOX": []}
+
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        # Patch imaplib.IMAP4.uid globally but condition on thread
+        original_uid = imaplib.IMAP4.uid
+
+        def side_effect_uid(self, command, *args):
+            if command == "fetch" and threading.current_thread() is not threading.main_thread():
+                raise Exception("Fetch failed")
+            return original_uid(self, command, *args)
+
+        monkeypatch.setattr(imaplib.IMAP4, "uid", side_effect_uid)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+            "MAX_WORKERS": "1",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+        # Dest should be empty as fetch failed
+        assert len(dest_server.folders["INBOX"]) == 0
+
+    def test_main_connection_failure(self, monkeypatch):
+        """Test that main exits if initial connection fails."""
+        monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: None)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+        }
+        monkeypatch.setattr(os, "environ", env)
+
+        with pytest.raises(SystemExit) as exc:
+            migrate_imap_emails.main()
+        assert exc.value.code == 1
+
+
+class TestTrashHandling:
+    """Tests for trash folder related logic."""
+
+    def test_circular_trash_migration_prevention(self, mock_server_factory, monkeypatch):
+        """Test that the trash folder itself is not migrated when delete is on."""
+        src_data = {"INBOX": [], "Trash": [b"Subject: Garbage\r\nMessage-ID: <g>\r\n\r\nC"]}
+        dest_data = {"INBOX": []}
+
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        # Mock trash detection
+        monkeypatch.setattr("imap_common.detect_trash_folder", lambda conn: "Trash")
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+            "DELETE_FROM_SOURCE": "true",
+            "MAX_WORKERS": "1",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+        # Trash folder should NOT be created in dest (skipped)
+        assert "Trash" not in dest_server.folders
+
+    def test_deleted_moved_to_trash(self, mock_server_factory, monkeypatch):
+        """Test that migrated emails are moved to trash on source."""
+        src_data = {"INBOX": [b"Subject: T\r\nMessage-ID: <1>\r\n\r\nBody"]}
+        dest_data = {"INBOX": []}
+
+        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+        src_server.folders["Trash"] = []  # Create trash on source
+
+        monkeypatch.setattr("imap_common.detect_trash_folder", lambda conn: "Trash")
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+            "DELETE_FROM_SOURCE": "true",
+            "MAX_WORKERS": "1",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+        # Dest should have it
+        assert len(dest_server.folders["INBOX"]) == 1
+        # Source INBOX should be empty (moved)
+        assert len(src_server.folders["INBOX"]) == 0
+        # Source Trash should have it (copied before delete)
+        assert len(src_server.folders["Trash"]) == 1
