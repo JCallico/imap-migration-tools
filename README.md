@@ -38,6 +38,7 @@ This repository contains a set of Python scripts designed to migrate emails betw
    - **Format**: Saves emails as individual `.eml` files (RFC 5322), compatible with Outlook, Thunderbird, and Apple Mail.
    - **Structure**: Replicates the IMAP folder hierarchy locally.
    - **Incremental**: Skips emails that have already been downloaded (based on UID) so you can run it periodically to fetch new messages.
+   - **Gmail Labels Preservation**: Creates a `labels_manifest.json` file mapping each email's Message-ID to its Gmail labels, enabling proper restoration with labels intact.
 
 ## Getting Started
 
@@ -196,6 +197,60 @@ python3 backup_imap_emails.py --dest-path "/Users/jdoe/Documents/Emails"
 # Backup single folder
 python3 backup_imap_emails.py --dest-path "./my_backup" "[Gmail]/Sent Mail"
 ```
+
+### 6. Gmail Backup with Labels Preservation
+When backing up a Gmail account, use `--preserve-labels` to create a manifest file that maps each email to its Gmail labels. This is essential for restoring emails to another Gmail account with labels intact.
+
+```bash
+# Recommended: Backup All Mail with labels manifest
+python3 backup_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "you@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-path "./gmail_backup" \
+  --preserve-labels \
+  "[Gmail]/All Mail"
+```
+
+**For large accounts (100K+ emails)**, you can build the manifest first to test:
+```bash
+# Step 1: Build manifest only (fast, no download)
+python3 backup_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "you@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-path "./gmail_backup" \
+  --manifest-only
+
+# Step 2: Download emails (can run later, manifest already exists)
+python3 backup_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "you@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-path "./gmail_backup" \
+  "[Gmail]/All Mail"
+```
+
+**How it works:**
+1. The script scans ALL folders in your Gmail account to identify which emails have which labels
+2. Creates a `labels_manifest.json` file mapping each email's `Message-ID` to its labels
+3. Downloads all emails from `[Gmail]/All Mail` (contains every email once, no duplicates)
+
+**Example `labels_manifest.json`:**
+```json
+{
+  "<CAExample123@mail.gmail.com>": ["INBOX", "Work", "Projects/2024"],
+  "<CAExample456@mail.gmail.com>": ["Sent Mail", "Personal", "Starred"]
+}
+```
+
+**Benefits:**
+- ✅ No duplicate emails on disk (each email saved once)
+- ✅ Labels are preserved for restoration
+- ✅ Includes system labels (INBOX, Sent Mail, Starred) and user labels
+- ✅ Progress reporting for large accounts
+
+**Note:** Gmail labels like "Important" that are auto-managed by Gmail are excluded from the manifest as they cannot be reliably restored.
 
 ## Troubleshooting
 

@@ -369,3 +369,253 @@ class TestBackupErrorHandling:
 
         captured = capsys.readouterr()
         assert "Error creating backup directory" in captured.out
+
+
+class TestGmailLabelsPreservation:
+    """Tests for Gmail labels manifest functionality."""
+
+    def test_is_gmail_label_folder_user_labels(self):
+        """Test that user labels are correctly identified."""
+        assert backup_imap_emails.is_gmail_label_folder("Work") is True
+        assert backup_imap_emails.is_gmail_label_folder("Personal") is True
+        assert backup_imap_emails.is_gmail_label_folder("Projects/2024") is True
+        assert backup_imap_emails.is_gmail_label_folder("INBOX") is True
+
+    def test_is_gmail_label_folder_gmail_labels(self):
+        """Test that Gmail system labels are correctly identified."""
+        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Sent Mail") is True
+        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Starred") is True
+
+    def test_is_gmail_label_folder_system_folders(self):
+        """Test that Gmail system folders are excluded."""
+        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/All Mail") is False
+        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Spam") is False
+        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Trash") is False
+        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Drafts") is False
+        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Bin") is False
+
+    def test_load_labels_manifest_nonexistent(self, tmp_path):
+        """Test loading manifest when file doesn't exist."""
+        result = backup_imap_emails.load_labels_manifest(str(tmp_path))
+        assert result == {}
+
+    def test_load_labels_manifest_existing(self, tmp_path):
+        """Test loading existing manifest file."""
+        import json
+
+        manifest_data = {
+            "<msg1@test.com>": ["INBOX", "Work"],
+            "<msg2@test.com>": ["Sent Mail", "Personal"],
+        }
+        manifest_path = tmp_path / "labels_manifest.json"
+        manifest_path.write_text(json.dumps(manifest_data))
+
+        result = backup_imap_emails.load_labels_manifest(str(tmp_path))
+        assert result == manifest_data
+
+    def test_load_labels_manifest_invalid_json(self, tmp_path):
+        """Test loading invalid JSON manifest file."""
+        manifest_path = tmp_path / "labels_manifest.json"
+        manifest_path.write_text("not valid json {{{")
+
+        result = backup_imap_emails.load_labels_manifest(str(tmp_path))
+        assert result == {}
+
+    def test_get_message_ids_in_folder(self, monkeypatch):
+        """Test extraction of message IDs from a folder."""
+        mock_conn = MagicMock()
+        mock_conn.select.return_value = ("OK", [b"1"])
+        mock_conn.uid.side_effect = [
+            ("OK", [b"1 2 3"]),  # search result
+            (
+                "OK",
+                [
+                    (b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg1@test.com>\r\n"),
+                    b")",
+                    (b"2 (BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg2@test.com>\r\n"),
+                    b")",
+                    (b"3 (BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg3@test.com>\r\n"),
+                    b")",
+                ],
+            ),  # fetch result
+        ]
+
+        result = backup_imap_emails.get_message_ids_in_folder(mock_conn, "INBOX", None)
+
+        assert "<msg1@test.com>" in result
+        assert "<msg2@test.com>" in result
+        assert "<msg3@test.com>" in result
+
+    def test_get_message_ids_in_folder_with_progress(self, monkeypatch):
+        """Test extraction of message IDs with progress callback."""
+        mock_conn = MagicMock()
+        mock_conn.select.return_value = ("OK", [b"1"])
+        mock_conn.uid.side_effect = [
+            ("OK", [b"1 2 3"]),  # search result
+            (
+                "OK",
+                [
+                    (b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg1@test.com>\r\n"),
+                    b")",
+                ],
+            ),  # fetch result
+        ]
+
+        progress_calls = []
+
+        def progress_cb(current, total):
+            progress_calls.append((current, total))
+
+        backup_imap_emails.get_message_ids_in_folder(mock_conn, "INBOX", progress_cb)
+
+        # Progress should have been called
+        assert len(progress_calls) > 0
+        # Last call should show completion
+        assert progress_calls[-1][0] == progress_calls[-1][1]
+
+    def test_get_message_ids_in_folder_select_error(self, monkeypatch):
+        """Test handling of folder select error."""
+        mock_conn = MagicMock()
+        mock_conn.select.side_effect = Exception("Select failed")
+
+        result = backup_imap_emails.get_message_ids_in_folder(mock_conn, "INBOX")
+        assert result == set()
+
+    def test_get_message_ids_in_folder_empty(self, monkeypatch):
+        """Test extraction from empty folder."""
+        mock_conn = MagicMock()
+        mock_conn.select.return_value = ("OK", [b"0"])
+        mock_conn.uid.return_value = ("OK", [b""])
+
+        result = backup_imap_emails.get_message_ids_in_folder(mock_conn, "INBOX", None)
+        assert result == set()
+
+    def test_build_labels_manifest(self, monkeypatch, tmp_path):
+        """Test building labels manifest from mock folders."""
+        mock_conn = MagicMock()
+
+        # Mock folder list - simulate Gmail structure
+        mock_conn.list.return_value = (
+            "OK",
+            [
+                b'(\\HasNoChildren) "/" "INBOX"',
+                b'(\\HasNoChildren) "/" "Work"',
+                b'(\\HasNoChildren) "/" "[Gmail]/All Mail"',
+                b'(\\HasNoChildren) "/" "[Gmail]/Sent Mail"',
+            ],
+        )
+
+        # Track which folder is selected
+        folder_data = {
+            "INBOX": {"<msg1@test.com>", "<msg2@test.com>"},
+            "Work": {"<msg1@test.com>"},
+            "[Gmail]/Sent Mail": {"<msg2@test.com>"},
+        }
+
+        def mock_get_message_ids(conn, folder, progress_cb=None):
+            return folder_data.get(folder, set())
+
+        monkeypatch.setattr(backup_imap_emails, "get_message_ids_in_folder", mock_get_message_ids)
+
+        result = backup_imap_emails.build_labels_manifest(mock_conn, str(tmp_path))
+
+        # Check manifest structure
+        assert "<msg1@test.com>" in result
+        assert "<msg2@test.com>" in result
+        assert "INBOX" in result["<msg1@test.com>"]
+        assert "Work" in result["<msg1@test.com>"]
+        assert "INBOX" in result["<msg2@test.com>"]
+        assert "Sent Mail" in result["<msg2@test.com>"]
+
+        # Check file was saved
+        manifest_path = tmp_path / "labels_manifest.json"
+        assert manifest_path.exists()
+
+    def test_build_labels_manifest_list_error(self, monkeypatch, tmp_path):
+        """Test handling of folder list error."""
+        mock_conn = MagicMock()
+        mock_conn.list.return_value = ("NO", [])
+
+        result = backup_imap_emails.build_labels_manifest(mock_conn, str(tmp_path))
+        assert result == {}
+
+    def test_preserve_labels_flag_integration(self, single_mock_server, monkeypatch, tmp_path):
+        """Test --preserve-labels flag creates manifest."""
+        src_data = {
+            "INBOX": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
+            "Work": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
+            "[Gmail]/All Mail": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
+        }
+        server, port = single_mock_server(src_data)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "user",
+            "SRC_IMAP_PASSWORD": "pass",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["backup_imap_emails.py", "--dest-path", str(tmp_path), "--preserve-labels", "[Gmail]/All Mail"],
+        )
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        backup_imap_emails.main()
+
+        # Check manifest was created
+        manifest_path = tmp_path / "labels_manifest.json"
+        assert manifest_path.exists()
+
+    def test_manifest_only_flag(self, single_mock_server, monkeypatch, tmp_path):
+        """Test --manifest-only flag creates manifest without downloading emails."""
+        src_data = {
+            "INBOX": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
+            "Work": [b"Subject: Work Email\r\nMessage-ID: <2@test>\r\n\r\nBody"],
+            "[Gmail]/All Mail": [
+                b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody",
+                b"Subject: Work Email\r\nMessage-ID: <2@test>\r\n\r\nBody",
+            ],
+        }
+        server, port = single_mock_server(src_data)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "user",
+            "SRC_IMAP_PASSWORD": "pass",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["backup_imap_emails.py", "--dest-path", str(tmp_path), "--manifest-only"],
+        )
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        # Should exit with code 0 after creating manifest
+        with pytest.raises(SystemExit) as exc_info:
+            backup_imap_emails.main()
+
+        assert exc_info.value.code == 0
+
+        # Check manifest was created
+        manifest_path = tmp_path / "labels_manifest.json"
+        assert manifest_path.exists()
+
+        # Check NO email folders were created (no download happened)
+        # Only the manifest file should exist
+        items = list(tmp_path.iterdir())
+        assert len(items) == 1
+        assert items[0].name == "labels_manifest.json"
+
+    def test_gmail_system_folders_constant(self):
+        """Test that GMAIL_SYSTEM_FOLDERS contains expected entries."""
+        expected = {
+            "[Gmail]/All Mail",
+            "[Gmail]/Spam",
+            "[Gmail]/Trash",
+            "[Gmail]/Drafts",
+            "[Gmail]/Bin",
+            "[Gmail]/Important",
+        }
+        assert backup_imap_emails.GMAIL_SYSTEM_FOLDERS == expected
