@@ -538,6 +538,11 @@ def main():
         else:
             folders = imap_common.list_selectable_folders(src)
             for name in folders:
+                # Ensure connection is alive (reconnect on broken pipe, timeout, etc.)
+                src = imap_common.ensure_connection(src, *src_conf)
+                if not src:
+                    print("Fatal: Could not reconnect to IMAP server. Aborting.")
+                    sys.exit(1)
                 backup_folder(src, name, local_path, src_conf)
 
         src.logout()

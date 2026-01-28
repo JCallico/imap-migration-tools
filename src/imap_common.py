@@ -43,6 +43,21 @@ def get_imap_connection(host, user, password):
         return None
 
 
+def ensure_connection(conn, host, user, password=None, oauth2_token=None):
+    """
+    Verifies an IMAP connection is still alive, reconnecting if necessary.
+    Returns the existing connection if healthy, or a new connection if it was broken.
+    Returns None if reconnection fails.
+    """
+    try:
+        if conn:
+            conn.noop()
+            return conn
+    except Exception:
+        pass
+    return get_imap_connection(host, user, password, oauth2_token)
+
+
 def normalize_folder_name(folder_info_str):
     """
     Parses the IMAP list response to extract the clean folder name.

@@ -370,6 +370,13 @@ def main():
                     safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
                     continue
 
+                # Ensure main connections are alive (reconnect on broken pipe, timeout, etc.)
+                src_main = imap_common.ensure_connection(src_main, *src_conf)
+                dest_main = imap_common.ensure_connection(dest_main, *dest_conf)
+                if not src_main or not dest_main:
+                    safe_print("Fatal: Could not reconnect to IMAP server(s). Aborting.")
+                    sys.exit(1)
+
                 migrate_folder(src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf, trash_folder)
 
         src_main.logout()
