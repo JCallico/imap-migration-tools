@@ -36,9 +36,9 @@ def count_emails(imap_server, username, password):
 
         # List all mailboxes
         print("Listing mailboxes...")
-        status, folders = mail.list()
+        folders = imap_common.list_selectable_folders(mail)
 
-        if status != "OK":
+        if not folders:
             print("Failed to list mailboxes.")
             return
 
@@ -46,8 +46,7 @@ def count_emails(imap_server, username, password):
         print(f"{'Folder Name':<40} {'Count':>10}")
         print("-" * 52)
 
-        for folder_info in folders:
-            folder_name = imap_common.normalize_folder_name(folder_info)
+        for folder_name in folders:
             display_name = folder_name
 
             try:
