@@ -40,6 +40,13 @@ This repository contains a set of Python scripts designed to migrate emails betw
    - **Incremental**: Skips emails that have already been downloaded (based on UID) so you can run it periodically to fetch new messages.
    - **Gmail Labels Preservation**: Creates a `labels_manifest.json` file mapping each email's Message-ID to its Gmail labels, enabling proper restoration with labels intact.
 
+5. **`restore_imap_emails.py`** (The Restore)
+   - Uploads emails from a local backup to an IMAP server.
+   - **Format**: Reads `.eml` files and uploads them preserving original dates.
+   - **Structure**: Recreates the folder hierarchy on the destination server.
+   - **Incremental**: Skips emails that already exist (based on Message-ID and size).
+   - **Gmail Labels Restoration**: Applies labels from `labels_manifest.json` to recreate the original Gmail label structure.
+
 ## Getting Started
 
 ### 1. Prerequisites
@@ -199,10 +206,20 @@ python3 backup_imap_emails.py --dest-path "./my_backup" "[Gmail]/Sent Mail"
 ```
 
 ### 6. Gmail Backup with Labels Preservation
-When backing up a Gmail account, use `--preserve-labels` to create a manifest file that maps each email to its Gmail labels. This is essential for restoring emails to another Gmail account with labels intact.
+When backing up a Gmail account, use `--gmail-mode` for the recommended workflow. This backs up `[Gmail]/All Mail` (no duplicates) and creates a labels manifest for restoration.
 
 ```bash
-# Recommended: Backup All Mail with labels manifest
+# Recommended: Use --gmail-mode for simplest workflow
+python3 backup_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "you@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-path "./gmail_backup" \
+  --gmail-mode
+```
+
+This is equivalent to the more verbose:
+```bash
 python3 backup_imap_emails.py \
   --src-host "imap.gmail.com" \
   --src-user "you@gmail.com" \
@@ -233,24 +250,109 @@ python3 backup_imap_emails.py \
 
 **How it works:**
 1. The script scans ALL folders in your Gmail account to identify which emails have which labels
-2. Creates a `labels_manifest.json` file mapping each email's `Message-ID` to its labels
+2. Creates a `labels_manifest.json` file mapping each email's `Message-ID` to its labels and IMAP flags
 3. Downloads all emails from `[Gmail]/All Mail` (contains every email once, no duplicates)
 
 **Example `labels_manifest.json`:**
 ```json
 {
-  "<CAExample123@mail.gmail.com>": ["INBOX", "Work", "Projects/2024"],
-  "<CAExample456@mail.gmail.com>": ["Sent Mail", "Personal", "Starred"]
+  "<CAExample123@mail.gmail.com>": {
+    "labels": ["INBOX", "Work", "Projects/2024"],
+    "flags": ["\\Seen"]
+  },
+  "<CAExample456@mail.gmail.com>": {
+    "labels": ["Sent Mail", "Personal"],
+    "flags": ["\\Seen", "\\Flagged"]
+  }
 }
 ```
+
+**Preserved IMAP Flags:**
+- `\Seen` - Email has been read
+- `\Flagged` - Email is starred/flagged
+- `\Answered` - Email has been replied to
+- `\Draft` - Email is a draft
 
 **Benefits:**
 - ✅ No duplicate emails on disk (each email saved once)
 - ✅ Labels are preserved for restoration
+- ✅ Read/unread and starred status is preserved
 - ✅ Includes system labels (INBOX, Sent Mail, Starred) and user labels
 - ✅ Progress reporting for large accounts
 
 **Note:** Gmail labels like "Important" that are auto-managed by Gmail are excluded from the manifest as they cannot be reliably restored.
+
+### 7. Backup with Flags Only (Non-Gmail)
+For non-Gmail servers, you can preserve read/starred status with `--preserve-flags`:
+
+```bash
+python3 backup_imap_emails.py \
+  --src-host "imap.example.com" \
+  --src-user "you@example.com" \
+  --src-pass "your-password" \
+  --dest-path "./my_backup" \
+  --preserve-flags \
+  "INBOX"
+```
+
+This creates a `flags_manifest.json` with the status of each email.
+
+### 8. Restore Backup to IMAP Server
+Restore emails from a local backup to any IMAP server.
+
+```bash
+# Restore all folders from backup
+python3 restore_imap_emails.py \
+  --src-path "./my_backup" \
+  --dest-host "imap.gmail.com" \
+  --dest-user "you@gmail.com" \
+  --dest-pass "your-app-password"
+
+# Restore with flags (read/starred status)
+python3 restore_imap_emails.py \
+  --src-path "./my_backup" \
+  --dest-host "imap.example.com" \
+  --dest-user "you@example.com" \
+  --dest-pass "your-password" \
+  --apply-flags
+
+# Restore a specific folder
+python3 restore_imap_emails.py \
+  --src-path "./my_backup" \
+  --dest-host "imap.gmail.com" \
+  --dest-user "you@gmail.com" \
+  --dest-pass "your-app-password" \
+  "INBOX"
+```
+
+### 9. Gmail Restore with Labels
+Restore a Gmail backup with full label structure using `--gmail-mode`:
+
+```bash
+python3 restore_imap_emails.py \
+  --src-path "./gmail_backup" \
+  --dest-host "imap.gmail.com" \
+  --dest-user "newaccount@gmail.com" \
+  --dest-pass "your-app-password" \
+  --gmail-mode
+```
+
+**How Gmail restore works:**
+1. Reads emails from the backup (typically `[Gmail]/All Mail`)
+2. Uploads each email to INBOX with original flags (read/starred/etc)
+3. Looks up the Message-ID in `labels_manifest.json`
+4. Copies the email to each label folder (e.g., "Work", "Personal", "Projects/2024")
+
+**Alternatively**, restore folders individually with labels and flags applied:
+```bash
+python3 restore_imap_emails.py \
+  --src-path "./gmail_backup" \
+  --dest-host "imap.gmail.com" \
+  --dest-user "newaccount@gmail.com" \
+  --dest-pass "your-app-password" \
+  --apply-labels \
+  --apply-flags
+```
 
 ## Troubleshooting
 
@@ -342,6 +444,7 @@ make ci
 |-----------|-------------|
 | `test_migrate_imap_emails.py` | Email migration tests (basic, duplicates, deletion, folders) |
 | `test_backup_imap_emails.py` | Backup functionality tests |
+| `test_restore_imap_emails.py` | Restore functionality tests |
 | `test_count_imap_emails.py` | Email counting tests |
 | `test_compare_imap_folders.py` | Folder comparison tests |
 | `test_imap_common.py` | Shared utility function tests |

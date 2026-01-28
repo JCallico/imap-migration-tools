@@ -430,11 +430,11 @@ class TestGmailLabelsPreservation:
             (
                 "OK",
                 [
-                    (b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg1@test.com>\r\n"),
+                    (b"1 (FLAGS (\\Seen) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg1@test.com>\r\n"),
                     b")",
-                    (b"2 (BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg2@test.com>\r\n"),
+                    (b"2 (FLAGS () BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg2@test.com>\r\n"),
                     b")",
-                    (b"3 (BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg3@test.com>\r\n"),
+                    (b"3 (FLAGS (\\Seen \\Answered) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg3@test.com>\r\n"),
                     b")",
                 ],
             ),  # fetch result
@@ -446,6 +446,35 @@ class TestGmailLabelsPreservation:
         assert "<msg2@test.com>" in result
         assert "<msg3@test.com>" in result
 
+    def test_get_message_info_in_folder_read_status(self, monkeypatch):
+        """Test extraction of message IDs with read/unread status."""
+        mock_conn = MagicMock()
+        mock_conn.select.return_value = ("OK", [b"1"])
+        mock_conn.uid.side_effect = [
+            ("OK", [b"1 2 3"]),  # search result
+            (
+                "OK",
+                [
+                    (b"1 (FLAGS (\\Seen) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg1@test.com>\r\n"),
+                    b")",
+                    (b"2 (FLAGS () BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg2@test.com>\r\n"),
+                    b")",
+                    (b"3 (FLAGS (\\Seen \\Answered) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg3@test.com>\r\n"),
+                    b")",
+                ],
+            ),  # fetch result
+        ]
+
+        result = backup_imap_emails.get_message_info_in_folder(mock_conn, "INBOX", None)
+
+        assert "<msg1@test.com>" in result
+        assert "\\Seen" in result["<msg1@test.com>"]["flags"]  # Has \Seen flag
+        assert "<msg2@test.com>" in result
+        assert result["<msg2@test.com>"]["flags"] == []  # No flags
+        assert "<msg3@test.com>" in result
+        assert "\\Seen" in result["<msg3@test.com>"]["flags"]  # Has \Seen flag
+        assert "\\Answered" in result["<msg3@test.com>"]["flags"]  # Also has \Answered
+
     def test_get_message_ids_in_folder_with_progress(self, monkeypatch):
         """Test extraction of message IDs with progress callback."""
         mock_conn = MagicMock()
@@ -455,7 +484,7 @@ class TestGmailLabelsPreservation:
             (
                 "OK",
                 [
-                    (b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg1@test.com>\r\n"),
+                    (b"1 (FLAGS (\\Seen) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg1@test.com>\r\n"),
                     b")",
                 ],
             ),  # fetch result
@@ -512,20 +541,35 @@ class TestGmailLabelsPreservation:
             "[Gmail]/Sent Mail": {"<msg2@test.com>"},
         }
 
+        # Mock info for All Mail (with flags)
+        all_mail_info = {
+            "<msg1@test.com>": {"flags": ["\\Seen", "\\Flagged"]},
+            "<msg2@test.com>": {"flags": []},
+        }
+
         def mock_get_message_ids(conn, folder, progress_cb=None):
             return folder_data.get(folder, set())
 
+        def mock_get_message_info(conn, folder, progress_cb=None):
+            if folder == "[Gmail]/All Mail":
+                return all_mail_info
+            return {}
+
         monkeypatch.setattr(backup_imap_emails, "get_message_ids_in_folder", mock_get_message_ids)
+        monkeypatch.setattr(backup_imap_emails, "get_message_info_in_folder", mock_get_message_info)
 
         result = backup_imap_emails.build_labels_manifest(mock_conn, str(tmp_path))
 
-        # Check manifest structure
+        # Check manifest structure (new format with labels and flags)
         assert "<msg1@test.com>" in result
         assert "<msg2@test.com>" in result
-        assert "INBOX" in result["<msg1@test.com>"]
-        assert "Work" in result["<msg1@test.com>"]
-        assert "INBOX" in result["<msg2@test.com>"]
-        assert "Sent Mail" in result["<msg2@test.com>"]
+        assert "INBOX" in result["<msg1@test.com>"]["labels"]
+        assert "Work" in result["<msg1@test.com>"]["labels"]
+        assert "\\Seen" in result["<msg1@test.com>"]["flags"]
+        assert "\\Flagged" in result["<msg1@test.com>"]["flags"]
+        assert "INBOX" in result["<msg2@test.com>"]["labels"]
+        assert "Sent Mail" in result["<msg2@test.com>"]["labels"]
+        assert result["<msg2@test.com>"]["flags"] == []
 
         # Check file was saved
         manifest_path = tmp_path / "labels_manifest.json"
@@ -619,3 +663,41 @@ class TestGmailLabelsPreservation:
             "[Gmail]/Important",
         }
         assert backup_imap_emails.GMAIL_SYSTEM_FOLDERS == expected
+
+    def test_gmail_mode_flag(self, single_mock_server, monkeypatch, tmp_path):
+        """Test --gmail-mode flag backs up All Mail and creates manifest."""
+        src_data = {
+            "INBOX": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
+            "Work": [b"Subject: Work Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
+            "[Gmail]/All Mail": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
+        }
+        server, port = single_mock_server(src_data)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "user",
+            "SRC_IMAP_PASSWORD": "pass",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["backup_imap_emails.py", "--dest-path", str(tmp_path), "--gmail-mode"],
+        )
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        backup_imap_emails.main()
+
+        # Check manifest was created
+        manifest_path = tmp_path / "labels_manifest.json"
+        assert manifest_path.exists()
+
+        # Check only [Gmail]/All Mail folder was backed up (not INBOX or Work)
+        all_mail_folder = tmp_path / "[Gmail]" / "All Mail"
+        assert all_mail_folder.exists()
+
+        # Should NOT have created separate INBOX or Work folders
+        inbox_folder = tmp_path / "INBOX"
+        work_folder = tmp_path / "Work"
+        assert not inbox_folder.exists()
+        assert not work_folder.exists()

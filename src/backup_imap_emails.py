@@ -184,31 +184,38 @@ def is_gmail_label_folder(folder_name):
     return False
 
 
-def get_message_ids_in_folder(imap_conn, folder_name, progress_callback=None):
+# Standard IMAP flags that can be preserved during migration
+# \Recent is session-specific and cannot be set by clients
+# \Deleted should not be preserved as it marks messages for removal
+PRESERVABLE_FLAGS = {"\\Seen", "\\Answered", "\\Flagged", "\\Draft"}
+
+
+def get_message_info_in_folder(imap_conn, folder_name, progress_callback=None):
     """
-    Returns a set of Message-IDs for all emails in a given folder.
+    Returns a dict of Message-IDs and their IMAP flags for all emails in a folder.
+    Returns: { "message-id": {"flags": ["\\Seen", "\\Flagged", ...]}, ... }
     Optional progress_callback(current, total) for progress reporting.
     """
-    message_ids = set()
+    message_info = {}
 
     try:
         imap_conn.select(f'"{folder_name}"', readonly=True)
     except Exception as e:
         safe_print(f"Could not select folder {folder_name}: {e}")
-        return message_ids
+        return message_info
 
     try:
         resp, data = imap_conn.uid("search", None, "ALL")
         if resp != "OK" or not data or not data[0]:
-            return message_ids
+            return message_info
 
         uids = data[0].split()
         if not uids:
-            return message_ids
+            return message_info
 
         total_uids = len(uids)
 
-        # Fetch Message-IDs in batches - use larger batch for header-only fetches
+        # Fetch Message-IDs and FLAGS in batches - use larger batch for header-only fetches
         batch_size = 200
         for i in range(0, len(uids), batch_size):
             batch = uids[i : i + batch_size]
@@ -219,12 +226,24 @@ def get_message_ids_in_folder(imap_conn, folder_name, progress_callback=None):
                 progress_callback(min(i + batch_size, total_uids), total_uids)
 
             try:
-                resp, items = imap_conn.uid("fetch", uid_range, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+                # Fetch both Message-ID header and FLAGS
+                resp, items = imap_conn.uid("fetch", uid_range, "(FLAGS BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
                 if resp != "OK":
                     continue
 
+                # Parse response - items come in pairs for each message
                 for item in items:
                     if isinstance(item, tuple) and len(item) >= 2:
+                        # First element contains UID and FLAGS info
+                        meta_str = item[0].decode("utf-8", errors="ignore") if isinstance(item[0], bytes) else str(item[0])
+                        
+                        # Extract all preservable flags from the metadata
+                        flags = []
+                        for flag in PRESERVABLE_FLAGS:
+                            if flag in meta_str:
+                                flags.append(flag)
+                        
+                        # Second element contains the header
                         header_data = item[1]
                         if isinstance(header_data, bytes):
                             header_str = header_data.decode("utf-8", errors="ignore")
@@ -233,7 +252,7 @@ def get_message_ids_in_folder(imap_conn, folder_name, progress_callback=None):
                                 if line.lower().startswith("message-id:"):
                                     msg_id = line.split(":", 1)[1].strip()
                                     if msg_id:
-                                        message_ids.add(msg_id)
+                                        message_info[msg_id] = {"flags": flags}
                                     break
             except Exception as e:
                 safe_print(f"Error fetching batch in {folder_name}: {e}")
@@ -247,16 +266,26 @@ def get_message_ids_in_folder(imap_conn, folder_name, progress_callback=None):
     except Exception as e:
         safe_print(f"Error searching folder {folder_name}: {e}")
 
-    return message_ids
+    return message_info
+
+
+def get_message_ids_in_folder(imap_conn, folder_name, progress_callback=None):
+    """
+    Returns a set of Message-IDs for all emails in a given folder.
+    This is a convenience wrapper around get_message_info_in_folder.
+    Optional progress_callback(current, total) for progress reporting.
+    """
+    info = get_message_info_in_folder(imap_conn, folder_name, progress_callback)
+    return set(info.keys())
 
 
 def build_labels_manifest(imap_conn, local_path):
     """
-    Builds a manifest mapping Message-IDs to their Gmail labels.
+    Builds a manifest mapping Message-IDs to their Gmail labels and IMAP flags.
     Scans all folders (labels) in the account and records which Message-IDs
-    appear in each label.
+    appear in each label, plus their flags from [Gmail]/All Mail.
 
-    Returns a dict: { "message-id": ["Label1", "Label2", ...], ... }
+    Returns a dict: { "message-id": {"labels": ["Label1", ...], "flags": ["\\Seen", ...]}, ... }
     Saves the manifest to labels_manifest.json in the backup directory.
     """
     import time
@@ -276,6 +305,38 @@ def build_labels_manifest(imap_conn, local_path):
     except Exception as e:
         safe_print(f"Error listing folders: {e}")
         return manifest
+
+    # First, scan [Gmail]/All Mail to get the authoritative flags for all emails
+    safe_print("[0/N] Scanning [Gmail]/All Mail for flags (read/starred/etc)...")
+    all_mail_start = time.time()
+
+    def all_mail_progress_cb(current, total):
+        elapsed = time.time() - start_time
+        print(
+            f"\r  Progress: {current}/{total} emails scanned (elapsed: {elapsed:.0f}s)   ",
+            end="",
+            flush=True,
+        )
+
+    all_mail_info = get_message_info_in_folder(imap_conn, "[Gmail]/All Mail", all_mail_progress_cb)
+    print()  # New line after progress
+
+    # Initialize manifest with flags from All Mail
+    for msg_id, info in all_mail_info.items():
+        manifest[msg_id] = {"labels": [], "flags": info.get("flags", [])}
+
+    all_mail_elapsed = time.time() - all_mail_start
+    # Count flag statistics
+    read_count = sum(1 for m in manifest.values() if "\\Seen" in m.get("flags", []))
+    flagged_count = sum(1 for m in manifest.values() if "\\Flagged" in m.get("flags", []))
+    safe_print(f"  -> {len(all_mail_info)} emails scanned ({all_mail_elapsed:.1f}s)")
+    safe_print(f"  -> Read: {read_count}, Unread: {len(manifest) - read_count}, Starred: {flagged_count}\n")
+
+    # Keep connection alive
+    try:
+        imap_conn.noop()
+    except Exception:
+        pass
 
     # Parse folder names and filter to label folders
     label_folders = []
@@ -322,9 +383,10 @@ def build_labels_manifest(imap_conn, local_path):
 
         for msg_id in message_ids:
             if msg_id not in manifest:
-                manifest[msg_id] = []
-            if label_name not in manifest[msg_id]:
-                manifest[msg_id].append(label_name)
+                # Email not in All Mail (rare, but handle it)
+                manifest[msg_id] = {"labels": [], "flags": []}
+            if label_name not in manifest[msg_id]["labels"]:
+                manifest[msg_id]["labels"].append(label_name)
 
         folder_elapsed = time.time() - folder_start
         total_emails_scanned += len(message_ids)
@@ -332,10 +394,13 @@ def build_labels_manifest(imap_conn, local_path):
 
     # Summary
     total_elapsed = time.time() - start_time
+    read_count = sum(1 for m in manifest.values() if "\\Seen" in m.get("flags", []))
+    flagged_count = sum(1 for m in manifest.values() if "\\Flagged" in m.get("flags", []))
     safe_print("\nManifest building complete:")
-    safe_print(f"  - Folders scanned: {total_folders}")
+    safe_print(f"  - Folders scanned: {total_folders + 1}")  # +1 for All Mail
     safe_print(f"  - Total email-label mappings: {total_emails_scanned}")
-    safe_print(f"  - Unique emails with labels: {len(manifest)}")
+    safe_print(f"  - Unique emails: {len(manifest)}")
+    safe_print(f"  - Read: {read_count}, Unread: {len(manifest) - read_count}, Starred: {flagged_count}")
     safe_print(f"  - Time elapsed: {total_elapsed:.1f}s")
 
     # Save manifest
@@ -344,6 +409,90 @@ def build_labels_manifest(imap_conn, local_path):
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
         safe_print(f"\nLabels manifest saved to: {manifest_path}")
+    except Exception as e:
+        safe_print(f"Error saving manifest: {e}")
+
+    return manifest
+
+
+def build_flags_manifest(imap_conn, local_path, folders_to_scan=None):
+    """
+    Builds a manifest mapping Message-IDs to their IMAP flags.
+    For non-Gmail servers, scans specified folders (or all folders if not specified).
+
+    Returns a dict: { "message-id": {"flags": ["\\Seen", ...]}, ... }
+    Saves the manifest to flags_manifest.json in the backup directory.
+    """
+    import time
+
+    manifest = {}
+    start_time = time.time()
+
+    safe_print("--- Building Flags Manifest ---")
+
+    # Get folders to scan
+    if folders_to_scan:
+        all_folders = folders_to_scan
+    else:
+        try:
+            typ, folders = imap_conn.list()
+            if typ != "OK":
+                safe_print("Error: Could not list folders.")
+                return manifest
+            all_folders = [imap_common.normalize_folder_name(f) for f in folders]
+        except Exception as e:
+            safe_print(f"Error listing folders: {e}")
+            return manifest
+
+    total_folders = len(all_folders)
+    safe_print(f"Found {total_folders} folders to scan.\n")
+
+    # Scan each folder
+    for folder_idx, folder_name in enumerate(all_folders, 1):
+        folder_start = time.time()
+
+        def progress_cb(current, total):
+            elapsed = time.time() - start_time
+            print(
+                f"\r  Progress: {current}/{total} emails scanned (elapsed: {elapsed:.0f}s)   ",
+                end="",
+                flush=True,
+            )
+
+        safe_print(f"[{folder_idx}/{total_folders}] Scanning: {folder_name}")
+        folder_info = get_message_info_in_folder(imap_conn, folder_name, progress_cb)
+        print()  # New line after progress
+
+        # Merge into manifest (keep first occurrence of flags)
+        for msg_id, info in folder_info.items():
+            if msg_id not in manifest:
+                manifest[msg_id] = {"flags": info.get("flags", [])}
+
+        folder_elapsed = time.time() - folder_start
+        safe_print(f"  -> {len(folder_info)} emails ({folder_elapsed:.1f}s)")
+
+        # Keep connection alive
+        try:
+            imap_conn.noop()
+        except Exception:
+            pass
+
+    # Summary
+    total_elapsed = time.time() - start_time
+    read_count = sum(1 for m in manifest.values() if "\\Seen" in m.get("flags", []))
+    flagged_count = sum(1 for m in manifest.values() if "\\Flagged" in m.get("flags", []))
+    safe_print("\nFlags manifest building complete:")
+    safe_print(f"  - Folders scanned: {total_folders}")
+    safe_print(f"  - Unique emails: {len(manifest)}")
+    safe_print(f"  - Read: {read_count}, Unread: {len(manifest) - read_count}, Flagged: {flagged_count}")
+    safe_print(f"  - Time elapsed: {total_elapsed:.1f}s")
+
+    # Save manifest
+    manifest_path = os.path.join(local_path, "flags_manifest.json")
+    try:
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+        safe_print(f"\nFlags manifest saved to: {manifest_path}")
     except Exception as e:
         safe_print(f"Error saving manifest: {e}")
 
@@ -464,9 +613,19 @@ def main():
         help="Gmail only: Create a labels_manifest.json mapping Message-IDs to labels for restoration",
     )
     parser.add_argument(
+        "--preserve-flags",
+        action="store_true",
+        help="Preserve IMAP flags (read/unread, starred, answered, draft) in manifest for restoration",
+    )
+    parser.add_argument(
         "--manifest-only",
         action="store_true",
         help="Gmail only: Build the labels manifest and exit without downloading emails",
+    )
+    parser.add_argument(
+        "--gmail-mode",
+        action="store_true",
+        help="Gmail backup mode: Build labels manifest and backup [Gmail]/All Mail only (recommended)",
     )
 
     parser.add_argument("folder", nargs="?", help="Specific folder to backup")
@@ -511,12 +670,16 @@ def main():
     print(f"Source Host     : {args.src_host}")
     print(f"Source User     : {args.src_user}")
     print(f"Destination Path: {local_path}")
-    if args.manifest_only:
+    if args.gmail_mode:
+        print("Mode            : Gmail Backup (All Mail + Labels + Flags)")
+    elif args.manifest_only:
         print("Mode            : Manifest Only (no email download)")
     elif args.folder:
         print(f"Target Folder   : {args.folder}")
-    if args.preserve_labels or args.manifest_only:
+    if args.preserve_labels or args.manifest_only or args.gmail_mode:
         print("Preserve Labels : Yes (Gmail)")
+    if args.preserve_flags or args.gmail_mode:
+        print("Preserve Flags  : Yes (read/starred/answered/draft)")
     print("-----------------------------\n")
 
     try:
@@ -524,12 +687,20 @@ def main():
         if not src:
             sys.exit(1)
 
-        # Build labels manifest BEFORE backing up emails
+        # Build labels manifest BEFORE backing up emails (Gmail mode)
         # This way we capture the label state at backup time
-        if args.preserve_labels or args.manifest_only:
+        if args.preserve_labels or args.manifest_only or args.gmail_mode:
             print("Building Gmail labels manifest...")
-            print("This scans all folders to map Message-IDs to labels.\n")
+            print("This scans all folders to map Message-IDs to labels and flags.\n")
             build_labels_manifest(src, local_path)
+            print("")  # Blank line after manifest building
+        # Build flags-only manifest for non-Gmail servers
+        elif args.preserve_flags:
+            print("Building flags manifest...")
+            print("This scans folders to capture read/starred/etc status.\n")
+            # Get folders to scan
+            folders_to_scan = [args.folder] if args.folder else None
+            build_flags_manifest(src, local_path, folders_to_scan)
             print("")  # Blank line after manifest building
 
         # If manifest-only mode, we're done
@@ -542,7 +713,10 @@ def main():
             print(f'  python3 backup_imap_emails.py --dest-path "{local_path}" "[Gmail]/All Mail"')
             sys.exit(0)
 
-        if args.folder:
+        # Gmail mode: backup only [Gmail]/All Mail
+        if args.gmail_mode:
+            backup_folder(src, "[Gmail]/All Mail", local_path, src_conf)
+        elif args.folder:
             backup_folder(src, args.folder, local_path, src_conf)
         else:
             typ, folders = src.list()
@@ -554,10 +728,14 @@ def main():
         src.logout()
         print("\nBackup completed successfully.")
 
-        if args.preserve_labels:
+        if args.preserve_labels or args.gmail_mode:
             manifest_path = os.path.join(local_path, "labels_manifest.json")
             print(f"\nGmail labels manifest saved to: {manifest_path}")
-            print("Use this file when restoring to reapply labels to emails.")
+            print("Use this file when restoring to reapply labels and flags to emails.")
+        elif args.preserve_flags:
+            manifest_path = os.path.join(local_path, "flags_manifest.json")
+            print(f"\nFlags manifest saved to: {manifest_path}")
+            print("Use this file when restoring to reapply read/starred status to emails.")
 
     except KeyboardInterrupt:
         print("\nBackup interrupted by user.")
