@@ -26,6 +26,7 @@ Gmail Labels:
 """
 
 import argparse
+import collections
 import concurrent.futures
 import json
 import os
@@ -379,26 +380,26 @@ def backup_folder(src_main, folder_name, local_base_path, src_conf):
         os.makedirs(local_folder_path, exist_ok=True)
     except Exception as e:
         safe_print(f"Error creating directory {local_folder_path}: {e}")
-        return
+        return collections.Counter()
 
     # Select IMAP folder
     try:
         src_main.select(f'"{folder_name}"', readonly=True)
     except Exception as e:
         safe_print(f"Skipping {folder_name}: {e}")
-        return
+        return collections.Counter()
 
     # Search all
     resp, data = src_main.uid("search", None, "ALL")
     if resp != "OK":
-        return
+        return collections.Counter()
 
     uids = data[0].split()
     total_on_server = len(uids)
 
     if total_on_server == 0:
         safe_print(f"Folder {folder_name} is empty.")
-        return
+        return collections.Counter()
 
     # Incremental Optimization
     # Read local directory to find UIDs we already have
@@ -418,9 +419,10 @@ def backup_folder(src_main, folder_name, local_base_path, src_conf):
 
     if not uids_to_download:
         safe_print(f"Folder {folder_name} is up to date.")
-        return
+        return collections.Counter(skipped=skipped, total=total_on_server)
 
-    safe_print(f"Downloading {len(uids_to_download)} new emails...")
+    download_count = len(uids_to_download)
+    safe_print(f"Downloading {download_count} new emails...")
 
     # Create batches
     uid_batches = [uids_to_download[i : i + BATCH_SIZE] for i in range(0, len(uids_to_download), BATCH_SIZE)]
@@ -439,6 +441,8 @@ def backup_folder(src_main, folder_name, local_base_path, src_conf):
         raise
     finally:
         executor.shutdown(wait=True)
+
+    return collections.Counter(downloaded=download_count, skipped=skipped, total=total_on_server)
 
 
 def main():
@@ -542,17 +546,22 @@ def main():
             print(f'  python3 backup_imap_emails.py --dest-path "{local_path}" "[Gmail]/All Mail"')
             sys.exit(0)
 
+        totals = collections.Counter()
         if args.folder:
-            backup_folder(src, args.folder, local_path, src_conf)
+            totals += backup_folder(src, args.folder, local_path, src_conf)
         else:
             typ, folders = src.list()
             if typ == "OK":
                 for f_info in folders:
                     name = imap_common.normalize_folder_name(f_info)
                     backup_folder(src, name, local_path, src_conf)
+                    totals += backup_folder(src, name, local_path, src_conf)
 
         src.logout()
-        print("\nBackup completed successfully.")
+        print(f"\nBackup completed successfully.")
+        print(f"  Total on server : {totals['total']}")
+        print(f"  Downloaded      : {totals['downloaded']}")
+        print(f"  Skipped (exists): {totals['skipped']}")
 
         if args.preserve_labels:
             manifest_path = os.path.join(local_path, "labels_manifest.json")
