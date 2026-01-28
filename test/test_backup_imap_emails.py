@@ -434,7 +434,10 @@ class TestGmailLabelsPreservation:
                     b")",
                     (b"2 (FLAGS () BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg2@test.com>\r\n"),
                     b")",
-                    (b"3 (FLAGS (\\Seen \\Answered) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg3@test.com>\r\n"),
+                    (
+                        b"3 (FLAGS (\\Seen \\Answered) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}",
+                        b"Message-ID: <msg3@test.com>\r\n",
+                    ),
                     b")",
                 ],
             ),  # fetch result
@@ -459,7 +462,10 @@ class TestGmailLabelsPreservation:
                     b")",
                     (b"2 (FLAGS () BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg2@test.com>\r\n"),
                     b")",
-                    (b"3 (FLAGS (\\Seen \\Answered) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg3@test.com>\r\n"),
+                    (
+                        b"3 (FLAGS (\\Seen \\Answered) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}",
+                        b"Message-ID: <msg3@test.com>\r\n",
+                    ),
                     b")",
                 ],
             ),  # fetch result

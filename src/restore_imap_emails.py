@@ -121,7 +121,7 @@ def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
     """
     Sync flags on an existing email in the given folder.
     Finds the email by Message-ID and updates its flags.
-    
+
     Args:
         imap_conn: IMAP connection
         folder_name: Folder containing the email
@@ -132,40 +132,40 @@ def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
     try:
         # Select folder
         imap_conn.select(f'"{folder_name}"')
-        
+
         # Search for the message by Message-ID
         search_id = message_id.strip("<>")
         resp, data = imap_conn.search(None, f'HEADER Message-ID "{search_id}"')
-        
+
         if resp != "OK" or not data[0]:
             return
-        
+
         msg_nums = data[0].split()
         if not msg_nums:
             return
-        
+
         # Use the first matching message
         msg_num = msg_nums[0]
-        
+
         # Parse flags into a list
         flag_list = flags.split() if flags else []
         if not flag_list:
             return
-        
+
         # Get current flags
         resp, flag_data = imap_conn.fetch(msg_num, "(FLAGS)")
         if resp != "OK":
             return
-        
+
         # Check which flags need to be added
         current_flags_str = str(flag_data[0]) if flag_data and flag_data[0] else ""
         flags_to_add = []
-        
+
         for flag in flag_list:
             # Normalize flag for comparison (case-insensitive)
             if flag.lower() not in current_flags_str.lower():
                 flags_to_add.append(flag)
-        
+
         if flags_to_add:
             # Add missing flags
             flags_str = " ".join(flags_to_add)
@@ -173,7 +173,7 @@ def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
             if resp == "OK":
                 for flag in flags_to_add:
                     safe_print(f"  -> Synced flag: {flag}")
-                    
+
     except Exception as e:
         safe_print(f"  -> Error syncing flags: {e}")
 
@@ -248,7 +248,7 @@ def upload_email(dest, folder_name, raw_content, date_str, message_id, subject, 
     """
     Upload a single email to the destination folder.
     Returns True on success, False on failure.
-    
+
     Args:
         flags: Optional string of IMAP flags like "\\Seen" for read emails.
     """
@@ -308,7 +308,7 @@ def label_to_folder(label):
 def process_restore_batch(eml_files, folder_name, dest_conf, manifest, apply_labels, apply_flags):
     """
     Process a batch of .eml files for restoration.
-    
+
     Args:
         folder_name: Target folder, or "__GMAIL_MODE__" for per-email folder selection
         manifest: Combined manifest with labels and/or flags
@@ -347,10 +347,10 @@ def process_restore_batch(eml_files, folder_name, dest_conf, manifest, apply_lab
                 # In Gmail mode, upload to first valid label folder
                 # Skip system folders we can't upload to
                 skip_folders = {"[Gmail]/All Mail", "[Gmail]/Spam", "[Gmail]/Trash"}
-                
+
                 target_folder = None
                 remaining_labels = []
-                
+
                 for label in labels:
                     label_folder = label_to_folder(label)
                     if label_folder in skip_folders:
@@ -359,7 +359,7 @@ def process_restore_batch(eml_files, folder_name, dest_conf, manifest, apply_lab
                         target_folder = label_folder
                     else:
                         remaining_labels.append(label)
-                
+
                 # If no valid label found, use Drafts as fallback (won't appear in INBOX)
                 if target_folder is None:
                     target_folder = "[Gmail]/Drafts"
@@ -462,7 +462,7 @@ def restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags):
     """
     Special restoration mode for Gmail: Upload emails to their first label folder
     and then apply additional labels from the manifest.
-    
+
     This avoids putting all emails in INBOX - emails only appear in INBOX
     if they originally had the INBOX label.
     """
@@ -650,11 +650,11 @@ def main():
     if apply_labels or apply_flags:
         # Try to load labels manifest first (contains both labels and flags for Gmail backups)
         manifest = load_labels_manifest(local_path)
-        
+
         # If no labels manifest, try flags-only manifest
         if not manifest and apply_flags:
             manifest = load_flags_manifest(local_path)
-        
+
         if not manifest:
             print("Warning: No manifest found. Labels/flags will not be applied.")
 

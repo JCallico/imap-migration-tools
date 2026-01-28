@@ -235,14 +235,16 @@ def get_message_info_in_folder(imap_conn, folder_name, progress_callback=None):
                 for item in items:
                     if isinstance(item, tuple) and len(item) >= 2:
                         # First element contains UID and FLAGS info
-                        meta_str = item[0].decode("utf-8", errors="ignore") if isinstance(item[0], bytes) else str(item[0])
-                        
+                        meta_str = (
+                            item[0].decode("utf-8", errors="ignore") if isinstance(item[0], bytes) else str(item[0])
+                        )
+
                         # Extract all preservable flags from the metadata
                         flags = []
                         for flag in PRESERVABLE_FLAGS:
                             if flag in meta_str:
                                 flags.append(flag)
-                        
+
                         # Second element contains the header
                         header_data = item[1]
                         if isinstance(header_data, bytes):
