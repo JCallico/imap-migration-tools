@@ -670,7 +670,7 @@ def main():
     if apply_labels:
         print(f"Apply Labels    : Yes ({len(manifest)} mappings)")
     if apply_flags:
-        print(f"Apply Flags     : Yes (read/starred/answered/draft)")
+        print("Apply Flags     : Yes (read/starred/answered/draft)")
     print("-----------------------------\n")
 
     try:
