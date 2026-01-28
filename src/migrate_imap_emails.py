@@ -362,18 +362,15 @@ def main():
             migrate_folder(src_main, dest_main, TARGET_FOLDER, DELETE_SOURCE, src_conf, dest_conf, trash_folder)
         else:
             # Migration for all folders
-            typ, folders = src_main.list()
-            if typ == "OK":
-                for folder_info in folders:
-                    name = imap_common.normalize_folder_name(folder_info)
+            folders = imap_common.list_selectable_folders(src_main)
+            for name in folders:
+                # Auto-skip trash folder if we are utilizing it as a dump target
+                # This prevents re-migrating the emails we just moved to trash
+                if DELETE_SOURCE and trash_folder and name == trash_folder:
+                    safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
+                    continue
 
-                    # Auto-skip trash folder if we are utilizing it as a dump target
-                    # This prevents re-migrating the emails we just moved to trash
-                    if DELETE_SOURCE and trash_folder and name == trash_folder:
-                        safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
-                        continue
-
-                    migrate_folder(src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf, trash_folder)
+                migrate_folder(src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf, trash_folder)
 
         src_main.logout()
         dest_main.logout()

@@ -267,22 +267,13 @@ def build_labels_manifest(imap_conn, local_path):
 
     safe_print("--- Building Gmail Labels Manifest ---")
 
-    # Get all folders
-    try:
-        typ, folders = imap_conn.list()
-        if typ != "OK":
-            safe_print("Error: Could not list folders for label mapping.")
-            return manifest
-    except Exception as e:
-        safe_print(f"Error listing folders: {e}")
+    # Get all selectable folders and filter to label folders
+    all_folders = imap_common.list_selectable_folders(imap_conn)
+    if not all_folders:
+        safe_print("Error: Could not list folders for label mapping.")
         return manifest
 
-    # Parse folder names and filter to label folders
-    label_folders = []
-    for f_info in folders:
-        name = imap_common.normalize_folder_name(f_info)
-        if is_gmail_label_folder(name):
-            label_folders.append(name)
+    label_folders = [f for f in all_folders if is_gmail_label_folder(f)]
 
     total_folders = len(label_folders)
     safe_print(f"Found {total_folders} label folders to scan.\n")
@@ -545,11 +536,9 @@ def main():
         if args.folder:
             backup_folder(src, args.folder, local_path, src_conf)
         else:
-            typ, folders = src.list()
-            if typ == "OK":
-                for f_info in folders:
-                    name = imap_common.normalize_folder_name(f_info)
-                    backup_folder(src, name, local_path, src_conf)
+            folders = imap_common.list_selectable_folders(src)
+            for name in folders:
+                backup_folder(src, name, local_path, src_conf)
 
         src.logout()
         print("\nBackup completed successfully.")
