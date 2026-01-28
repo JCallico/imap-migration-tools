@@ -145,7 +145,7 @@ class TestEmailCountingErrors:
         count_imap_emails.count_emails("host", "user", "pass")
 
         captured = capsys.readouterr()
-        assert "IMAP Error: Crash listing" in captured.out
+        assert "Failed to list mailboxes" in captured.out
 
     def test_imap_exception_during_select(self, monkeypatch, capsys):
         """Test handling of IMAP4 exception during folder selection."""

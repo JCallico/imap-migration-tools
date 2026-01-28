@@ -114,8 +114,8 @@ def main():
 
         # List Source Folders
         print("Listing folders in Source...")
-        typ, folders = src.list()
-        if typ != "OK":
+        folders = imap_common.list_selectable_folders(src)
+        if not folders:
             print("Failed to list source folders.")
             return
 
@@ -129,8 +129,7 @@ def main():
         total_dest = 0
 
         # Iterate through Source folders
-        for folder_info in folders:
-            folder_name = imap_common.normalize_folder_name(folder_info)
+        for folder_name in folders:
 
             # Get Counts
             src_count = get_email_count(src, folder_name)
