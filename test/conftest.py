@@ -103,7 +103,7 @@ def make_mock_connection(src_port, dest_port, src_user="src_user", dest_user="de
     Creates a mock connection function that routes to the correct server based on username.
     """
 
-    def mock_conn(host, user, pwd):
+    def mock_conn(host, user, pwd, oauth2_token=None):
         if user == src_user:
             port = src_port
         elif user == dest_user:
@@ -122,7 +122,7 @@ def make_single_mock_connection(port):
     Creates a mock connection function for a single server.
     """
 
-    def mock_conn(host, user, pwd):
+    def mock_conn(host, user, pwd, oauth2_token=None):
         c = imaplib.IMAP4("localhost", port)
         c.login(user, pwd)
         return c

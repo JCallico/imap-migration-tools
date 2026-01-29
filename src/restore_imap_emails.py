@@ -52,6 +52,7 @@ from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
 
 import imap_common
+import imap_oauth2
 
 # Defaults
 MAX_WORKERS = 4  # Lower default for restore to avoid rate limits
@@ -72,12 +73,17 @@ def safe_print(message):
 def get_thread_connection(dest_conf):
     """Get or create a thread-local IMAP connection."""
     if not hasattr(thread_local, "dest") or thread_local.dest is None:
-        thread_local.dest = imap_common.get_imap_connection(*dest_conf)
+        thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
     try:
         if thread_local.dest:
             thread_local.dest.noop()
     except Exception:
-        thread_local.dest = imap_common.get_imap_connection(*dest_conf)
+        thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
+        # If reconnection failed (possibly expired token), try refreshing
+        if thread_local.dest is None and dest_conf.get("oauth2"):
+            old_token = dest_conf["oauth2_token"]
+            imap_oauth2.refresh_oauth2_token(dest_conf, old_token)
+            thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
     return thread_local.dest
 
 
@@ -542,7 +548,7 @@ def restore_folder(folder_name, local_folder_path, dest_conf, manifest, apply_la
         safe_print(f"No .eml files found in {folder_name}")
         # Even if empty, check for orphans to delete
         if dest_delete:
-            dest = imap_common.get_imap_connection(*dest_conf)
+            dest = imap_common.get_imap_connection_from_conf(dest_conf)
             if dest:
                 delete_orphan_emails_from_dest(dest, folder_name, set())
                 dest.logout()
@@ -584,7 +590,7 @@ def restore_folder(folder_name, local_folder_path, dest_conf, manifest, apply_la
     # Delete orphan emails from destination if enabled
     if dest_delete and local_msg_ids is not None:
         safe_print("Syncing destination: removing emails not in local backup...")
-        dest = imap_common.get_imap_connection(*dest_conf)
+        dest = imap_common.get_imap_connection_from_conf(dest_conf)
         if dest:
             delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
             dest.logout()
@@ -707,6 +713,16 @@ def main():
         default=os.getenv("DEST_IMAP_PASSWORD"),
         help="Destination Password",
     )
+    parser.add_argument(
+        "--dest-client-id",
+        default=os.getenv("DEST_OAUTH2_CLIENT_ID"),
+        help="Destination OAuth2 Client ID",
+    )
+    parser.add_argument(
+        "--dest-client-secret",
+        default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
+        help="Destination OAuth2 Client Secret (if required)",
+    )
 
     # Config
     parser.add_argument(
@@ -760,13 +776,14 @@ def main():
     args = parser.parse_args()
 
     # Validate
+    dest_use_oauth2 = bool(args.dest_client_id)
     missing = []
     if not args.dest_host:
         missing.append("DEST_IMAP_HOST")
     if not args.dest_user:
         missing.append("DEST_IMAP_USERNAME")
-    if not args.dest_pass:
-        missing.append("DEST_IMAP_PASSWORD")
+    if not args.dest_pass and not dest_use_oauth2:
+        missing.append("DEST_IMAP_PASSWORD (or --dest-client-id for OAuth2)")
 
     if missing:
         print(f"Error: Missing credentials: {', '.join(missing)}")
@@ -781,7 +798,36 @@ def main():
     MAX_WORKERS = args.workers
     BATCH_SIZE = args.batch
 
-    dest_conf = (args.dest_host, args.dest_user, args.dest_pass)
+    # Acquire OAuth2 token if configured
+    dest_oauth2_token = None
+    dest_oauth2_provider = None
+    if dest_use_oauth2:
+        dest_oauth2_provider = imap_oauth2.detect_oauth2_provider(args.dest_host)
+        if not dest_oauth2_provider:
+            print(f"Error: Could not detect OAuth2 provider from host '{args.dest_host}'.")
+            sys.exit(1)
+        print(f"Acquiring OAuth2 token for destination ({dest_oauth2_provider})...")
+        dest_oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
+            dest_oauth2_provider, args.dest_client_id, args.dest_user, args.dest_client_secret
+        )
+        if not dest_oauth2_token:
+            print("Error: Failed to acquire OAuth2 token for destination.")
+            sys.exit(1)
+        print("Destination OAuth2 token acquired successfully.\n")
+
+    # Use a dict so token updates propagate to worker threads
+    dest_conf = {
+        "host": args.dest_host,
+        "user": args.dest_user,
+        "password": args.dest_pass,
+        "oauth2_token": dest_oauth2_token,
+        "oauth2": {
+            "provider": dest_oauth2_provider,
+            "client_id": args.dest_client_id,
+            "email": args.dest_user,
+            "client_secret": args.dest_client_secret,
+        } if dest_use_oauth2 else None,
+    }
 
     # Expand path
     local_path = os.path.expanduser(args.src_path)
@@ -809,6 +855,7 @@ def main():
     print(f"Source Path     : {local_path}")
     print(f"Destination Host: {args.dest_host}")
     print(f"Destination User: {args.dest_user}")
+    print(f"Destination Auth: {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}")
     print(f"Workers         : {args.workers}")
     if args.gmail_mode:
         print("Mode            : Gmail Restore with Labels + Flags")
@@ -824,7 +871,7 @@ def main():
 
     try:
         # Test connection
-        dest = imap_common.get_imap_connection(*dest_conf)
+        dest = imap_common.get_imap_connection_from_conf(dest_conf)
         if not dest:
             print("Error: Could not connect to destination server.")
             sys.exit(1)

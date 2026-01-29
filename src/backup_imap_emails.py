@@ -51,6 +51,7 @@ import sys
 import threading
 
 import imap_common
+import imap_oauth2
 
 # Defaults
 MAX_WORKERS = 10
@@ -71,12 +72,17 @@ def safe_print(message):
 
 def get_thread_connection(src_conf):
     if not hasattr(thread_local, "src") or thread_local.src is None:
-        thread_local.src = imap_common.get_imap_connection(*src_conf)
+        thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
     try:
         if thread_local.src:
             thread_local.src.noop()
     except Exception:
-        thread_local.src = imap_common.get_imap_connection(*src_conf)
+        thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
+        # If reconnection failed (possibly expired token), try refreshing
+        if thread_local.src is None and src_conf.get("oauth2"):
+            old_token = src_conf["oauth2_token"]
+            imap_oauth2.refresh_oauth2_token(src_conf, old_token)
+            thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
     return thread_local.src
 
 
@@ -653,6 +659,11 @@ def main():
     parser.add_argument("--src-user", default=os.getenv("SRC_IMAP_USERNAME"), help="Source Username")
     parser.add_argument("--src-pass", default=os.getenv("SRC_IMAP_PASSWORD"), help="Source Password")
 
+    # OAuth2
+    parser.add_argument("--src-client-id", default=os.getenv("SRC_OAUTH2_CLIENT_ID"), help="OAuth2 Client ID")
+    parser.add_argument("--src-client-secret", default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+                        help="OAuth2 Client Secret (if required)")
+
     # Destination (Local Path)
     env_path = os.getenv("BACKUP_LOCAL_PATH")
     parser.add_argument("--dest-path", default=env_path, help="Local destination path (Mandatory)")
@@ -710,8 +721,9 @@ def main():
         missing.append("SRC_IMAP_HOST")
     if not args.src_user:
         missing.append("SRC_IMAP_USERNAME")
-    if not args.src_pass:
-        missing.append("SRC_IMAP_PASSWORD")
+    use_oauth2 = bool(args.src_client_id)
+    if not args.src_pass and not use_oauth2:
+        missing.append("SRC_IMAP_PASSWORD or OAuth2 credentials")
 
     if missing:
         print(f"Error: Missing credentials: {', '.join(missing)}")
@@ -726,7 +738,36 @@ def main():
     MAX_WORKERS = args.workers
     BATCH_SIZE = args.batch
 
-    src_conf = (args.src_host, args.src_user, args.src_pass)
+    # Acquire OAuth2 token if configured
+    oauth2_token = None
+    oauth2_provider = None
+    if use_oauth2:
+        oauth2_provider = imap_oauth2.detect_oauth2_provider(args.src_host)
+        if not oauth2_provider:
+            print(f"Error: Could not detect OAuth2 provider from host '{args.src_host}'.")
+            sys.exit(1)
+        print(f"Acquiring OAuth2 token ({oauth2_provider})...")
+        oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
+            oauth2_provider, args.src_client_id, args.src_user, args.src_client_secret
+        )
+        if not oauth2_token:
+            print("Error: Failed to acquire OAuth2 token.")
+            sys.exit(1)
+        print("OAuth2 token acquired successfully.\n")
+
+    # Use a dict so token updates propagate to worker threads
+    src_conf = {
+        "host": args.src_host,
+        "user": args.src_user,
+        "password": args.src_pass,
+        "oauth2_token": oauth2_token,
+        "oauth2": {
+            "provider": oauth2_provider,
+            "client_id": args.src_client_id,
+            "email": args.src_user,
+            "client_secret": args.src_client_secret,
+        } if use_oauth2 else None,
+    }
 
     # Expand path (~/...)
     local_path = os.path.expanduser(args.dest_path)
@@ -741,6 +782,7 @@ def main():
     print("\n--- Configuration Summary ---")
     print(f"Source Host     : {args.src_host}")
     print(f"Source User     : {args.src_user}")
+    print(f"Auth Method     : {'OAuth2/' + oauth2_provider + ' (XOAUTH2)' if use_oauth2 else 'Basic (password)'}")
     print(f"Destination Path: {local_path}")
     if args.gmail_mode:
         print("Mode            : Gmail Backup (All Mail + Labels + Flags)")
@@ -757,7 +799,7 @@ def main():
     print("-----------------------------\n")
 
     try:
-        src = imap_common.get_imap_connection(*src_conf)
+        src = imap_common.get_imap_connection_from_conf(src_conf)
         if not src:
             sys.exit(1)
 
@@ -795,6 +837,13 @@ def main():
         else:
             folders = imap_common.list_selectable_folders(src)
             for name in folders:
+                try:
+                    src.noop()
+                except Exception:
+                    if src_conf.get("oauth2"):
+                        safe_print("Refreshing OAuth2 token...")
+                        imap_oauth2.refresh_oauth2_token(src_conf, src_conf["oauth2_token"])
+
                 backup_folder(src, name, local_path, src_conf, args.dest_delete)
 
         src.logout()

@@ -109,6 +109,7 @@ import threading
 from email.parser import BytesParser
 
 import imap_common
+import imap_oauth2
 
 # Configuration defaults
 DELETE_FROM_SOURCE_DEFAULT = False
@@ -366,22 +367,31 @@ def delete_orphan_emails(imap_conn, folder_name, source_msg_ids):
 def get_thread_connections(src_conf, dest_conf):
     # Initialize connections for this thread if they don't exist or are closed
     if not hasattr(thread_local, "src") or thread_local.src is None:
-        thread_local.src = imap_common.get_imap_connection(*src_conf)
+        thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
     if not hasattr(thread_local, "dest") or thread_local.dest is None:
-        thread_local.dest = imap_common.get_imap_connection(*dest_conf)
+        thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
 
-    # Simple check if alive (noop)
+    # Simple check if alive (noop), reconnect if dead
     try:
         if thread_local.src:
             thread_local.src.noop()
     except Exception:
-        thread_local.src = imap_common.get_imap_connection(*src_conf)
+        thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
+        # If reconnection failed (possibly expired token), try refreshing
+        if thread_local.src is None and src_conf.get("oauth2"):
+            old_token = src_conf["oauth2_token"]
+            imap_oauth2.refresh_oauth2_token(src_conf, old_token)
+            thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
 
     try:
         if thread_local.dest:
             thread_local.dest.noop()
     except Exception:
-        thread_local.dest = imap_common.get_imap_connection(*dest_conf)
+        thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
+        if thread_local.dest is None and dest_conf.get("oauth2"):
+            old_token = dest_conf["oauth2_token"]
+            imap_oauth2.refresh_oauth2_token(dest_conf, old_token)
+            thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
 
     return thread_local.src, thread_local.dest
 
@@ -668,11 +678,17 @@ def main():
     parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_HOST"), help="Source IMAP Host")
     parser.add_argument("--src-user", default=os.getenv("SRC_IMAP_USERNAME"), help="Source Username")
     parser.add_argument("--src-pass", default=os.getenv("SRC_IMAP_PASSWORD"), help="Source Password")
+    parser.add_argument("--src-client-id", default=os.getenv("SRC_OAUTH2_CLIENT_ID"), help="Source OAuth2 Client ID")
+    parser.add_argument("--src-client-secret", default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+                        help="Source OAuth2 Client Secret (if required)")
 
     # Dest args
     parser.add_argument("--dest-host", default=os.getenv("DEST_IMAP_HOST"), help="Destination IMAP Host")
     parser.add_argument("--dest-user", default=os.getenv("DEST_IMAP_USERNAME"), help="Destination Username")
     parser.add_argument("--dest-pass", default=os.getenv("DEST_IMAP_PASSWORD"), help="Destination Password")
+    parser.add_argument("--dest-client-id", default=os.getenv("DEST_OAUTH2_CLIENT_ID"), help="Destination OAuth2 Client ID")
+    parser.add_argument("--dest-client-secret", default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
+                        help="Destination OAuth2 Client Secret (if required)")
 
     # Options
     # Check env var for boolean default (msg "true" -> True)
@@ -753,18 +769,21 @@ def main():
     BATCH_SIZE = args.batch
 
     # Validation
+    # Validation
     missing_vars = []
     if not SRC_HOST:
         missing_vars.append("SRC_IMAP_HOST")
     if not SRC_USER:
         missing_vars.append("SRC_IMAP_USERNAME")
-    if not SRC_PASS:
+    src_use_oauth2 = bool(args.src_client_id)
+    if not SRC_PASS and not src_use_oauth2:
         missing_vars.append("SRC_IMAP_PASSWORD")
     if not DEST_HOST:
         missing_vars.append("DEST_IMAP_HOST")
     if not DEST_USER:
         missing_vars.append("DEST_IMAP_USERNAME")
-    if not DEST_PASS:
+    dest_use_oauth2 = bool(args.dest_client_id)
+    if not DEST_PASS and not dest_use_oauth2:
         missing_vars.append("DEST_IMAP_PASSWORD")
 
     if missing_vars:
@@ -772,11 +791,46 @@ def main():
         print("Please provide them via environment variables or command-line arguments.")
         sys.exit(1)
 
+    # Acquire OAuth2 tokens if configured
+    src_oauth2_token = None
+    src_oauth2_provider = None
+    if src_use_oauth2:
+        src_oauth2_provider = imap_oauth2.detect_oauth2_provider(SRC_HOST)
+        if not src_oauth2_provider:
+            print(f"Error: Could not detect OAuth2 provider from host '{SRC_HOST}'.")
+            sys.exit(1)
+        print(f"Acquiring OAuth2 token for source ({src_oauth2_provider})...")
+        src_oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
+            src_oauth2_provider, args.src_client_id, SRC_USER, args.src_client_secret
+        )
+        if not src_oauth2_token:
+            print("Error: Failed to acquire OAuth2 token for source.")
+            sys.exit(1)
+        print("Source OAuth2 token acquired successfully.\n")
+
+    dest_oauth2_token = None
+    dest_oauth2_provider = None
+    if dest_use_oauth2:
+        dest_oauth2_provider = imap_oauth2.detect_oauth2_provider(DEST_HOST)
+        if not dest_oauth2_provider:
+            print(f"Error: Could not detect OAuth2 provider from host '{DEST_HOST}'.")
+            sys.exit(1)
+        print(f"Acquiring OAuth2 token for destination ({dest_oauth2_provider})...")
+        dest_oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
+            dest_oauth2_provider, args.dest_client_id, DEST_USER, args.dest_client_secret
+        )
+        if not dest_oauth2_token:
+            print("Error: Failed to acquire OAuth2 token for destination.")
+            sys.exit(1)
+        print("Destination OAuth2 token acquired successfully.\n")
+
     print("\n--- Configuration Summary ---")
     print(f"Source Host     : {SRC_HOST}")
     print(f"Source User     : {SRC_USER}")
+    print(f"Source Auth     : {'OAuth2/' + src_oauth2_provider + ' (XOAUTH2)' if src_use_oauth2 else 'Basic (password)'}")
     print(f"Destination Host: {DEST_HOST}")
     print(f"Destination User: {DEST_USER}")
+    print(f"Dest Auth       : {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}")
     print(f"Delete fm Source: {DELETE_SOURCE}")
     print(f"Dest Delete     : {DEST_DELETE}")
     print(f"Preserve Flags  : {preserve_flags}")
@@ -785,13 +839,36 @@ def main():
         print(f"Target Folder   : {TARGET_FOLDER}")
     print("-----------------------------\n")
 
-    src_conf = (SRC_HOST, SRC_USER, SRC_PASS)
-    dest_conf = (DEST_HOST, DEST_USER, DEST_PASS)
+    # Use dicts so token updates propagate to worker threads
+    src_conf = {
+        "host": SRC_HOST,
+        "user": SRC_USER,
+        "password": SRC_PASS,
+        "oauth2_token": src_oauth2_token,
+        "oauth2": {
+            "provider": src_oauth2_provider,
+            "client_id": args.src_client_id,
+            "email": SRC_USER,
+            "client_secret": args.src_client_secret,
+        } if src_use_oauth2 else None,
+    }
+    dest_conf = {
+        "host": DEST_HOST,
+        "user": DEST_USER,
+        "password": DEST_PASS,
+        "oauth2_token": dest_oauth2_token,
+        "oauth2": {
+            "provider": dest_oauth2_provider,
+            "client_id": args.dest_client_id,
+            "email": DEST_USER,
+            "client_secret": args.dest_client_secret,
+        } if dest_use_oauth2 else None,
+    }
 
     try:
         # Initial connection to list folders
         safe_print("Connecting to Source to list folders...")
-        src_main = imap_common.get_imap_connection(SRC_HOST, SRC_USER, SRC_PASS)
+        src_main = imap_common.get_imap_connection_from_conf(src_conf)
         if not src_main:
             sys.exit(1)
 
@@ -809,7 +886,7 @@ def main():
 
         # We need a dummy dest connection just to pass to migrate_folder for folder creation checks?
         safe_print("Connecting to Destination...")
-        dest_main = imap_common.get_imap_connection(DEST_HOST, DEST_USER, DEST_PASS)
+        dest_main = imap_common.get_imap_connection_from_conf(dest_conf)
         if not dest_main:
             sys.exit(1)
 
@@ -872,6 +949,21 @@ def main():
                     if DELETE_SOURCE and trash_folder and name == trash_folder:
                         safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
                         continue
+
+                    # Ensure main connections are alive (reconnect on broken pipe, token expiry, etc.)
+                    try:
+                        src_main.noop()
+                    except Exception:
+                        if src_conf.get("oauth2"):
+                            safe_print("Refreshing source OAuth2 token...")
+                            imap_oauth2.refresh_oauth2_token(src_conf, src_conf["oauth2_token"])
+
+                    try:
+                        dest_main.noop()
+                    except Exception:
+                        if dest_conf.get("oauth2"):
+                            safe_print("Refreshing destination OAuth2 token...")
+                            imap_oauth2.refresh_oauth2_token(dest_conf, dest_conf["oauth2_token"])
 
                     migrate_folder(
                         src_main,
