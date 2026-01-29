@@ -257,8 +257,8 @@ def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source, tr
             size_str = f"{size / 1024:.1f}KB" if size else "0KB"
 
             is_duplicate = False
-            if msg_id and size:
-                is_duplicate = imap_common.message_exists_in_folder(dest, msg_id, size)
+            if msg_id:
+                is_duplicate = imap_common.message_exists_in_folder(dest, msg_id)
 
             if is_duplicate:
                 safe_print(f"[{folder_name}] {'SKIP (Dup)':<18} | {size_str:<8} | {subject[:40]}")

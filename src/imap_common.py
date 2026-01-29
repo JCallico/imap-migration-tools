@@ -128,9 +128,9 @@ def get_msg_details(imap_conn, uid):
     return msg_id, size, subject
 
 
-def message_exists_in_folder(dest_conn, msg_id, src_size):
+def message_exists_in_folder(dest_conn, msg_id):
     """
-    Checks if a message with the given Message-ID and RFC822.SIZE exists in the CURRENTLY SELECTED folder of dest_conn.
+    Checks if a message with the given Message-ID exists in the CURRENTLY SELECTED folder of dest_conn.
     Returns True if found, False otherwise.
     """
     if not msg_id:
@@ -143,23 +143,9 @@ def message_exists_in_folder(dest_conn, msg_id, src_size):
             return False
 
         dest_ids = data[0].split()
-        if not dest_ids:
-            return False
-
-        for did in dest_ids:
-            resp, items = dest_conn.fetch(did, "(RFC822.SIZE)")
-            if resp == "OK":
-                for item in items:
-                    if isinstance(item, bytes):
-                        content = item.decode("utf-8", errors="ignore")
-                    else:
-                        content = item[0].decode("utf-8", errors="ignore")
-                    size_match = re.search(r"RFC822\.SIZE\s+(\d+)", content)
-                    if size_match and int(size_match.group(1)) == src_size:
-                        return True
+        return len(dest_ids) > 0
     except Exception:
         return False
-    return False
 
 
 def sanitize_filename(filename):
