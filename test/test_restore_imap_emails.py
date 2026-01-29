@@ -396,7 +396,7 @@ class TestEmailExistsInFolder:
         mock_conn = MagicMock()
         monkeypatch.setattr("imap_common.message_exists_in_folder", lambda *args: True)
 
-        result = restore_imap_emails.email_exists_in_folder(mock_conn, "<test@test.com>", 1000)
+        result = restore_imap_emails.email_exists_in_folder(mock_conn, "<test@test.com>")
         assert result is True
 
     def test_email_exists_false(self, monkeypatch):
@@ -404,14 +404,14 @@ class TestEmailExistsInFolder:
         mock_conn = MagicMock()
         monkeypatch.setattr("imap_common.message_exists_in_folder", lambda *args: False)
 
-        result = restore_imap_emails.email_exists_in_folder(mock_conn, "<test@test.com>", 1000)
+        result = restore_imap_emails.email_exists_in_folder(mock_conn, "<test@test.com>")
         assert result is False
 
     def test_email_exists_no_message_id(self, monkeypatch):
         """Test with no message ID."""
         mock_conn = MagicMock()
 
-        result = restore_imap_emails.email_exists_in_folder(mock_conn, None, 1000)
+        result = restore_imap_emails.email_exists_in_folder(mock_conn, None)
         assert result is False
 
     def test_email_exists_exception(self, monkeypatch):
@@ -422,7 +422,7 @@ class TestEmailExistsInFolder:
             lambda *args: (_ for _ in ()).throw(Exception("Error")),
         )
 
-        result = restore_imap_emails.email_exists_in_folder(mock_conn, "<test@test.com>", 1000)
+        result = restore_imap_emails.email_exists_in_folder(mock_conn, "<test@test.com>")
         assert result is False
 
 
