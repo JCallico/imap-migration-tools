@@ -55,6 +55,7 @@ import sys
 from typing import Optional
 
 import imap_common
+import imap_oauth2
 
 
 def get_email_count(conn, folder_name):
@@ -145,48 +146,55 @@ def main():
     parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_HOST"), help="Source IMAP Server")
     parser.add_argument("--src-user", default=os.getenv("SRC_IMAP_USERNAME"), help="Source Username")
     parser.add_argument("--src-pass", default=os.getenv("SRC_IMAP_PASSWORD"), help="Source Password")
+    parser.add_argument("--src-client-id", default=os.getenv("SRC_OAUTH2_CLIENT_ID"), help="Source OAuth2 Client ID")
+    parser.add_argument("--src-client-secret", default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+                        help="Source OAuth2 Client Secret (if required)")
 
     # Dest args
     parser.add_argument("--dest-host", default=os.getenv("DEST_IMAP_HOST"), help="Destination IMAP Server")
     parser.add_argument("--dest-user", default=os.getenv("DEST_IMAP_USERNAME"), help="Destination Username")
     parser.add_argument("--dest-pass", default=os.getenv("DEST_IMAP_PASSWORD"), help="Destination Password")
+    parser.add_argument("--dest-client-id", default=os.getenv("DEST_OAUTH2_CLIENT_ID"), help="Destination OAuth2 Client ID")
+    parser.add_argument("--dest-client-secret", default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
+                        help="Destination OAuth2 Client Secret (if required)")
 
     args = parser.parse_args()
 
     src_is_local = bool(args.src_path)
     dest_is_local = bool(args.dest_path)
 
-    # Validation
-    missing_vars = []
-
-    if src_is_local:
-        if not os.path.isdir(args.src_path):
-            print(f"Error: Source local path does not exist or is not a directory: {args.src_path}")
+    # Acquire OAuth2 tokens if configured
+    src_oauth2_token = None
+    src_oauth2_provider = None
+    if src_use_oauth2:
+        src_oauth2_provider = imap_oauth2.detect_oauth2_provider(SRC_HOST)
+        if not src_oauth2_provider:
+            print(f"Error: Could not detect OAuth2 provider from host '{SRC_HOST}'.")
             sys.exit(1)
-    else:
-        if not args.src_host:
-            missing_vars.append("SRC_IMAP_HOST")
-        if not args.src_user:
-            missing_vars.append("SRC_IMAP_USERNAME")
-        if not args.src_pass:
-            missing_vars.append("SRC_IMAP_PASSWORD")
-
-    if dest_is_local:
-        if not os.path.isdir(args.dest_path):
-            print(f"Error: Destination local path does not exist or is not a directory: {args.dest_path}")
+        print(f"Acquiring OAuth2 token for source ({src_oauth2_provider})...")
+        src_oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
+            src_oauth2_provider, args.src_client_id, SRC_USER, args.src_client_secret
+        )
+        if not src_oauth2_token:
+            print("Error: Failed to acquire OAuth2 token for source.")
             sys.exit(1)
-    else:
-        if not args.dest_host:
-            missing_vars.append("DEST_IMAP_HOST")
-        if not args.dest_user:
-            missing_vars.append("DEST_IMAP_USERNAME")
-        if not args.dest_pass:
-            missing_vars.append("DEST_IMAP_PASSWORD")
+        print("Source OAuth2 token acquired successfully.\n")
 
-    if missing_vars:
-        print(f"Error: Missing configuration variables: {', '.join(missing_vars)}")
-        print("Please provide them via environment variables or command-line arguments.")
-        sys.exit(1)
+    dest_oauth2_token = None
+    dest_oauth2_provider = None
+    if dest_use_oauth2:
+        dest_oauth2_provider = imap_oauth2.detect_oauth2_provider(DEST_HOST)
+        if not dest_oauth2_provider:
+            print(f"Error: Could not detect OAuth2 provider from host '{DEST_HOST}'.")
+            sys.exit(1)
+        print(f"Acquiring OAuth2 token for destination ({dest_oauth2_provider})...")
+        dest_oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
+            dest_oauth2_provider, args.dest_client_id, DEST_USER, args.dest_client_secret
+        )
+        if not dest_oauth2_token:
+            print("Error: Failed to acquire OAuth2 token for destination.")
+            sys.exit(1)
+        print("Destination OAuth2 token acquired successfully.\n")
 
     print("\n--- Configuration Summary ---")
     if src_is_local:
@@ -194,12 +202,14 @@ def main():
     else:
         print(f"Source Host     : {args.src_host}")
         print(f"Source User     : {args.src_user}")
+        print(f"Source Auth     : {'OAuth2/' + src_oauth2_provider + ' (XOAUTH2)' if src_use_oauth2 else 'Basic (password)'}")
 
     if dest_is_local:
         print(f"Destination (Local): {args.dest_path}")
     else:
         print(f"Destination Host: {args.dest_host}")
         print(f"Destination User: {args.dest_user}")
+        print(f"Destination Auth: {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}")
     print("-----------------------------\n")
 
     src = None
@@ -209,14 +219,14 @@ def main():
         if not src_is_local:
             # Connect to Source
             print("Connecting to Source...")
-            src = imap_common.get_imap_connection(args.src_host, args.src_user, args.src_pass)
+            src = imap_common.get_imap_connection(args.src_host, args.src_user, args.src_pass, src_oauth2_token)
             if not src:
                 return
 
         if not dest_is_local:
             # Connect to Dest
             print("Connecting to Destination...")
-            dest = imap_common.get_imap_connection(args.dest_host, args.dest_user, args.dest_pass)
+            dest = imap_common.get_imap_connection(args.dest_host, args.dest_user, args.dest_pass, dest_oauth2_token)
             if not dest:
                 return
 

@@ -70,18 +70,45 @@ def verify_env_vars(vars_list):
     return True
 
 
-def get_imap_connection(host, user, password):
+def get_imap_connection_from_conf(conf):
+    """
+    Establishes an IMAP connection using a conf dict.
+
+    conf dict structure:
+        {
+            "host": str,
+            "user": str,
+            "password": str or None,
+            "oauth2_token": str or None,
+            "oauth2": dict or None  # Contains provider, client_id, email, client_secret
+        }
+    """
+    return get_imap_connection(
+        conf["host"], conf["user"], conf.get("password"), conf.get("oauth2_token")
+    )
+
+
+def get_imap_connection(host, user, password=None, oauth2_token=None):
     """
     Establishes an SSL connection to the IMAP server and logs in.
+    Supports both basic auth (password) and OAuth 2.0 (XOAUTH2).
     Returns the connection object or None if failed.
     """
-    if not all([host, user, password]):
+    if not host or not user:
         print(f"Error: Invalid credentials for {host}")
+        return None
+
+    if not password and not oauth2_token:
+        print(f"Error: Either password or oauth2_token is required for {host}")
         return None
 
     try:
         conn = imaplib.IMAP4_SSL(host)
-        conn.login(user, password)
+        if oauth2_token:
+            auth_string = f"user={user}\x01auth=Bearer {oauth2_token}\x01\x01"
+            conn.authenticate("XOAUTH2", lambda _: auth_string.encode())
+        else:
+            conn.login(user, password)
         return conn
     except Exception as e:
         print(f"Connection error to {host}: {e}")

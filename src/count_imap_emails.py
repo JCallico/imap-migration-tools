@@ -34,13 +34,14 @@ import os
 import sys
 
 import imap_common
+import imap_oauth2
 
 
-def count_emails(imap_server, username, password):
+def count_emails(imap_server, username, password=None, oauth2_token=None):
     try:
         # Connect to the IMAP server (using SSL)
         print(f"Connecting to {imap_server}...")
-        mail = imap_common.get_imap_connection(imap_server, username, password)
+        mail = imap_common.get_imap_connection(imap_server, username, password, oauth2_token)
         if not mail:
             return
 
@@ -184,6 +185,11 @@ if __name__ == "__main__":
     parser.add_argument("--user", default=default_user, help="Username")
     parser.add_argument("--pass", dest="password", default=default_pass, help="Password")
 
+    # OAuth2
+    parser.add_argument("--client-id", default=os.getenv("OAUTH2_CLIENT_ID") or os.getenv("SRC_OAUTH2_CLIENT_ID"), help="OAuth2 Client ID")
+    parser.add_argument("--client-secret", default=os.getenv("OAUTH2_CLIENT_SECRET") or os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+                        help="OAuth2 Client Secret (if required)")
+
     args = parser.parse_args()
 
     if args.path:
@@ -201,14 +207,32 @@ if __name__ == "__main__":
     USERNAME = args.user
     PASSWORD = args.password
 
-    if not all([IMAP_SERVER, USERNAME, PASSWORD]):
+    use_oauth2 = bool(args.client_id)
+    if not IMAP_SERVER or not USERNAME or (not PASSWORD and not use_oauth2):
         print("Error: Missing credentials.")
-        print("Please provide --host, --user, --pass via CLI or set IMAP_* / SRC_IMAP_* environment variables.")
         sys.exit(1)
+
+    # Acquire OAuth2 token if configured
+    oauth2_token = None
+    oauth2_provider = None
+    if use_oauth2:
+        oauth2_provider = imap_oauth2.detect_oauth2_provider(IMAP_SERVER)
+        if not oauth2_provider:
+            print(f"Error: Could not detect OAuth2 provider from host '{IMAP_SERVER}'.")
+            sys.exit(1)
+        print(f"Acquiring OAuth2 token ({oauth2_provider})...")
+        oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
+            oauth2_provider, args.client_id, USERNAME, args.client_secret
+        )
+        if not oauth2_token:
+            print("Error: Failed to acquire OAuth2 token.")
+            sys.exit(1)
+        print("OAuth2 token acquired successfully.\n")
 
     print("\n--- Configuration Summary ---")
     print(f"Host            : {IMAP_SERVER}")
     print(f"User            : {USERNAME}")
+    print(f"Auth Method     : {'OAuth2/' + oauth2_provider + ' (XOAUTH2)' if use_oauth2 else 'Basic (password)'}")
     print("-----------------------------\n")
 
-    count_emails(IMAP_SERVER, USERNAME, PASSWORD)
+    count_emails(IMAP_SERVER, USERNAME, PASSWORD, oauth2_token)
