@@ -161,12 +161,19 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                             continue
 
                         msgs = self.current_folders[self.selected_folder]
-                        # Find msg by UID
+                        # Find msg by UID - handle single UID, comma-separated, or ranges
                         target_msgs = []
                         if ":" in uid_set:
                             # Range logic omitted for brevity, taking all for '*' or simplified assumption
                             # But since we use UIDs, we should filter.
                             target_msgs = msgs  # Return all for range
+                        elif "," in uid_set:
+                            # Handle comma-separated UIDs like "1,2,3"
+                            try:
+                                uid_list = [int(u) for u in uid_set.split(",")]
+                                target_msgs = [m for m in msgs if m["uid"] in uid_list]
+                            except:
+                                pass
                         else:
                             try:
                                 t_uid = int(uid_set)
@@ -181,16 +188,30 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                             msg_len = len(msg_content)
                             flags_str = " ".join(m["flags"])
 
-                            resp = (
-                                f"* {msgs.index(m) + 1} FETCH (UID {m['uid']} RFC822.SIZE {msg_len} FLAGS ({flags_str})"
-                            )
+                            # Check if requesting header fields only
+                            if "HEADER.FIELDS" in opts:
+                                rfc822_size_part = f" RFC822.SIZE {msg_len}" if "RFC822.SIZE" in opts else ""
+                                # Extract just the headers from content
+                                content_str = msg_content.decode("utf-8", errors="ignore")
+                                header_part = content_str.split("\r\n\r\n")[0] + "\r\n"
+                                header_bytes = header_part.encode("utf-8")
+                                header_len = len(header_bytes)
 
-                            if "RFC822" in opts or "BODY" in opts:
+                                resp = (
+                                    f"* {msgs.index(m) + 1} FETCH (UID {m['uid']}{rfc822_size_part} FLAGS ({flags_str}) "
+                                    f"BODY[HEADER.FIELDS (MESSAGE-ID SUBJECT)] {{{header_len}}}\r\n"
+                                )
+                                self.wfile.write(resp.encode("utf-8"))
+                                self.wfile.write(header_bytes)
+                                self.wfile.write(b")\r\n")
+                            elif "RFC822" in opts or "BODY" in opts:
+                                resp = f"* {msgs.index(m) + 1} FETCH (UID {m['uid']} RFC822.SIZE {msg_len} FLAGS ({flags_str})"
                                 resp += f" BODY[] {{{msg_len}}}\r\n"
                                 self.wfile.write(resp.encode("utf-8"))
                                 self.wfile.write(msg_content)
                                 self.wfile.write(b")\r\n")
                             else:
+                                resp = f"* {msgs.index(m) + 1} FETCH (UID {m['uid']} RFC822.SIZE {msg_len} FLAGS ({flags_str})"
                                 resp += ")\r\n"
                                 self.wfile.write(resp.encode("utf-8"))
 

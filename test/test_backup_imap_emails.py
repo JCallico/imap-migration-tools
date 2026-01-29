@@ -707,3 +707,144 @@ class TestGmailLabelsPreservation:
         work_folder = tmp_path / "Work"
         assert not inbox_folder.exists()
         assert not work_folder.exists()
+
+
+class TestDeleteOrphanLocalFiles:
+    """Tests for delete_orphan_local_files function."""
+
+    def test_delete_orphan_files(self, tmp_path):
+        """Test that local files not on server are deleted."""
+        # Create a local folder with some .eml files
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+
+        # Create files with UIDs 1, 2, 3
+        (inbox_path / "1_Test_Email.eml").write_bytes(b"content1")
+        (inbox_path / "2_Another_Email.eml").write_bytes(b"content2")
+        (inbox_path / "3_Third_Email.eml").write_bytes(b"content3")
+
+        # Server only has UIDs 1 and 3
+        server_uids = {"1", "3"}
+
+        deleted = backup_imap_emails.delete_orphan_local_files(str(inbox_path), server_uids)
+
+        # UID 2 should be deleted
+        assert deleted == 1
+        assert (inbox_path / "1_Test_Email.eml").exists()
+        assert not (inbox_path / "2_Another_Email.eml").exists()
+        assert (inbox_path / "3_Third_Email.eml").exists()
+
+    def test_delete_multiple_orphans(self, tmp_path):
+        """Test deleting multiple orphan files."""
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+
+        # Create files with UIDs 1-5
+        for i in range(1, 6):
+            (inbox_path / f"{i}_Email_{i}.eml").write_bytes(f"content{i}".encode())
+
+        # Server only has UID 3
+        server_uids = {"3"}
+
+        deleted = backup_imap_emails.delete_orphan_local_files(str(inbox_path), server_uids)
+
+        # 4 files should be deleted (UIDs 1, 2, 4, 5)
+        assert deleted == 4
+        assert not (inbox_path / "1_Email_1.eml").exists()
+        assert not (inbox_path / "2_Email_2.eml").exists()
+        assert (inbox_path / "3_Email_3.eml").exists()
+        assert not (inbox_path / "4_Email_4.eml").exists()
+        assert not (inbox_path / "5_Email_5.eml").exists()
+
+    def test_no_orphans(self, tmp_path):
+        """Test when all local files exist on server."""
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+
+        (inbox_path / "1_Email.eml").write_bytes(b"content")
+        (inbox_path / "2_Email.eml").write_bytes(b"content")
+
+        server_uids = {"1", "2"}
+
+        deleted = backup_imap_emails.delete_orphan_local_files(str(inbox_path), server_uids)
+
+        assert deleted == 0
+        assert (inbox_path / "1_Email.eml").exists()
+        assert (inbox_path / "2_Email.eml").exists()
+
+    def test_nonexistent_folder(self, tmp_path):
+        """Test with nonexistent folder path."""
+        deleted = backup_imap_emails.delete_orphan_local_files(str(tmp_path / "nonexistent"), {"1", "2"})
+        assert deleted == 0
+
+    def test_ignore_non_eml_files(self, tmp_path):
+        """Test that non-.eml files are ignored."""
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+
+        (inbox_path / "1_Email.eml").write_bytes(b"content")
+        (inbox_path / "notes.txt").write_bytes(b"some notes")
+        (inbox_path / "2_data.json").write_bytes(b"{}")
+
+        # Server only has UID 1
+        server_uids = {"1"}
+
+        deleted = backup_imap_emails.delete_orphan_local_files(str(inbox_path), server_uids)
+
+        # Only .eml files should be considered
+        assert deleted == 0
+        assert (inbox_path / "notes.txt").exists()
+        assert (inbox_path / "2_data.json").exists()
+
+
+class TestDestDeleteBackupArgument:
+    """Tests for --dest-delete argument in backup script."""
+
+    def test_dest_delete_default_false(self):
+        """Test that --dest-delete defaults to False."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("folder", nargs="?")
+        parser.add_argument("--dest-delete", action="store_true", default=False)
+        args = parser.parse_args([])
+        assert args.dest_delete is False
+
+    def test_dest_delete_when_set(self):
+        """Test that --dest-delete can be set to True."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("folder", nargs="?")
+        parser.add_argument("--dest-delete", action="store_true", default=False)
+        args = parser.parse_args(["--dest-delete"])
+        assert args.dest_delete is True
+
+
+class TestDestDeleteBackupEnvVar:
+    """End-to-end tests for DEST_DELETE env var wiring in backup script."""
+
+    def test_dest_delete_enabled_via_env_var_deletes_orphans(self, single_mock_server, monkeypatch, tmp_path):
+        """If DEST_DELETE=true and server folder is empty, local orphans are deleted."""
+        src_data = {"INBOX": []}
+        _, port = single_mock_server(src_data)
+
+        backup_root = tmp_path / "backup"
+        inbox_path = backup_root / "INBOX"
+        inbox_path.mkdir(parents=True)
+        orphan = inbox_path / "1_Orphan.eml"
+        orphan.write_bytes(b"Subject: Orphan\r\nMessage-ID: <orphan@test>\r\n\r\nBody")
+
+        monkeypatch.setenv("SRC_IMAP_HOST", "localhost")
+        monkeypatch.setenv("SRC_IMAP_USERNAME", "user")
+        monkeypatch.setenv("SRC_IMAP_PASSWORD", "pass")
+        monkeypatch.setenv("BACKUP_LOCAL_PATH", str(backup_root))
+        monkeypatch.setenv("MAX_WORKERS", "1")
+        monkeypatch.setenv("DEST_DELETE", "true")
+
+        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py"])
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        backup_imap_emails.main()
+
+        assert not orphan.exists()

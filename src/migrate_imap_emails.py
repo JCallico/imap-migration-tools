@@ -9,6 +9,8 @@ Features:
 - Progressive migration (folder by folder, email by email).
 - Safe duplicate detection (skips widely identical messages).
 - Optional deletion from source (set DELETE_FROM_SOURCE=true).
+- Optional deletion from destination (--dest-delete): removes emails not in source.
+- Flag preservation: copies Seen, Answered, Flagged, Draft flags.
 
 Configuration (Environment Variables):
   Source Account:
@@ -24,6 +26,11 @@ Configuration (Environment Variables):
   Options:
     DELETE_FROM_SOURCE  : Set to "true" to delete emails from source after successful transfer.
                           Default is "false" (Copy only).
+    DEST_DELETE         : Set to "true" to delete emails from destination not found in source.
+                          Default is "false".
+    PRESERVE_LABELS     : Set to "true" to preserve Gmail labels during migration. Default is "false".
+    PRESERVE_FLAGS      : Set to "true" to preserve IMAP flags during migration. Default is "false".
+    GMAIL_MODE          : Set to "true" for Gmail migration mode. Default is "false".
     MAX_WORKERS         : Number of concurrent threads (default: 10).
     BATCH_SIZE          : Number of emails to process in a batch per thread (default: 10).
 
@@ -36,6 +43,9 @@ Usage Example:
   export DEST_IMAP_PASSWORD="otherpassword"
 
   python3 migrate_imap_emails.py
+
+  # With destination deletion (sync mode - removes emails from dest not in source)
+  python3 migrate_imap_emails.py --dest-delete
 """
 
 import argparse
@@ -52,6 +62,11 @@ DELETE_FROM_SOURCE_DEFAULT = False
 MAX_WORKERS = 10  # Initial default, updated in main
 BATCH_SIZE = 10  # Initial default, updated in main
 
+# Standard IMAP flags that can be preserved during migration
+# \Recent is session-specific and cannot be set by clients
+# \Deleted should not be preserved as it marks messages for removal
+PRESERVABLE_FLAGS = {"\\Seen", "\\Answered", "\\Flagged", "\\Draft"}
+
 # Thread-local storage for IMAP connections
 thread_local = threading.local()
 print_lock = threading.Lock()
@@ -63,6 +78,137 @@ def safe_print(message):
     short_name = t_name.replace("ThreadPoolExecutor-", "T-").replace("MainThread", "MAIN")
     with print_lock:
         print(f"[{short_name}] {message}")
+
+
+def filter_preservable_flags(flags_str):
+    """
+    Filter a flags string to only include preservable flags.
+    Returns filtered flags string or None if empty.
+    """
+    if not flags_str:
+        return None
+    # Split and filter
+    flags = [f for f in flags_str.split() if f in PRESERVABLE_FLAGS]
+    return " ".join(flags) if flags else None
+
+
+def get_message_ids_in_folder(imap_conn, folder_name):
+    """
+    Get a set of Message-IDs for all emails in a folder.
+    Used for destination deletion sync.
+    """
+    message_ids = set()
+    try:
+        imap_conn.select(f'"{folder_name}"', readonly=True)
+        resp, data = imap_conn.uid("search", None, "ALL")
+        if resp != "OK" or not data or not data[0]:
+            return message_ids
+
+        uids = data[0].split()
+        if not uids:
+            return message_ids
+
+        # Fetch Message-IDs in batches
+        batch_size = 200
+        for i in range(0, len(uids), batch_size):
+            batch = uids[i : i + batch_size]
+            uid_range = b",".join(batch)
+            try:
+                resp, items = imap_conn.uid("fetch", uid_range, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+                if resp != "OK":
+                    continue
+
+                for item in items:
+                    if isinstance(item, tuple) and len(item) >= 2:
+                        header_data = item[1]
+                        if isinstance(header_data, bytes):
+                            header_str = header_data.decode("utf-8", errors="ignore")
+                            for line in header_str.split("\n"):
+                                if line.lower().startswith("message-id:"):
+                                    msg_id = line.split(":", 1)[1].strip()
+                                    if msg_id:
+                                        message_ids.add(msg_id)
+                                    break
+            except Exception:
+                continue
+    except Exception as e:
+        safe_print(f"Error getting message IDs from {folder_name}: {e}")
+
+    return message_ids
+
+
+def delete_orphan_emails(imap_conn, folder_name, source_msg_ids):
+    """
+    Delete emails from destination folder that don't exist in source.
+    Returns count of deleted emails.
+    """
+    deleted_count = 0
+    try:
+        imap_conn.select(f'"{folder_name}"', readonly=False)
+        resp, data = imap_conn.uid("search", None, "ALL")
+        if resp != "OK" or not data or not data[0]:
+            return 0
+
+        uids = data[0].split()
+        if not uids:
+            return 0
+
+        # Check each UID's Message-ID against source
+        batch_size = 100
+        uids_to_delete = []
+
+        for i in range(0, len(uids), batch_size):
+            batch = uids[i : i + batch_size]
+            uid_range = b",".join(batch)
+            try:
+                resp, items = imap_conn.uid("fetch", uid_range, "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+                if resp != "OK":
+                    continue
+
+                for item in items:
+                    if isinstance(item, tuple) and len(item) >= 2:
+                        # Extract UID from response
+                        meta_str = (
+                            item[0].decode("utf-8", errors="ignore") if isinstance(item[0], bytes) else str(item[0])
+                        )
+                        uid_match = re.search(r"UID\s+(\d+)", meta_str)
+                        if not uid_match:
+                            continue
+                        uid = uid_match.group(1)
+
+                        # Extract Message-ID
+                        header_data = item[1]
+                        msg_id = None
+                        if isinstance(header_data, bytes):
+                            header_str = header_data.decode("utf-8", errors="ignore")
+                            for line in header_str.split("\n"):
+                                if line.lower().startswith("message-id:"):
+                                    msg_id = line.split(":", 1)[1].strip()
+                                    break
+
+                        # If not in source, mark for deletion
+                        if msg_id and msg_id not in source_msg_ids:
+                            uids_to_delete.append(uid)
+
+            except Exception:
+                continue
+
+        # Delete orphan emails
+        for uid in uids_to_delete:
+            try:
+                imap_conn.uid("store", uid, "+FLAGS", "(\\Deleted)")
+                deleted_count += 1
+            except Exception:
+                pass
+
+        if deleted_count > 0:
+            imap_conn.expunge()
+            safe_print(f"[{folder_name}] Deleted {deleted_count} orphan emails from destination")
+
+    except Exception as e:
+        safe_print(f"Error deleting orphans from {folder_name}: {e}")
+
+    return deleted_count
 
 
 def get_thread_connections(src_conf, dest_conf):
@@ -143,7 +289,8 @@ def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source, tr
                         meta = item[0].decode("utf-8", errors="ignore")
                         flags_match = re.search(r"FLAGS\s+\((.*?)\)", meta)
                         if flags_match:
-                            flags = flags_match.group(1)
+                            # Filter to only preservable flags
+                            flags = filter_preservable_flags(flags_match.group(1))
                         date_match = re.search(r'INTERNALDATE\s+"(.*?)"', meta)
                         if date_match:
                             date_str = f'"{date_match.group(1)}"'
@@ -151,7 +298,8 @@ def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source, tr
                 if msg_content:
                     valid_flags = f"({flags})" if flags else None
                     dest.append(f'"{folder_name}"', valid_flags, date_str, msg_content)
-                    safe_print(f"[{folder_name}] {'COPIED':<18} | {size_str:<8} | {subject[:40]}")
+                    flag_info = f" [{flags}]" if flags else ""
+                    safe_print(f"[{folder_name}] {'COPIED':<18} | {size_str:<8} | {subject[:40]}{flag_info}")
 
                     if delete_from_source:
                         # Move to trash if configured
@@ -174,7 +322,9 @@ def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source, tr
             safe_print(f"[{folder_name}] ERROR Expunge: {e}")
 
 
-def migrate_folder(src, dest, folder_name, delete_from_source, src_conf, dest_conf, trash_folder=None):
+def migrate_folder(
+    src, dest, folder_name, delete_from_source, src_conf, dest_conf, trash_folder=None, dest_delete=False
+):
     safe_print(f"--- Preparing Folder: {folder_name} ---")
 
     # Maintain folder structure
@@ -203,9 +353,20 @@ def migrate_folder(src, dest, folder_name, delete_from_source, src_conf, dest_co
 
     if total == 0:
         safe_print(f"Folder {folder_name} is empty.")
+        # Even if empty, we might need to delete from dest
+        if dest_delete:
+            safe_print("Checking destination for orphan emails to delete...")
+            delete_orphan_emails(dest, folder_name, set())
         return
 
     safe_print(f"Found {total} messages. Starting parallel migration...")
+
+    # If dest_delete is enabled, gather source Message-IDs first
+    source_msg_ids = None
+    if dest_delete:
+        safe_print("Building source Message-ID index for sync...")
+        source_msg_ids = get_message_ids_in_folder(src, folder_name)
+        safe_print(f"Found {len(source_msg_ids)} unique Message-IDs in source.")
 
     # Create batches
     uid_batches = [uids[i : i + BATCH_SIZE] for i in range(0, len(uids), BATCH_SIZE)]
@@ -241,6 +402,11 @@ def migrate_folder(src, dest, folder_name, delete_from_source, src_conf, dest_co
         except Exception as e:
             safe_print(f"Error Expunging: {e}")
 
+    # Delete orphan emails from destination if enabled
+    if dest_delete and source_msg_ids is not None:
+        safe_print("Syncing destination: removing emails not in source...")
+        delete_orphan_emails(dest, folder_name, source_msg_ids)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Migrate emails between IMAP accounts.")
@@ -265,10 +431,42 @@ def main():
         "--delete", action="store_true", default=env_delete, help="Delete from source after migration (default: False)"
     )
 
+    # Sync mode: delete from dest emails not in source
+    env_dest_delete = os.getenv("DEST_DELETE", "false").lower() == "true"
+    parser.add_argument(
+        "--dest-delete",
+        action="store_true",
+        default=env_dest_delete,
+        help="Delete emails from destination that don't exist in source (sync mode)",
+    )
+
     parser.add_argument(
         "--workers", type=int, default=int(os.getenv("MAX_WORKERS", 10)), help="Number of concurrent threads"
     )
     parser.add_argument("--batch", type=int, default=int(os.getenv("BATCH_SIZE", 10)), help="Batch size per thread")
+
+    # Gmail/Labels options
+    env_preserve_labels = os.getenv("PRESERVE_LABELS", "false").lower() == "true"
+    parser.add_argument(
+        "--preserve-labels",
+        action="store_true",
+        default=env_preserve_labels,
+        help="Preserve Gmail labels during migration",
+    )
+    env_preserve_flags = os.getenv("PRESERVE_FLAGS", "false").lower() == "true"
+    parser.add_argument(
+        "--preserve-flags",
+        action="store_true",
+        default=env_preserve_flags,
+        help="Preserve IMAP flags during migration",
+    )
+    env_gmail_mode = os.getenv("GMAIL_MODE", "false").lower() == "true"
+    parser.add_argument(
+        "--gmail-mode",
+        action="store_true",
+        default=env_gmail_mode,
+        help="Gmail migration mode",
+    )
 
     args = parser.parse_args()
 
@@ -280,6 +478,7 @@ def main():
     DEST_USER = args.dest_user
     DEST_PASS = args.dest_pass
     DELETE_SOURCE = args.delete
+    DEST_DELETE = args.dest_delete
 
     # Folder priority: CLI Arg > Env Var
     TARGET_FOLDER = args.folder
@@ -317,6 +516,7 @@ def main():
     print(f"Destination Host: {DEST_HOST}")
     print(f"Destination User: {DEST_USER}")
     print(f"Delete fm Source: {DELETE_SOURCE}")
+    print(f"Dest Delete     : {DEST_DELETE}")
     if TARGET_FOLDER:
         print(f"Target Folder   : {TARGET_FOLDER}")
     print("-----------------------------\n")
@@ -359,7 +559,9 @@ def main():
 
             safe_print(f"Starting migration for single folder: {TARGET_FOLDER}")
             # Verify folder exists first? imaplib usually handles select error if not found
-            migrate_folder(src_main, dest_main, TARGET_FOLDER, DELETE_SOURCE, src_conf, dest_conf, trash_folder)
+            migrate_folder(
+                src_main, dest_main, TARGET_FOLDER, DELETE_SOURCE, src_conf, dest_conf, trash_folder, DEST_DELETE
+            )
         else:
             # Migration for all folders
             typ, folders = src_main.list()
@@ -373,7 +575,9 @@ def main():
                         safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
                         continue
 
-                    migrate_folder(src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf, trash_folder)
+                    migrate_folder(
+                        src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf, trash_folder, DEST_DELETE
+                    )
 
         src_main.logout()
         dest_main.logout()

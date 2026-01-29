@@ -23,6 +23,7 @@ This repository contains a set of Python scripts designed to migrate emails betw
    - **Robust**: Preserves read/unread status (flags) and original dates.
    - **Cleanup**: Optionally deletes messages from the source after successful transfer (effectively a "Move" operation).
      - *Improved for Gmail*: Automatically detects "Trash" folders to ensure emails are properly binned rather than just archived.
+   - **Sync Mode**: Optionally deletes emails from destination that no longer exist in source (`--dest-delete`).
    - **Configurable**: Adjustable concurrency and batch sizes to respect server rate limits.
 
 2. **`compare_imap_folders.py`** (The Validator)
@@ -38,13 +39,15 @@ This repository contains a set of Python scripts designed to migrate emails betw
    - **Format**: Saves emails as individual `.eml` files (RFC 5322), compatible with Outlook, Thunderbird, and Apple Mail.
    - **Structure**: Replicates the IMAP folder hierarchy locally.
    - **Incremental**: Skips emails that have already been downloaded (based on UID) so you can run it periodically to fetch new messages.
+   - **Sync Mode**: Optionally deletes local `.eml` files that no longer exist on the server (`--dest-delete`).
    - **Gmail Labels Preservation**: Creates a `labels_manifest.json` file mapping each email's Message-ID to its Gmail labels, enabling proper restoration with labels intact.
 
 5. **`restore_imap_emails.py`** (The Restore)
    - Uploads emails from a local backup to an IMAP server.
    - **Format**: Reads `.eml` files and uploads them preserving original dates.
    - **Structure**: Recreates the folder hierarchy on the destination server.
-   - **Incremental**: Skips emails that already exist (based on Message-ID and size).
+   - **Incremental**: Skips emails that already exist (based on Message-ID and size), but still syncs labels and flags.
+   - **Sync Mode**: Optionally deletes emails from destination that no longer exist in local backup (`--dest-delete`).
    - **Gmail Labels Restoration**: Applies labels from `labels_manifest.json` to recreate the original Gmail label structure.
 
 ## Getting Started
@@ -104,6 +107,7 @@ You can configure the scripts using **Environment Variables** (recommended for s
 
    # Options (Optional)
    export DELETE_FROM_SOURCE="false"  # Set to "true" to delete from source after copy
+   export DEST_DELETE="false"         # Set to "true" to delete orphans from destination (sync mode)
    export MAX_WORKERS=4               # Number of parallel threads
    export BATCH_SIZE=10               # Emails per batch
    ```
@@ -178,7 +182,22 @@ python3 migrate_imap_emails.py --delete
 python3 migrate_imap_emails.py "Inbox" --delete
 ```
 
-### 4. Verify Migration
+### 4. Sync Mode (Delete from Destination)
+Keep destination in sync by deleting emails that no longer exist in the source.
+```bash
+# Migration: Delete destination emails not found in source
+python3 migrate_imap_emails.py --dest-delete
+
+# Backup: Delete local .eml files not found on server
+python3 backup_imap_emails.py --dest-path "./backup" --dest-delete
+
+# Restore: Delete server emails not found in local backup
+python3 restore_imap_emails.py --src-path "./backup" --dest-delete
+```
+
+**Warning:** The `--dest-delete` flag permanently removes emails/files from the destination. Use with caution and always verify your backup is complete before enabling this option.
+
+### 5. Verify Migration
 Compare counts between source and destination.
 ```bash
 python3 compare_imap_folders.py
@@ -191,7 +210,7 @@ INBOX                   | 1250         | 1250       | MATCH
 ...
 ```
 
-### 5. Local Backup
+### 6. Local Backup
 Download all your emails to your computer as `.eml` files.
 ```bash
 # Set destination path
@@ -205,7 +224,7 @@ python3 backup_imap_emails.py --dest-path "/Users/jdoe/Documents/Emails"
 python3 backup_imap_emails.py --dest-path "./my_backup" "[Gmail]/Sent Mail"
 ```
 
-### 6. Gmail Backup with Labels Preservation
+### 7. Gmail Backup with Labels Preservation
 When backing up a Gmail account, use `--gmail-mode` for the recommended workflow. This backs up `[Gmail]/All Mail` (no duplicates) and creates a labels manifest for restoration.
 
 ```bash
@@ -282,7 +301,7 @@ python3 backup_imap_emails.py \
 
 **Note:** Gmail labels like "Important" that are auto-managed by Gmail are excluded from the manifest as they cannot be reliably restored.
 
-### 7. Backup with Flags Only (Non-Gmail)
+### 8. Backup with Flags Only (Non-Gmail)
 For non-Gmail servers, you can preserve read/starred status with `--preserve-flags`:
 
 ```bash
@@ -297,7 +316,7 @@ python3 backup_imap_emails.py \
 
 This creates a `flags_manifest.json` with the status of each email.
 
-### 8. Restore Backup to IMAP Server
+### 9. Restore Backup to IMAP Server
 Restore emails from a local backup to any IMAP server.
 
 ```bash
@@ -325,7 +344,7 @@ python3 restore_imap_emails.py \
   "INBOX"
 ```
 
-### 9. Gmail Restore with Labels
+### 10. Gmail Restore with Labels
 Restore a Gmail backup with full label structure using `--gmail-mode`:
 
 ```bash

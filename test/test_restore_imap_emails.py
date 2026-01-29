@@ -424,3 +424,284 @@ class TestEmailExistsInFolder:
 
         result = restore_imap_emails.email_exists_in_folder(mock_conn, "<test@test.com>", 1000)
         assert result is False
+
+
+class TestGetLabelsFromManifest:
+    """Tests for get_labels_from_manifest function."""
+
+    def test_get_labels_dict_format(self):
+        """Test getting labels from dict format manifest."""
+        manifest = {
+            "<msg1@test.com>": {"labels": ["INBOX", "Work"], "flags": ["\\Seen"]},
+        }
+        result = restore_imap_emails.get_labels_from_manifest(manifest, "<msg1@test.com>")
+        assert result == ["INBOX", "Work"]
+
+    def test_get_labels_list_format(self):
+        """Test getting labels from old list format manifest."""
+        manifest = {
+            "<msg1@test.com>": ["INBOX", "Personal"],
+        }
+        result = restore_imap_emails.get_labels_from_manifest(manifest, "<msg1@test.com>")
+        assert result == ["INBOX", "Personal"]
+
+    def test_get_labels_not_in_manifest(self):
+        """Test getting labels for message not in manifest."""
+        manifest = {}
+        result = restore_imap_emails.get_labels_from_manifest(manifest, "<msg1@test.com>")
+        assert result == []
+
+    def test_get_labels_none_message_id(self):
+        """Test getting labels with None message ID."""
+        manifest = {"<msg1@test.com>": ["INBOX"]}
+        result = restore_imap_emails.get_labels_from_manifest(manifest, None)
+        assert result == []
+
+
+class TestLabelToFolder:
+    """Tests for label_to_folder function."""
+
+    def test_inbox_label(self):
+        """Test INBOX label conversion."""
+        result = restore_imap_emails.label_to_folder("INBOX")
+        assert result == "INBOX"
+
+    def test_sent_mail_label(self):
+        """Test Sent Mail label conversion."""
+        result = restore_imap_emails.label_to_folder("Sent Mail")
+        assert result == "[Gmail]/Sent Mail"
+
+    def test_starred_label(self):
+        """Test Starred label conversion."""
+        result = restore_imap_emails.label_to_folder("Starred")
+        assert result == "[Gmail]/Starred"
+
+    def test_drafts_label(self):
+        """Test Drafts label conversion."""
+        result = restore_imap_emails.label_to_folder("Drafts")
+        assert result == "[Gmail]/Drafts"
+
+    def test_important_label(self):
+        """Test Important label conversion."""
+        result = restore_imap_emails.label_to_folder("Important")
+        assert result == "[Gmail]/Important"
+
+    def test_custom_label(self):
+        """Test custom user label (no conversion)."""
+        result = restore_imap_emails.label_to_folder("Work")
+        assert result == "Work"
+
+    def test_nested_label(self):
+        """Test nested user label (no conversion)."""
+        result = restore_imap_emails.label_to_folder("Projects/2024")
+        assert result == "Projects/2024"
+
+
+class TestSyncFlagsOnExisting:
+    """Tests for sync_flags_on_existing function."""
+
+    def test_sync_flags_adds_missing(self):
+        """Test that missing flags are added to existing email."""
+        mock_conn = MagicMock()
+        mock_conn.select.return_value = ("OK", [b"1"])
+        mock_conn.search.return_value = ("OK", [b"1"])
+        mock_conn.fetch.return_value = ("OK", [(b"1 (FLAGS ())", b"")])
+        mock_conn.store.return_value = ("OK", None)
+
+        # Should not raise
+        restore_imap_emails.sync_flags_on_existing(mock_conn, "INBOX", "<test@test.com>", "\\Seen \\Flagged", 1000)
+
+        # Verify store was called with flags
+        mock_conn.store.assert_called()
+
+    def test_sync_flags_no_message_found(self):
+        """Test when message is not found."""
+        mock_conn = MagicMock()
+        mock_conn.select.return_value = ("OK", [b"1"])
+        mock_conn.search.return_value = ("OK", [b""])  # No match
+
+        # Should not raise or call store
+        restore_imap_emails.sync_flags_on_existing(mock_conn, "INBOX", "<test@test.com>", "\\Seen", 1000)
+
+        mock_conn.store.assert_not_called()
+
+
+class TestDestDeleteRestoreArgument:
+    """Tests for --dest-delete argument in restore script."""
+
+    def test_dest_delete_default_false(self):
+        """Test that --dest-delete defaults to False."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("folder", nargs="?")
+        parser.add_argument("--dest-delete", action="store_true", default=False)
+        args = parser.parse_args([])
+        assert args.dest_delete is False
+
+    def test_dest_delete_when_set(self):
+        """Test that --dest-delete can be set to True."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("folder", nargs="?")
+        parser.add_argument("--dest-delete", action="store_true", default=False)
+        args = parser.parse_args(["--dest-delete"])
+        assert args.dest_delete is True
+
+
+class TestDestDeleteRestoreFunctionality:
+    """Tests for --dest-delete actual deletion behavior in restore script."""
+
+    def test_delete_orphan_emails_from_dest_removes_extra(self, single_mock_server):
+        """Test that emails in dest but not in local backup are deleted."""
+        # Destination has 3 emails
+        dest_data = {
+            "INBOX": [
+                b"Subject: Keep\r\nMessage-ID: <keep@test>\r\n\r\nBody",
+                b"Subject: Delete 1\r\nMessage-ID: <delete1@test>\r\n\r\nBody",
+                b"Subject: Delete 2\r\nMessage-ID: <delete2@test>\r\n\r\nBody",
+            ]
+        }
+
+        server, port = single_mock_server(dest_data)
+
+        import imaplib
+
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+
+        # Local backup only has one email
+        local_msg_ids = {"<keep@test>"}
+
+        deleted = restore_imap_emails.delete_orphan_emails_from_dest(conn, "INBOX", local_msg_ids)
+
+        assert deleted == 2
+        # Verify only 1 email remains
+        assert len(server.folders["INBOX"]) == 1
+        assert b"Message-ID: <keep@test>" in server.folders["INBOX"][0]["content"]
+
+        conn.logout()
+
+    def test_delete_orphan_empty_local_deletes_all(self, single_mock_server):
+        """Test that if local backup is empty, all dest emails are deleted."""
+        dest_data = {
+            "INBOX": [
+                b"Subject: Delete 1\r\nMessage-ID: <d1@test>\r\n\r\nBody",
+                b"Subject: Delete 2\r\nMessage-ID: <d2@test>\r\n\r\nBody",
+            ]
+        }
+
+        server, port = single_mock_server(dest_data)
+
+        import imaplib
+
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+
+        # Empty local backup
+        local_msg_ids = set()
+
+        deleted = restore_imap_emails.delete_orphan_emails_from_dest(conn, "INBOX", local_msg_ids)
+
+        assert deleted == 2
+        assert len(server.folders["INBOX"]) == 0
+
+        conn.logout()
+
+    def test_delete_orphan_no_orphans(self, single_mock_server):
+        """Test that when all dest emails exist locally, none are deleted."""
+        dest_data = {
+            "INBOX": [
+                b"Subject: Email 1\r\nMessage-ID: <e1@test>\r\n\r\nBody",
+                b"Subject: Email 2\r\nMessage-ID: <e2@test>\r\n\r\nBody",
+            ]
+        }
+
+        server, port = single_mock_server(dest_data)
+
+        import imaplib
+
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+
+        # Local has both emails
+        local_msg_ids = {"<e1@test>", "<e2@test>"}
+
+        deleted = restore_imap_emails.delete_orphan_emails_from_dest(conn, "INBOX", local_msg_ids)
+
+        assert deleted == 0
+        assert len(server.folders["INBOX"]) == 2
+
+        conn.logout()
+
+    def test_get_local_message_ids(self, tmp_path):
+        """Test get_local_message_ids extracts Message-IDs from .eml files."""
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+
+        # Create test .eml files
+        (inbox_path / "1_Email1.eml").write_bytes(b"Subject: Test 1\r\nMessage-ID: <local1@test>\r\n\r\nBody")
+        (inbox_path / "2_Email2.eml").write_bytes(b"Subject: Test 2\r\nMessage-ID: <local2@test>\r\n\r\nBody")
+        (inbox_path / "3_Email3.eml").write_bytes(b"Subject: Test 3\r\nMessage-ID: <local3@test>\r\n\r\nBody")
+
+        msg_ids = restore_imap_emails.get_local_message_ids(str(inbox_path))
+
+        assert "<local1@test>" in msg_ids
+        assert "<local2@test>" in msg_ids
+        assert "<local3@test>" in msg_ids
+        assert len(msg_ids) == 3
+
+    def test_get_local_message_ids_empty_folder(self, tmp_path):
+        """Test get_local_message_ids with empty folder."""
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+
+        msg_ids = restore_imap_emails.get_local_message_ids(str(inbox_path))
+
+        assert len(msg_ids) == 0
+
+    def test_get_local_message_ids_ignores_non_eml(self, tmp_path):
+        """Test get_local_message_ids ignores non-.eml files."""
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+
+        (inbox_path / "1_Email.eml").write_bytes(b"Subject: Test\r\nMessage-ID: <valid@test>\r\n\r\nBody")
+        (inbox_path / "notes.txt").write_bytes(b"Some notes")
+        (inbox_path / "data.json").write_bytes(b"{}")
+
+        msg_ids = restore_imap_emails.get_local_message_ids(str(inbox_path))
+
+        assert len(msg_ids) == 1
+        assert "<valid@test>" in msg_ids
+
+    def test_dest_delete_enabled_via_env_var_main_deletes_all_in_folder(
+        self, single_mock_server, monkeypatch, tmp_path
+    ):
+        """End-to-end: DEST_DELETE=true triggers deletion when local folder has no .eml files."""
+        dest_data = {
+            "INBOX": [
+                b"Subject: Delete 1\r\nMessage-ID: <d1@test>\r\n\r\nBody",
+                b"Subject: Delete 2\r\nMessage-ID: <d2@test>\r\n\r\nBody",
+            ]
+        }
+
+        server, port = single_mock_server(dest_data)
+
+        backup_root = tmp_path / "backup"
+        (backup_root / "INBOX").mkdir(parents=True)
+
+        monkeypatch.setenv("BACKUP_LOCAL_PATH", str(backup_root))
+        monkeypatch.setenv("DEST_IMAP_HOST", "localhost")
+        monkeypatch.setenv("DEST_IMAP_USERNAME", "user")
+        monkeypatch.setenv("DEST_IMAP_PASSWORD", "pass")
+        monkeypatch.setenv("MAX_WORKERS", "1")
+        monkeypatch.setenv("DEST_DELETE", "true")
+
+        # Force folder-mode so empty folders still get processed.
+        monkeypatch.setattr(sys, "argv", ["restore_imap_emails.py", "INBOX"])
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        restore_imap_emails.main()
+
+        assert len(server.folders["INBOX"]) == 0

@@ -11,9 +11,16 @@ Features:
 - Parallel Processing: Uses multithreading for fast uploads.
 - Date Preservation: Restores emails with their original dates.
 
-Configuration:
+Configuration (Environment Variables):
   DEST_IMAP_HOST, DEST_IMAP_USERNAME, DEST_IMAP_PASSWORD: Destination credentials.
   BACKUP_LOCAL_PATH: Source local directory containing the backup.
+  MAX_WORKERS: Number of concurrent threads (default: 4).
+  BATCH_SIZE: Number of emails to process per batch (default: 10).
+  APPLY_LABELS: Set to "true" to apply Gmail labels from manifest. Default is "false".
+  APPLY_FLAGS: Set to "true" to apply IMAP flags from manifest. Default is "false".
+  GMAIL_MODE: Set to "true" for Gmail restore mode. Default is "false".
+  DEST_DELETE: Set to "true" to delete emails from destination not found in local backup.
+              Default is "false".
 
 Usage:
   python3 restore_imap_emails.py --src-path "./my_backup" --dest-host "imap.gmail.com"
@@ -420,7 +427,97 @@ def process_restore_batch(eml_files, folder_name, dest_conf, manifest, apply_lab
             safe_print(f"Error processing {filename}: {e}")
 
 
-def restore_folder(folder_name, local_folder_path, dest_conf, manifest, apply_labels, apply_flags):
+def get_local_message_ids(local_folder_path):
+    """
+    Get a set of Message-IDs from all .eml files in a local folder.
+    Used for destination deletion sync.
+    """
+    message_ids = set()
+    eml_files = get_eml_files(local_folder_path)
+    for file_path, _filename in eml_files:
+        message_id, _, _, _ = parse_eml_file(file_path)
+        if message_id:
+            message_ids.add(message_id)
+    return message_ids
+
+
+def delete_orphan_emails_from_dest(imap_conn, folder_name, local_msg_ids):
+    """
+    Delete emails from destination folder that don't exist in local backup.
+    Returns count of deleted emails.
+    """
+    import re
+
+    deleted_count = 0
+    try:
+        imap_conn.select(f'"{folder_name}"', readonly=False)
+        resp, data = imap_conn.uid("search", None, "ALL")
+        if resp != "OK" or not data or not data[0]:
+            return 0
+
+        uids = data[0].split()
+        if not uids:
+            return 0
+
+        # Check each UID's Message-ID against local backup
+        batch_size = 100
+        uids_to_delete = []
+
+        for i in range(0, len(uids), batch_size):
+            batch = uids[i : i + batch_size]
+            uid_range = b",".join(batch)
+            try:
+                resp, items = imap_conn.uid("fetch", uid_range, "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+                if resp != "OK":
+                    continue
+
+                for item in items:
+                    if isinstance(item, tuple) and len(item) >= 2:
+                        # Extract UID from response
+                        meta_str = (
+                            item[0].decode("utf-8", errors="ignore") if isinstance(item[0], bytes) else str(item[0])
+                        )
+                        uid_match = re.search(r"UID\s+(\d+)", meta_str)
+                        if not uid_match:
+                            continue
+                        uid = uid_match.group(1)
+
+                        # Extract Message-ID
+                        header_data = item[1]
+                        msg_id = None
+                        if isinstance(header_data, bytes):
+                            header_str = header_data.decode("utf-8", errors="ignore")
+                            for line in header_str.split("\n"):
+                                if line.lower().startswith("message-id:"):
+                                    msg_id = line.split(":", 1)[1].strip()
+                                    break
+
+                        # If not in local backup, mark for deletion
+                        if msg_id and msg_id not in local_msg_ids:
+                            uids_to_delete.append(uid)
+
+            except Exception:
+                continue
+
+        # Delete orphan emails
+        for uid in uids_to_delete:
+            try:
+                imap_conn.uid("store", uid, "+FLAGS", "(\\Deleted)")
+                deleted_count += 1
+            except Exception:
+                pass
+
+        if deleted_count > 0:
+            imap_conn.expunge()
+            safe_print(f"[{folder_name}] Deleted {deleted_count} orphan emails from destination")
+
+    except Exception as e:
+        safe_print(f"Error deleting orphans from {folder_name}: {e}")
+
+    return deleted_count
+
+
+def restore_folder(folder_name, local_folder_path, dest_conf, manifest, apply_labels, apply_flags, dest_delete=False):
     """
     Restore all emails from a local folder to the destination IMAP server.
     """
@@ -429,9 +526,22 @@ def restore_folder(folder_name, local_folder_path, dest_conf, manifest, apply_la
     eml_files = get_eml_files(local_folder_path)
     if not eml_files:
         safe_print(f"No .eml files found in {folder_name}")
+        # Even if empty, check for orphans to delete
+        if dest_delete:
+            dest = imap_common.get_imap_connection(*dest_conf)
+            if dest:
+                delete_orphan_emails_from_dest(dest, folder_name, set())
+                dest.logout()
         return
 
     safe_print(f"Found {len(eml_files)} emails to restore.")
+
+    # If dest_delete enabled, get local Message-IDs for comparison
+    local_msg_ids = None
+    if dest_delete:
+        safe_print("Building local Message-ID index for sync...")
+        local_msg_ids = get_local_message_ids(local_folder_path)
+        safe_print(f"Found {len(local_msg_ids)} unique Message-IDs in local backup.")
 
     # Create batches
     batches = [eml_files[i : i + BATCH_SIZE] for i in range(0, len(eml_files), BATCH_SIZE)]
@@ -456,6 +566,14 @@ def restore_folder(folder_name, local_folder_path, dest_conf, manifest, apply_la
                 future.result()
             except Exception as e:
                 safe_print(f"Batch error: {e}")
+
+    # Delete orphan emails from destination if enabled
+    if dest_delete and local_msg_ids is not None:
+        safe_print("Syncing destination: removing emails not in local backup...")
+        dest = imap_common.get_imap_connection(*dest_conf)
+        if dest:
+            delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
+            dest.logout()
 
 
 def restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags):
@@ -591,20 +709,35 @@ def main():
     )
 
     # Gmail Labels
+    env_apply_labels = os.getenv("APPLY_LABELS", "false").lower() == "true"
     parser.add_argument(
         "--apply-labels",
         action="store_true",
+        default=env_apply_labels,
         help="Apply Gmail labels from labels_manifest.json",
     )
+    env_apply_flags = os.getenv("APPLY_FLAGS", "false").lower() == "true"
     parser.add_argument(
         "--apply-flags",
         action="store_true",
+        default=env_apply_flags,
         help="Apply IMAP flags (read/starred/answered/draft) from manifest",
     )
+    env_gmail_mode = os.getenv("GMAIL_MODE", "false").lower() == "true"
     parser.add_argument(
         "--gmail-mode",
         action="store_true",
+        default=env_gmail_mode,
         help="Gmail restore mode: Upload to INBOX and apply labels + flags from manifest",
+    )
+
+    # Sync mode: delete from dest emails not in local backup
+    env_dest_delete = os.getenv("DEST_DELETE", "false").lower() == "true"
+    parser.add_argument(
+        "--dest-delete",
+        action="store_true",
+        default=env_dest_delete,
+        help="Delete emails from destination that don't exist in local backup (sync mode)",
     )
 
     # Optional folder filter
@@ -671,6 +804,8 @@ def main():
         print(f"Apply Labels    : Yes ({len(manifest)} mappings)")
     if apply_flags:
         print("Apply Flags     : Yes (read/starred/answered/draft)")
+    if args.dest_delete:
+        print("Dest Delete     : Yes (remove orphans from destination)")
     print("-----------------------------\n")
 
     try:
@@ -690,7 +825,7 @@ def main():
             if not os.path.exists(folder_path):
                 print(f"Error: Folder not found: {folder_path}")
                 sys.exit(1)
-            restore_folder(args.folder, folder_path, dest_conf, manifest, apply_labels, apply_flags)
+            restore_folder(args.folder, folder_path, dest_conf, manifest, apply_labels, apply_flags, args.dest_delete)
         else:
             # Restore all folders
             folders = get_backup_folders(local_path)
@@ -710,6 +845,7 @@ def main():
                     manifest,
                     apply_labels,
                     apply_flags,
+                    args.dest_delete,
                 )
 
         print("\nRestore completed successfully.")

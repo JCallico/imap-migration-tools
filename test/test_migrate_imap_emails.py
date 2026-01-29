@@ -481,3 +481,205 @@ class TestTrashHandling:
         assert len(src_server.folders["INBOX"]) == 0
         # Source Trash should have it (copied before delete)
         assert len(src_server.folders["Trash"]) == 1
+
+
+class TestFilterPreservableFlags:
+    """Tests for filter_preservable_flags function."""
+
+    def test_filter_seen_flag(self):
+        """Test filtering \\Seen flag."""
+        result = migrate_imap_emails.filter_preservable_flags("\\Seen")
+        assert result == "\\Seen"
+
+    def test_filter_multiple_flags(self):
+        """Test filtering multiple preservable flags."""
+        result = migrate_imap_emails.filter_preservable_flags("\\Seen \\Flagged \\Answered")
+        assert "\\Seen" in result
+        assert "\\Flagged" in result
+        assert "\\Answered" in result
+
+    def test_filter_removes_recent(self):
+        """Test that \\Recent flag is filtered out."""
+        result = migrate_imap_emails.filter_preservable_flags("\\Seen \\Recent")
+        assert result == "\\Seen"
+        assert "\\Recent" not in result
+
+    def test_filter_removes_deleted(self):
+        """Test that \\Deleted flag is filtered out."""
+        result = migrate_imap_emails.filter_preservable_flags("\\Seen \\Deleted")
+        assert result == "\\Seen"
+        assert "\\Deleted" not in result
+
+    def test_filter_empty_string(self):
+        """Test filtering empty flags string."""
+        result = migrate_imap_emails.filter_preservable_flags("")
+        assert result is None
+
+    def test_filter_none(self):
+        """Test filtering None."""
+        result = migrate_imap_emails.filter_preservable_flags(None)
+        assert result is None
+
+    def test_filter_only_non_preservable(self):
+        """Test filtering when only non-preservable flags present."""
+        result = migrate_imap_emails.filter_preservable_flags("\\Recent \\Deleted")
+        assert result is None
+
+    def test_filter_all_preservable_flags(self):
+        """Test all preservable flags are kept."""
+        result = migrate_imap_emails.filter_preservable_flags("\\Seen \\Answered \\Flagged \\Draft")
+        assert "\\Seen" in result
+        assert "\\Answered" in result
+        assert "\\Flagged" in result
+        assert "\\Draft" in result
+
+
+class TestDestDeleteArgument:
+    """Tests for --dest-delete argument handling."""
+
+    def test_dest_delete_default_false(self):
+        """Test that --dest-delete defaults to False."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("folder", nargs="?")
+        parser.add_argument("--dest-delete", action="store_true", default=False)
+        args = parser.parse_args([])
+        assert args.dest_delete is False
+
+    def test_dest_delete_when_set(self):
+        """Test that --dest-delete can be set to True."""
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("folder", nargs="?")
+        parser.add_argument("--dest-delete", action="store_true", default=False)
+        args = parser.parse_args(["--dest-delete"])
+        assert args.dest_delete is True
+
+
+class TestDestDeleteFunctionality:
+    """Tests for --dest-delete actual deletion behavior."""
+
+    def test_delete_orphan_emails_removes_extra_dest_emails(self, mock_server_factory, monkeypatch):
+        """Test that emails in dest but not in source are deleted with --dest-delete."""
+        # Source has only 1 email
+        src_data = {"INBOX": [b"Subject: Keep Me\r\nMessage-ID: <keep@test>\r\n\r\nBody"]}
+        # Destination has 3 emails - 2 should be deleted
+        dest_data = {
+            "INBOX": [
+                b"Subject: Keep Me\r\nMessage-ID: <keep@test>\r\n\r\nBody",
+                b"Subject: Delete Me 1\r\nMessage-ID: <delete1@test>\r\n\r\nBody",
+                b"Subject: Delete Me 2\r\nMessage-ID: <delete2@test>\r\n\r\nBody",
+            ]
+        }
+
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        monkeypatch.setenv("SRC_IMAP_HOST", "localhost")
+        monkeypatch.setenv("SRC_IMAP_USERNAME", "src_user")
+        monkeypatch.setenv("SRC_IMAP_PASSWORD", "p")
+        monkeypatch.setenv("DEST_IMAP_HOST", "localhost")
+        monkeypatch.setenv("DEST_IMAP_USERNAME", "dest_user")
+        monkeypatch.setenv("DEST_IMAP_PASSWORD", "p")
+        monkeypatch.setenv("MAX_WORKERS", "1")
+        monkeypatch.setenv("DEST_DELETE", "true")
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+        # Only the email that exists in source should remain
+        assert len(dest_server.folders["INBOX"]) == 1
+        remaining_content = dest_server.folders["INBOX"][0]["content"]
+        assert b"Message-ID: <keep@test>" in remaining_content
+
+    def test_dest_delete_disabled_keeps_extra_emails(self, mock_server_factory, monkeypatch):
+        """Test that without --dest-delete, extra dest emails are kept."""
+        src_data = {"INBOX": [b"Subject: Source Email\r\nMessage-ID: <src@test>\r\n\r\nBody"]}
+        dest_data = {
+            "INBOX": [
+                b"Subject: Dest Only\r\nMessage-ID: <dest-only@test>\r\n\r\nBody",
+            ]
+        }
+
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        monkeypatch.delenv("DEST_DELETE", raising=False)
+        monkeypatch.setenv("SRC_IMAP_HOST", "localhost")
+        monkeypatch.setenv("SRC_IMAP_USERNAME", "src_user")
+        monkeypatch.setenv("SRC_IMAP_PASSWORD", "p")
+        monkeypatch.setenv("DEST_IMAP_HOST", "localhost")
+        monkeypatch.setenv("DEST_IMAP_USERNAME", "dest_user")
+        monkeypatch.setenv("DEST_IMAP_PASSWORD", "p")
+        monkeypatch.setenv("MAX_WORKERS", "1")
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+        # Both emails should exist (source was copied, dest-only was kept)
+        assert len(dest_server.folders["INBOX"]) == 2
+
+    def test_dest_delete_empty_source_deletes_all(self, mock_server_factory, monkeypatch):
+        """Test that if source folder is empty, all dest emails are deleted."""
+        src_data = {"INBOX": []}
+        dest_data = {
+            "INBOX": [
+                b"Subject: Delete 1\r\nMessage-ID: <d1@test>\r\n\r\nBody",
+                b"Subject: Delete 2\r\nMessage-ID: <d2@test>\r\n\r\nBody",
+            ]
+        }
+
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        monkeypatch.setenv("SRC_IMAP_HOST", "localhost")
+        monkeypatch.setenv("SRC_IMAP_USERNAME", "src_user")
+        monkeypatch.setenv("SRC_IMAP_PASSWORD", "p")
+        monkeypatch.setenv("DEST_IMAP_HOST", "localhost")
+        monkeypatch.setenv("DEST_IMAP_USERNAME", "dest_user")
+        monkeypatch.setenv("DEST_IMAP_PASSWORD", "p")
+        monkeypatch.setenv("MAX_WORKERS", "1")
+        monkeypatch.setenv("DEST_DELETE", "true")
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+        # All dest emails should be deleted
+        assert len(dest_server.folders["INBOX"]) == 0
+
+    def test_get_message_ids_in_folder(self, mock_server_factory, monkeypatch):
+        """Test get_message_ids_in_folder returns correct Message-IDs."""
+        data = {
+            "INBOX": [
+                b"Subject: Email 1\r\nMessage-ID: <msg1@test>\r\n\r\nBody",
+                b"Subject: Email 2\r\nMessage-ID: <msg2@test>\r\n\r\nBody",
+                b"Subject: Email 3\r\nMessage-ID: <msg3@test>\r\n\r\nBody",
+            ]
+        }
+
+        server, port = None, None
+        # Use single_mock_server fixture pattern
+        import time
+
+        from conftest import get_free_port, start_server_thread
+
+        port = get_free_port()
+        thread, server = start_server_thread(port, data)
+        time.sleep(0.3)
+
+        try:
+            import imaplib
+
+            conn = imaplib.IMAP4("localhost", port)
+            conn.login("user", "pass")
+
+            msg_ids = migrate_imap_emails.get_message_ids_in_folder(conn, "INBOX")
+
+            assert "<msg1@test>" in msg_ids
+            assert "<msg2@test>" in msg_ids
+            assert "<msg3@test>" in msg_ids
+            assert len(msg_ids) == 3
+
+            conn.logout()
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)

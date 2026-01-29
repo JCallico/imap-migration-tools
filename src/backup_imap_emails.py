@@ -12,9 +12,17 @@ Features:
 - Parallel Processing: Uses multithreading for fast downloads.
 - Gmail Labels Preservation: Creates a manifest mapping Message-IDs to Gmail labels for restoration.
 
-Configuration:
+Configuration (Environment Variables):
   SRC_IMAP_HOST, SRC_IMAP_USERNAME, SRC_IMAP_PASSWORD: Source credentials.
   BACKUP_LOCAL_PATH: Destination local directory.
+  MAX_WORKERS: Number of concurrent threads (default: 10).
+  BATCH_SIZE: Number of emails to process per batch (default: 10).
+  PRESERVE_LABELS: Set to "true" to create labels_manifest.json (Gmail). Default is "false".
+  PRESERVE_FLAGS: Set to "true" to preserve IMAP flags in manifest. Default is "false".
+  MANIFEST_ONLY: Set to "true" to only build manifest without downloading. Default is "false".
+  GMAIL_MODE: Set to "true" for Gmail backup mode. Default is "false".
+  DEST_DELETE: Set to "true" to delete local files not found on server (sync mode).
+              Default is "false".
 
 Usage:
   python3 backup_imap_emails.py --dest-path "./my_backup"
@@ -516,7 +524,45 @@ def load_labels_manifest(local_path):
     return {}
 
 
-def backup_folder(src_main, folder_name, local_base_path, src_conf):
+def delete_orphan_local_files(local_folder_path, server_uids):
+    """
+    Delete local .eml files that no longer exist on the server.
+    Args:
+        local_folder_path: Path to local folder containing .eml files
+        server_uids: Set of UID strings currently on server
+    Returns:
+        Count of deleted files
+    """
+    deleted_count = 0
+    if not os.path.exists(local_folder_path):
+        return deleted_count
+
+    try:
+        for filename in os.listdir(local_folder_path):
+            if not filename.endswith(".eml") or "_" not in filename:
+                continue
+
+            # Extract UID from filename (format: {UID}_{Subject}.eml)
+            parts = filename.split("_", 1)
+            if not parts[0].isdigit():
+                continue
+
+            local_uid = parts[0]
+            if local_uid not in server_uids:
+                file_path = os.path.join(local_folder_path, filename)
+                try:
+                    os.remove(file_path)
+                    safe_print(f"  -> Deleted orphan: {filename}")
+                    deleted_count += 1
+                except Exception as e:
+                    safe_print(f"  -> Error deleting {filename}: {e}")
+    except Exception as e:
+        safe_print(f"Error scanning for orphan files: {e}")
+
+    return deleted_count
+
+
+def backup_folder(src_main, folder_name, local_base_path, src_conf, dest_delete=False):
     safe_print(f"--- Processing Folder: {folder_name} ---")
 
     # create local path
@@ -547,13 +593,33 @@ def backup_folder(src_main, folder_name, local_base_path, src_conf):
     uids = data[0].split()
     total_on_server = len(uids)
 
+    # Build set of server UIDs for comparison
+    server_uid_set = set()
+    for u in uids:
+        u_str = u.decode("utf-8") if isinstance(u, bytes) else str(u)
+        server_uid_set.add(u_str)
+
     if total_on_server == 0:
         safe_print(f"Folder {folder_name} is empty.")
+        # If dest_delete enabled, delete all local files
+        if dest_delete:
+            deleted = delete_orphan_local_files(local_folder_path, set())
+            if deleted > 0:
+                safe_print(f"Deleted {deleted} orphan files from local backup.")
         return
 
     # Incremental Optimization
     # Read local directory to find UIDs we already have
     existing_uids = get_existing_uids(local_folder_path)
+
+    # Delete orphan local files if dest_delete is enabled
+    if dest_delete:
+        orphan_uids = existing_uids - server_uid_set
+        if orphan_uids:
+            safe_print(f"Found {len(orphan_uids)} local files not on server, deleting...")
+            deleted = delete_orphan_local_files(local_folder_path, server_uid_set)
+            if deleted > 0:
+                safe_print(f"Deleted {deleted} orphan files from local backup.")
 
     # Filter UIDs
     # decode uid first if bytes
@@ -609,25 +675,42 @@ def main():
     parser.add_argument("--batch", type=int, default=int(os.getenv("BATCH_SIZE", 10)), help="Emails per batch")
 
     # Gmail Labels
+    env_preserve_labels = os.getenv("PRESERVE_LABELS", "false").lower() == "true"
     parser.add_argument(
         "--preserve-labels",
         action="store_true",
+        default=env_preserve_labels,
         help="Gmail only: Create a labels_manifest.json mapping Message-IDs to labels for restoration",
     )
+    env_preserve_flags = os.getenv("PRESERVE_FLAGS", "false").lower() == "true"
     parser.add_argument(
         "--preserve-flags",
         action="store_true",
+        default=env_preserve_flags,
         help="Preserve IMAP flags (read/unread, starred, answered, draft) in manifest for restoration",
     )
+    env_manifest_only = os.getenv("MANIFEST_ONLY", "false").lower() == "true"
     parser.add_argument(
         "--manifest-only",
         action="store_true",
+        default=env_manifest_only,
         help="Gmail only: Build the labels manifest and exit without downloading emails",
     )
+    env_gmail_mode = os.getenv("GMAIL_MODE", "false").lower() == "true"
     parser.add_argument(
         "--gmail-mode",
         action="store_true",
+        default=env_gmail_mode,
         help="Gmail backup mode: Build labels manifest and backup [Gmail]/All Mail only (recommended)",
+    )
+
+    # Sync mode: delete local files not on server
+    env_dest_delete = os.getenv("DEST_DELETE", "false").lower() == "true"
+    parser.add_argument(
+        "--dest-delete",
+        action="store_true",
+        default=env_dest_delete,
+        help="Delete local .eml files that no longer exist on the IMAP server (sync mode)",
     )
 
     parser.add_argument("folder", nargs="?", help="Specific folder to backup")
@@ -682,6 +765,8 @@ def main():
         print("Preserve Labels : Yes (Gmail)")
     if args.preserve_flags or args.gmail_mode:
         print("Preserve Flags  : Yes (read/starred/answered/draft)")
+    if args.dest_delete:
+        print("Dest Delete     : Yes (remove local orphans)")
     print("-----------------------------\n")
 
     try:
@@ -717,15 +802,15 @@ def main():
 
         # Gmail mode: backup only [Gmail]/All Mail
         if args.gmail_mode:
-            backup_folder(src, "[Gmail]/All Mail", local_path, src_conf)
+            backup_folder(src, "[Gmail]/All Mail", local_path, src_conf, args.dest_delete)
         elif args.folder:
-            backup_folder(src, args.folder, local_path, src_conf)
+            backup_folder(src, args.folder, local_path, src_conf, args.dest_delete)
         else:
             typ, folders = src.list()
             if typ == "OK":
                 for f_info in folders:
                     name = imap_common.normalize_folder_name(f_info)
-                    backup_folder(src, name, local_path, src_conf)
+                    backup_folder(src, name, local_path, src_conf, args.dest_delete)
 
         src.logout()
         print("\nBackup completed successfully.")
