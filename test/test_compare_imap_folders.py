@@ -227,7 +227,7 @@ class TestCompareFoldersErrorHandling:
         mock_src.list.return_value = ("NO", [])
         mock_dest = MagicMock()
 
-        monkeypatch.setattr("imap_common.get_imap_connection", lambda h, u, p: mock_src if u == "s" else mock_dest)
+        monkeypatch.setattr("imap_common.get_imap_connection", lambda h, u, p, oauth2_token=None: mock_src if u == "s" else mock_dest)
 
         env = {
             "SRC_IMAP_HOST": "h",
