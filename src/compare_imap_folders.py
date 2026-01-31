@@ -253,10 +253,8 @@ def main():
 
     SRC_HOST = args.src_host
     SRC_USER = args.src_user
-    SRC_PASS = args.src_pass
     DEST_HOST = args.dest_host
     DEST_USER = args.dest_user
-    DEST_PASS = args.dest_pass
 
     src_use_oauth2 = bool(args.src_client_id) and not src_is_local
     dest_use_oauth2 = bool(args.dest_client_id) and not dest_is_local
