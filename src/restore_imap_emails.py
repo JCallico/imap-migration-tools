@@ -23,10 +23,19 @@ Configuration (Environment Variables):
               Default is "false".
 
 Usage:
-  python3 restore_imap_emails.py --src-path "./my_backup" --dest-host "imap.gmail.com"
+    python3 restore_imap_emails.py \
+        --src-path "./my_backup" \
+        --dest-host "imap.gmail.com" \
+        --dest-user "you@gmail.com" \
+        --dest-pass "your-app-password"
 
 Gmail Labels Restoration:
-  python3 restore_imap_emails.py --src-path "./gmail_backup" --dest-host "imap.gmail.com" --apply-labels
+    python3 restore_imap_emails.py \
+        --src-path "./gmail_backup" \
+        --dest-host "imap.gmail.com" \
+        --dest-user "you@gmail.com" \
+        --dest-pass "your-app-password" \
+        --apply-labels
   This uploads emails and applies labels from labels_manifest.json to recreate
   the original Gmail label structure.
 """

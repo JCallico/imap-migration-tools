@@ -25,14 +25,28 @@ Usage:
   python3 compare_imap_folders.py
 
 Examples:
-    # IMAP -> IMAP
-    python3 compare_imap_folders.py
+        # IMAP -> IMAP
+        python3 compare_imap_folders.py \
+            --src-host "imap.source.com" \
+            --src-user "source@example.com" \
+            --src-pass "source-app-password" \
+            --dest-host "imap.dest.com" \
+            --dest-user "dest@example.com" \
+            --dest-pass "dest-app-password"
 
-    # Local -> IMAP
-    python3 compare_imap_folders.py --src-path ./my_backup
+        # Local -> IMAP
+        python3 compare_imap_folders.py \
+            --src-path "./my_backup" \
+            --dest-host "imap.dest.com" \
+            --dest-user "dest@example.com" \
+            --dest-pass "dest-app-password"
 
-    # IMAP -> Local
-    python3 compare_imap_folders.py --dest-path ./my_backup
+        # IMAP -> Local
+        python3 compare_imap_folders.py \
+            --src-host "imap.source.com" \
+            --src-user "source@example.com" \
+            --src-pass "source-app-password" \
+            --dest-path "./my_backup"
 """
 
 import argparse
