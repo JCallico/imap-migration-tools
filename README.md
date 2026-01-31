@@ -141,18 +141,40 @@ All scripts support command-line arguments which take precedence over environmen
 
 **Migration:**
 ```bash
-python3 migrate_imap_emails.py --src-user "me@gmail.com" --dest-user "you@domain.com" --workers 4 --delete
+python3 migrate_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "me@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-host "imap.other.com" \
+  --dest-user "you@domain.com" \
+  --dest-pass "your-app-password" \
+  --workers 4 \
+  --delete
 ```
 
 **Comparison:**
 ```bash
-python3 compare_imap_folders.py --src-host "imap.gmail.com" --dest-host "imap.other.com"
+python3 compare_imap_folders.py \
+  --src-host "imap.gmail.com" \
+  --src-user "me@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-host "imap.other.com" \
+  --dest-user "you@domain.com" \
+  --dest-pass "your-app-password"
 
 # Compare IMAP source to a local backup folder
-python3 compare_imap_folders.py --dest-path "./my_backup"
+python3 compare_imap_folders.py \
+  --src-host "imap.gmail.com" \
+  --src-user "me@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-path "./my_backup"
 
 # Compare a local backup folder to an IMAP destination
-python3 compare_imap_folders.py --src-path "./my_backup" --dest-host "imap.other.com"
+python3 compare_imap_folders.py \
+  --src-path "./my_backup" \
+  --dest-host "imap.other.com" \
+  --dest-user "you@domain.com" \
+  --dest-pass "your-app-password"
 ```
 
 **Counting:**
@@ -169,7 +191,11 @@ python3 count_imap_emails.py
 
 **Backup:**
 ```bash
-python3 backup_imap_emails.py --src-user "me@gmail.com" --dest-path "./my_backup"
+python3 backup_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "me@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-path "./my_backup"
 ```
 
 ## Usage Examples
@@ -177,37 +203,82 @@ python3 backup_imap_emails.py --src-user "me@gmail.com" --dest-path "./my_backup
 ### 1. Full Migration
 Migrate all folders from Source to Destination.
 ```bash
-python3 migrate_imap_emails.py
+python3 migrate_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-host "imap.other.com" \
+  --dest-user "dest@domain.com" \
+  --dest-pass "dest-app-password"
 ```
 
 ### 2. Single Folder Migration
 Migrate ONLY a specific folder (e.g., trying to fix just "Important" or "Sent").
 ```bash
 # Syntax: python3 migrate_imap_emails.py "[Folder Name]"
-python3 migrate_imap_emails.py "[Gmail]/Important"
+python3 migrate_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-host "imap.other.com" \
+  --dest-user "dest@domain.com" \
+  --dest-pass "dest-app-password" \
+  "[Gmail]/Important"
 ```
 
 ### 3. Move Instead of Copy
 Migrate and **delete** from source immediately after verifying the copy.
 ```bash
 # Using flag
-python3 migrate_imap_emails.py --delete
+python3 migrate_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-host "imap.other.com" \
+  --dest-user "dest@domain.com" \
+  --dest-pass "dest-app-password" \
+  --delete
 
 # Or specific folder with delete
-python3 migrate_imap_emails.py "Inbox" --delete
+python3 migrate_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-host "imap.other.com" \
+  --dest-user "dest@domain.com" \
+  --dest-pass "dest-app-password" \
+  "INBOX" \
+  --delete
 ```
 
 ### 4. Sync Mode (Delete from Destination)
 Keep destination in sync by deleting emails that no longer exist in the source.
 ```bash
 # Migration: Delete destination emails not found in source
-python3 migrate_imap_emails.py --dest-delete
+python3 migrate_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-host "imap.other.com" \
+  --dest-user "dest@domain.com" \
+  --dest-pass "dest-app-password" \
+  --dest-delete
 
 # Backup: Delete local .eml files not found on server
-python3 backup_imap_emails.py --dest-path "./backup" --dest-delete
+python3 backup_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-path "./backup" \
+  --dest-delete
 
 # Restore: Delete server emails not found in local backup
-python3 restore_imap_emails.py --src-path "./backup" --dest-delete
+python3 restore_imap_emails.py \
+  --src-path "./backup" \
+  --dest-host "imap.other.com" \
+  --dest-user "dest@domain.com" \
+  --dest-pass "dest-app-password" \
+  --dest-delete
 ```
 
 **Warning:** The `--dest-delete` flag permanently removes emails/files from the destination. Use with caution and always verify your backup is complete before enabling this option.
@@ -215,13 +286,27 @@ python3 restore_imap_emails.py --src-path "./backup" --dest-delete
 ### 5. Verify Migration
 Compare counts between source and destination.
 ```bash
-python3 compare_imap_folders.py
+python3 compare_imap_folders.py \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-host "imap.other.com" \
+  --dest-user "dest@domain.com" \
+  --dest-pass "dest-app-password"
 
 # IMAP source -> local backup destination
-python3 compare_imap_folders.py --dest-path "./my_backup"
+python3 compare_imap_folders.py \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-path "./my_backup"
 
 # local backup source -> IMAP destination
-python3 compare_imap_folders.py --src-path "./my_backup" --dest-host "imap.other.com"
+python3 compare_imap_folders.py \
+  --src-path "./my_backup" \
+  --dest-host "imap.other.com" \
+  --dest-user "dest@domain.com" \
+  --dest-pass "dest-app-password"
 ```
 *Output Example:*
 ```
@@ -234,15 +319,27 @@ INBOX                   | 1250         | 1250       | MATCH
 ### 6. Local Backup
 Download all your emails to your computer as `.eml` files.
 ```bash
-# Set destination path
-export BACKUP_LOCAL_PATH="./backup_folder"
-python3 backup_imap_emails.py
+# Backup all folders from an IMAP account to a local folder
+python3 backup_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "you@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-path "./backup_folder"
 
 # Or via command line
-python3 backup_imap_emails.py --dest-path "/Users/jdoe/Documents/Emails" 
+python3 backup_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "you@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-path "/Users/jdoe/Documents/Emails"
 
 # Backup single folder
-python3 backup_imap_emails.py --dest-path "./my_backup" "[Gmail]/Sent Mail"
+python3 backup_imap_emails.py \
+  --src-host "imap.gmail.com" \
+  --src-user "you@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-path "./my_backup" \
+  "[Gmail]/Sent Mail"
 ```
 
 ### 6a. Compare IMAP vs Local Backup
@@ -250,10 +347,18 @@ Use `compare_imap_folders.py` to validate an IMAP account against a local backup
 
 ```bash
 # Option 1: IMAP source -> local destination
-python3 compare_imap_folders.py --dest-path "./my_backup"
+python3 compare_imap_folders.py \
+  --src-host "imap.gmail.com" \
+  --src-user "you@gmail.com" \
+  --src-pass "your-app-password" \
+  --dest-path "./my_backup"
 
 # Option 2: local source -> IMAP destination
-python3 compare_imap_folders.py --src-path "./my_backup" --dest-host "imap.other.com"
+python3 compare_imap_folders.py \
+  --src-path "./my_backup" \
+  --dest-host "imap.other.com" \
+  --dest-user "you@domain.com" \
+  --dest-pass "your-app-password"
 ```
 
 You can also set local paths via environment variables:

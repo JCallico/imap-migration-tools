@@ -25,10 +25,20 @@ Configuration (Environment Variables):
               Default is "false".
 
 Usage:
-  python3 backup_imap_emails.py --dest-path "./my_backup"
+    python3 backup_imap_emails.py \
+        --src-host "imap.example.com" \
+        --src-user "you@example.com" \
+        --src-pass "your-app-password" \
+        --dest-path "./my_backup"
 
 Gmail Labels:
-  python3 backup_imap_emails.py --dest-path "./my_backup" --preserve-labels "[Gmail]/All Mail"
+    python3 backup_imap_emails.py \
+        --src-host "imap.gmail.com" \
+        --src-user "you@gmail.com" \
+        --src-pass "your-app-password" \
+        --dest-path "./my_backup" \
+        --preserve-labels \
+        "[Gmail]/All Mail"
   This backs up all emails from [Gmail]/All Mail and creates a labels_manifest.json
   file that maps each email's Message-ID to its Gmail labels for later restoration.
 """
