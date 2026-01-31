@@ -553,7 +553,8 @@ python3 restore_imap_emails.py \
 
 **How Gmail restore works:**
 1. Reads emails from the backup (typically `[Gmail]/All Mail`)
-2. Uploads each email to INBOX with original flags (read/starred/etc)
+2. Uploads each email to the first usable label folder (preserving original flags)
+  - If an email has no usable labels, it is uploaded to `Restored/Unlabeled`
 3. Looks up the Message-ID in `labels_manifest.json`
 4. Copies the email to each label folder (e.g., "Work", "Personal", "Projects/2024")
 

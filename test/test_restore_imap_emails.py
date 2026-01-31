@@ -18,6 +18,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
+import imap_common
 import restore_imap_emails
 from conftest import make_single_mock_connection
 
@@ -495,6 +496,36 @@ class TestLabelToFolder:
         """Test nested user label (no conversion)."""
         result = restore_imap_emails.label_to_folder("Projects/2024")
         assert result == "Projects/2024"
+
+
+class TestGmailModeDraftsFallbackRegression:
+    def test_gmail_mode_no_labels_does_not_upload_to_drafts(self, monkeypatch):
+        """Regression: messages with no usable labels must not be uploaded to Gmail Drafts."""
+
+        captured = {}
+
+        def fake_upload_email(dest, folder_name, raw_content, date_str, message_id, subject, flags=None):
+            captured["folder_name"] = folder_name
+            return True
+
+        def fake_parse_eml_file(_path):
+            return "<no-labels@test>", '"01-Jan-2024 00:00:00 +0000"', b"Subject: X\r\nMessage-ID: <no-labels@test>\r\n\r\nBody", "X"
+
+        monkeypatch.setattr(restore_imap_emails, "get_thread_connection", lambda _conf: MagicMock())
+        monkeypatch.setattr(restore_imap_emails, "upload_email", fake_upload_email)
+        monkeypatch.setattr(restore_imap_emails, "parse_eml_file", fake_parse_eml_file)
+
+        restore_imap_emails.process_restore_batch(
+            eml_files=[("/does/not/matter.eml", "x.eml")],
+            folder_name="__GMAIL_MODE__",
+            dest_conf=("host", "user", "pass"),
+            manifest={},
+            apply_labels=True,
+            apply_flags=False,
+        )
+
+        assert captured["folder_name"] == imap_common.FOLDER_RESTORED_UNLABELED
+        assert captured["folder_name"] != "[Gmail]/Drafts"
 
 
 class TestSyncFlagsOnExisting:

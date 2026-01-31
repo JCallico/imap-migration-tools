@@ -472,7 +472,7 @@ def process_batch(
                         remaining_labels.append(label)
 
                 if target_folder is None:
-                    target_folder = imap_common.GMAIL_DRAFTS
+                    target_folder = imap_common.FOLDER_RESTORED_UNLABELED
                     remaining_labels = []
             else:
                 target_folder = folder_name
