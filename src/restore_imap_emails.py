@@ -238,15 +238,15 @@ def get_eml_files(folder_path):
     return eml_files
 
 
-def email_exists_in_folder(imap_conn, message_id, size):
+def email_exists_in_folder(imap_conn, message_id):
     """
-    Check if an email with the given Message-ID and size exists in the currently selected folder.
+    Check if an email with the given Message-ID exists in the currently selected folder.
     """
     if not message_id:
         return False
 
     try:
-        return imap_common.message_exists_in_folder(imap_conn, message_id, size)
+        return imap_common.message_exists_in_folder(imap_conn, message_id)
     except Exception:
         return False
 
@@ -272,7 +272,7 @@ def upload_email(dest, folder_name, raw_content, date_str, message_id, subject, 
 
         # Check for duplicates
         size = len(raw_content)
-        if message_id and email_exists_in_folder(dest, message_id, size):
+        if message_id and email_exists_in_folder(dest, message_id):
             return False  # Already exists
 
         # Upload with original date and flags
@@ -414,7 +414,7 @@ def process_restore_batch(eml_files, folder_name, dest_conf, manifest, apply_lab
 
                         # Select and check for duplicate
                         dest.select(f'"{label_folder}"')
-                        if not email_exists_in_folder(dest, message_id, size):
+                        if not email_exists_in_folder(dest, message_id):
                             dest.append(f'"{label_folder}"', flags, date_str, raw_content)
                             safe_print(f"  -> Applied label: {label}")
                         # If email exists in this label folder, sync flags
