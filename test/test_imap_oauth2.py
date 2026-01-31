@@ -71,42 +71,29 @@ class TestDiscoverMicrosoftTenant:
     def test_successful_discovery(self):
         """Test successful tenant ID extraction from OpenID config."""
         tenant_id = "12345678-abcd-ef01-2345-67890abcdef0"
-        openid_response = json.dumps(
-            {
-                "issuer": f"https://sts.windows.net/{tenant_id}/",
-                "authorization_endpoint": f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize",
-            }
-        ).encode("utf-8")
+        data = {
+            "issuer": f"https://sts.windows.net/{tenant_id}/",
+            "authorization_endpoint": f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize",
+        }
 
-        mock_response = MagicMock()
-        mock_response.read.return_value = openid_response
-        mock_response.__enter__ = lambda s: s
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        with patch("urllib.request.urlopen", return_value=mock_response):
+        with patch.object(imap_oauth2, "_fetch_json_https", return_value=data):
             result = imap_oauth2.discover_microsoft_tenant("user@contoso.com")
 
         assert result == tenant_id
 
     def test_domain_extraction(self):
         """Test that domain is correctly extracted from email."""
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps(
-            {"issuer": "https://sts.windows.net/abcdef01-2345-6789-abcd-ef0123456789/"}
-        ).encode("utf-8")
-        mock_response.__enter__ = lambda s: s
-        mock_response.__exit__ = MagicMock(return_value=False)
+        data = {"issuer": "https://sts.windows.net/abcdef01-2345-6789-abcd-ef0123456789/"}
 
-        with patch("urllib.request.urlopen", return_value=mock_response) as mock_urlopen:
+        with patch.object(imap_oauth2, "_fetch_json_https", return_value=data) as mock_fetch:
             imap_oauth2.discover_microsoft_tenant("user@example.org")
-            call_url = mock_urlopen.call_args[0][0]
-            assert "example.org" in call_url
+            host, path = mock_fetch.call_args[0][0], mock_fetch.call_args[0][1]
+            assert host == "login.microsoftonline.com"
+            assert "example.org" in path
 
     def test_network_error(self, capsys):
         """Test returns None on network error."""
-        import urllib.error
-
-        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused")):
+        with patch.object(imap_oauth2, "_fetch_json_https", side_effect=OSError("Connection refused")):
             result = imap_oauth2.discover_microsoft_tenant("user@invalid.example")
 
         assert result is None
@@ -115,24 +102,20 @@ class TestDiscoverMicrosoftTenant:
 
     def test_invalid_json(self, capsys):
         """Test returns None on invalid JSON response."""
-        mock_response = MagicMock()
-        mock_response.read.return_value = b"not json"
-        mock_response.__enter__ = lambda s: s
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        with patch("urllib.request.urlopen", return_value=mock_response):
+        with patch.object(
+            imap_oauth2,
+            "_fetch_json_https",
+            side_effect=json.JSONDecodeError("Expecting value", "not json", 0),
+        ):
             result = imap_oauth2.discover_microsoft_tenant("user@test.com")
 
         assert result is None
 
     def test_no_tenant_in_issuer(self, capsys):
         """Test returns None when issuer has no tenant GUID."""
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({"issuer": "https://sts.windows.net/not-a-guid/"}).encode("utf-8")
-        mock_response.__enter__ = lambda s: s
-        mock_response.__exit__ = MagicMock(return_value=False)
+        data = {"issuer": "https://sts.windows.net/not-a-guid/"}
 
-        with patch("urllib.request.urlopen", return_value=mock_response):
+        with patch.object(imap_oauth2, "_fetch_json_https", return_value=data):
             result = imap_oauth2.discover_microsoft_tenant("user@test.com")
 
         assert result is None

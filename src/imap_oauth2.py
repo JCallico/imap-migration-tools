@@ -12,14 +12,38 @@ Notes:
 - Provider is auto-detected from the IMAP host string.
 """
 
+import http.client
+import json
 import re
+import ssl
 import sys
 import threading
+import urllib.parse
 
 # Module-level caches for OAuth2 token refresh
 _msal_app_cache = {}  # (client_id, tenant_id) -> PublicClientApplication
 _google_creds_cache = {}  # (client_id, client_secret) -> credentials
 _token_refresh_lock = threading.Lock()
+
+
+def _fetch_json_https(host, path, timeout=10):
+    if not host or any(ch in host for ch in "\r\n"):
+        raise ValueError("Invalid host")
+    if not path.startswith("/"):
+        path = f"/{path}"
+
+    context = ssl.create_default_context()
+    conn = http.client.HTTPSConnection(host, timeout=timeout, context=context)
+    try:
+        conn.request("GET", path, headers={"Accept": "application/json"})
+        response = conn.getresponse()
+        body = response.read()
+    finally:
+        conn.close()
+
+    if response.status != 200:
+        raise RuntimeError(f"Unexpected HTTP status {response.status}")
+    return json.loads(body.decode("utf-8"))
 
 
 def detect_oauth2_provider(host):
@@ -41,17 +65,17 @@ def discover_microsoft_tenant(email):
     Uses the OpenID Connect discovery endpoint (no authentication required).
     Returns the tenant ID string or None if discovery fails.
     """
-    import json
-    import urllib.error
-    import urllib.request
+    domain = email.split("@")[-1].strip()
+    if not domain:
+        print("Error: Could not discover Microsoft tenant: missing email domain")
+        return None
 
-    domain = email.split("@")[-1]
-    url = f"https://login.microsoftonline.com/{domain}/.well-known/openid-configuration"
+    domain_quoted = urllib.parse.quote(domain, safe=".-")
+    path = f"/{domain_quoted}/.well-known/openid-configuration"
 
     try:
-        with urllib.request.urlopen(url, timeout=10) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, json.JSONDecodeError) as e:
+        data = _fetch_json_https("login.microsoftonline.com", path, timeout=10)
+    except (OSError, http.client.HTTPException, json.JSONDecodeError, RuntimeError, ValueError) as e:
         print(f"Error: Could not discover Microsoft tenant for domain '{domain}': {e}")
         return None
 
