@@ -62,11 +62,6 @@ DELETE_FROM_SOURCE_DEFAULT = False
 MAX_WORKERS = 10  # Initial default, updated in main
 BATCH_SIZE = 10  # Initial default, updated in main
 
-# Standard IMAP flags that can be preserved during migration
-# \Recent is session-specific and cannot be set by clients
-# \Deleted should not be preserved as it marks messages for removal
-PRESERVABLE_FLAGS = {"\\Seen", "\\Answered", "\\Flagged", "\\Draft"}
-
 # Thread-local storage for IMAP connections
 thread_local = threading.local()
 print_lock = threading.Lock()
@@ -88,7 +83,7 @@ def filter_preservable_flags(flags_str):
     if not flags_str:
         return None
     # Split and filter
-    flags = [f for f in flags_str.split() if f in PRESERVABLE_FLAGS]
+    flags = [f for f in flags_str.split() if f in imap_common.PRESERVABLE_FLAGS]
     return " ".join(flags) if flags else None
 
 
@@ -196,7 +191,7 @@ def delete_orphan_emails(imap_conn, folder_name, source_msg_ids):
         # Delete orphan emails
         for uid in uids_to_delete:
             try:
-                imap_conn.uid("store", uid, "+FLAGS", "(\\Deleted)")
+                imap_conn.uid(imap_common.CMD_STORE, uid, imap_common.OP_ADD_FLAGS, imap_common.FLAG_DELETED_LITERAL)
                 deleted_count += 1
             except Exception:
                 pass
@@ -222,13 +217,13 @@ def get_thread_connections(src_conf, dest_conf):
     try:
         if thread_local.src:
             thread_local.src.noop()
-    except:
+    except Exception:
         thread_local.src = imap_common.get_imap_connection(*src_conf)
 
     try:
         if thread_local.dest:
             thread_local.dest.noop()
-    except:
+    except Exception:
         thread_local.dest = imap_common.get_imap_connection(*dest_conf)
 
     return thread_local.src, thread_local.dest
@@ -308,7 +303,7 @@ def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source, tr
                                 src.uid("copy", uid, f'"{trash_folder}"')
                             except Exception:
                                 pass
-                        src.uid("store", uid, "+FLAGS", "(\\Deleted)")
+                        src.uid(imap_common.CMD_STORE, uid, imap_common.OP_ADD_FLAGS, imap_common.FLAG_DELETED_LITERAL)
                         deleted_count += 1
 
         except Exception as e:
@@ -329,7 +324,7 @@ def migrate_folder(
 
     # Maintain folder structure
     try:
-        if folder_name.upper() != "INBOX":
+        if folder_name.upper() != imap_common.FOLDER_INBOX:
             dest.create(f'"{folder_name}"')
     except Exception:
         pass  # Ignore if exists

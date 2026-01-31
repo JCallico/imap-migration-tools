@@ -32,7 +32,7 @@ class TestFolderComparison:
             "INBOX": [b"Subject: 1\r\n\r\nB", b"Subject: 2\r\n\r\nB"],
             "Sent": [b"Subject: 3\r\n\r\nB"],
         }
-        src_server, dest_server, p1, p2 = mock_server_factory(data, data.copy())
+        _, _, p1, p2 = mock_server_factory(data, data.copy())
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -60,7 +60,7 @@ class TestFolderComparison:
         dest_data = {
             "INBOX": [b"Subject: 1\r\n\r\nB"],
         }
-        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+        _, _, p1, p2 = mock_server_factory(src_data, dest_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -90,7 +90,7 @@ class TestFolderComparison:
         dest_data = {
             "INBOX": [b"Subject: 1\r\n\r\nB"],
         }
-        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+        _, _, p1, p2 = mock_server_factory(src_data, dest_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -120,7 +120,7 @@ class TestEmptyFolders:
         src_data = {"INBOX": [], "Empty": []}
         dest_data = {"INBOX": [], "Empty": []}
 
-        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+        _, _, p1, p2 = mock_server_factory(src_data, dest_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -147,7 +147,7 @@ class TestGetEmailCount:
     def test_successful_count(self, single_mock_server):
         """Test successful email count."""
         data = {"INBOX": [b"Subject: 1\r\n\r\nB", b"Subject: 2\r\n\r\nB"]}
-        server, port = single_mock_server(data)
+        _, port = single_mock_server(data)
 
         conn = imaplib.IMAP4("localhost", port)
         conn.login("user", "pass")
@@ -160,7 +160,7 @@ class TestGetEmailCount:
     def test_nonexistent_folder(self, single_mock_server):
         """Test count for non-existent folder returns None."""
         data = {"INBOX": []}
-        server, port = single_mock_server(data)
+        _, port = single_mock_server(data)
 
         conn = imaplib.IMAP4("localhost", port)
         conn.login("user", "pass")
@@ -248,7 +248,7 @@ class TestCompareFoldersErrorHandling:
     def test_select_failure(self, single_mock_server):
         """Test get_email_count handles select failure."""
         data = {"INBOX": []}
-        server, port = single_mock_server(data)
+        _, port = single_mock_server(data)
         conn = imaplib.IMAP4("localhost", port)
         conn.login("user", "pass")
 
@@ -325,7 +325,7 @@ class TestTotals:
             "INBOX": [b"Subject: 1\r\n\r\nB"],
             "Sent": [b"Subject: 3\r\n\r\nB"],
         }
-        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+        _, _, p1, p2 = mock_server_factory(src_data, dest_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",

@@ -34,7 +34,7 @@ class TestEmailCounting:
                 b"Subject: Email 3\r\n\r\nBody",
             ]
         }
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
 
@@ -51,7 +51,7 @@ class TestEmailCounting:
             "Sent": [b"Subject: 3\r\n\r\nB"],
             "Archive": [b"Subject: 4\r\n\r\nB", b"Subject: 5\r\n\r\nB", b"Subject: 6\r\n\r\nB"],
         }
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
 
@@ -67,7 +67,7 @@ class TestEmailCounting:
     def test_empty_folder(self, single_mock_server, monkeypatch, capsys):
         """Test counting in empty folders."""
         src_data = {"INBOX": [], "Empty": []}
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
 
@@ -180,7 +180,7 @@ class TestMainFunction:
     def test_main_with_env_vars(self, single_mock_server, monkeypatch, capsys):
         """Test main function with environment variables."""
         src_data = {"INBOX": [b"Subject: Test\r\n\r\nBody"]}
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         env = {
             "IMAP_HOST": "localhost",
@@ -225,7 +225,7 @@ class TestSrcImapFallback:
     def test_src_imap_vars_fallback(self, single_mock_server, monkeypatch, capsys):
         """Test that SRC_IMAP_* vars work as fallback."""
         src_data = {"INBOX": [b"Subject: Test\r\n\r\nBody"]}
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",

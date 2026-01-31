@@ -347,7 +347,7 @@ class TestMigrateErrorHandling:
 
         def side_effect_select(self, mailbox, readonly=False):
             if threading.current_thread() is not threading.main_thread():
-                raise Exception("Select failed")
+                raise RuntimeError("Select failed")
             return original_select(self, mailbox, readonly)
 
         monkeypatch.setattr(imaplib.IMAP4, "select", side_effect_select)
@@ -378,7 +378,7 @@ class TestMigrateErrorHandling:
 
         def side_effect_uid(self, command, *args):
             if command == "fetch" and threading.current_thread() is not threading.main_thread():
-                raise Exception("Fetch failed")
+                raise RuntimeError("Fetch failed")
             return original_uid(self, command, *args)
 
         monkeypatch.setattr(imaplib.IMAP4, "uid", side_effect_uid)

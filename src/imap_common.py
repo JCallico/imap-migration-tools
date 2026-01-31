@@ -11,6 +11,47 @@ import sys
 from email.header import decode_header
 from email.parser import BytesParser
 
+# Standard IMAP flags
+FLAG_SEEN = "\\Seen"
+FLAG_ANSWERED = "\\Answered"
+FLAG_FLAGGED = "\\Flagged"
+FLAG_DRAFT = "\\Draft"
+FLAG_DELETED = "\\Deleted"
+FLAG_DELETED_LITERAL = "(\\Deleted)"
+
+# Standard IMAP flags that can be preserved during migration
+# \Recent is session-specific and cannot be set by clients
+# \Deleted should not be preserved as it marks messages for removal
+PRESERVABLE_FLAGS = {FLAG_SEEN, FLAG_ANSWERED, FLAG_FLAGGED, FLAG_DRAFT}
+
+# Gmail constants
+GMAIL_ALL_MAIL = "[Gmail]/All Mail"
+GMAIL_TRASH = "[Gmail]/Trash"
+GMAIL_SPAM = "[Gmail]/Spam"
+GMAIL_DRAFTS = "[Gmail]/Drafts"
+GMAIL_BIN = "[Gmail]/Bin"
+GMAIL_IMPORTANT = "[Gmail]/Important"
+GMAIL_SENT = "[Gmail]/Sent Mail"
+GMAIL_STARRED = "[Gmail]/Starred"
+
+GMAIL_SYSTEM_FOLDERS = {
+    GMAIL_ALL_MAIL,
+    GMAIL_SPAM,
+    GMAIL_TRASH,
+    GMAIL_DRAFTS,
+    GMAIL_BIN,
+    GMAIL_IMPORTANT,
+}
+
+# IMAP Folder Constants
+FOLDER_INBOX = "INBOX"
+
+# IMAP Commands
+CMD_STORE = "store"
+CMD_SEARCH = "search"
+CMD_FETCH = "fetch"
+OP_ADD_FLAGS = "+FLAGS"
+
 
 def verify_env_vars(vars_list):
     """

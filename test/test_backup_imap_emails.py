@@ -18,6 +18,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import backup_imap_emails
+import imap_common
 from conftest import make_single_mock_connection
 
 
@@ -27,7 +28,7 @@ class TestBackupBasic:
     def test_single_email_backup(self, single_mock_server, monkeypatch, tmp_path):
         """Test backing up a single email to local directory."""
         src_data = {"INBOX": [b"Subject: Test Email\r\nMessage-ID: <1@test>\r\n\r\nBody content"]}
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -60,7 +61,7 @@ class TestBackupBasic:
                 b"Subject: Email 3\r\nMessage-ID: <3@test>\r\n\r\nBody 3",
             ]
         }
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -89,7 +90,7 @@ class TestIncrementalBackup:
                 b"Subject: Email 2\r\nMessage-ID: <2@test>\r\n\r\nBody 2",
             ]
         }
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         # Create pre-existing file
         inbox_path = tmp_path / "INBOX"
@@ -126,7 +127,7 @@ class TestMultipleFolderBackup:
             "Sent": [b"Subject: Sent\r\nMessage-ID: <2@test>\r\n\r\nC"],
             "Archive": [b"Subject: Archive\r\nMessage-ID: <3@test>\r\n\r\nC"],
         }
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -149,7 +150,7 @@ class TestMultipleFolderBackup:
             "INBOX": [b"Subject: Inbox\r\nMessage-ID: <1@test>\r\n\r\nC"],
             "Sent": [b"Subject: Sent\r\nMessage-ID: <2@test>\r\n\r\nC"],
         }
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -173,7 +174,7 @@ class TestEmptyFolderHandling:
     def test_empty_folder(self, single_mock_server, monkeypatch, tmp_path):
         """Test handling of empty folders."""
         src_data = {"INBOX": [], "Empty": []}
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -596,7 +597,7 @@ class TestGmailLabelsPreservation:
             "Work": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
             "[Gmail]/All Mail": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
         }
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -627,7 +628,7 @@ class TestGmailLabelsPreservation:
                 b"Subject: Work Email\r\nMessage-ID: <2@test>\r\n\r\nBody",
             ],
         }
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -668,7 +669,7 @@ class TestGmailLabelsPreservation:
             "[Gmail]/Bin",
             "[Gmail]/Important",
         }
-        assert backup_imap_emails.GMAIL_SYSTEM_FOLDERS == expected
+        assert imap_common.GMAIL_SYSTEM_FOLDERS == expected
 
     def test_gmail_mode_flag(self, single_mock_server, monkeypatch, tmp_path):
         """Test --gmail-mode flag backs up All Mail and creates manifest."""
@@ -677,7 +678,7 @@ class TestGmailLabelsPreservation:
             "Work": [b"Subject: Work Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
             "[Gmail]/All Mail": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
         }
-        server, port = single_mock_server(src_data)
+        _, port = single_mock_server(src_data)
 
         env = {
             "SRC_IMAP_HOST": "localhost",

@@ -45,20 +45,11 @@ import imap_common
 # Defaults
 MAX_WORKERS = 10
 BATCH_SIZE = 10
+MANIFEST_FILENAME = "labels_manifest.json"
 
 # Thread-local storage
 thread_local = threading.local()
 print_lock = threading.Lock()
-
-# Gmail-specific folders to exclude from label mapping
-GMAIL_SYSTEM_FOLDERS = {
-    "[Gmail]/All Mail",
-    "[Gmail]/Spam",
-    "[Gmail]/Trash",
-    "[Gmail]/Drafts",
-    "[Gmail]/Bin",
-    "[Gmail]/Important",  # This is actually a label, but often system-managed
-}
 
 
 def safe_print(message):
@@ -74,7 +65,7 @@ def get_thread_connection(src_conf):
     try:
         if thread_local.src:
             thread_local.src.noop()
-    except:
+    except Exception:
         thread_local.src = imap_common.get_imap_connection(*src_conf)
     return thread_local.src
 
@@ -95,7 +86,7 @@ def process_batch(uids, folder_name, src_conf, local_folder_path):
         try:
             # 1. Fetch Subject for Filename
             # We fetch headers first to generate the nice filename
-            msg_id, size, subject = imap_common.get_msg_details(src, uid)
+            _, _, subject = imap_common.get_msg_details(src, uid)
 
             # Helper to handle byte UIDs
             uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
@@ -174,15 +165,15 @@ def is_gmail_label_folder(folder_name):
     Excludes system folders like All Mail, Spam, Trash, Drafts.
     """
     # Exclude system folders that aren't really "labels"
-    if folder_name in GMAIL_SYSTEM_FOLDERS:
+    if folder_name in imap_common.GMAIL_SYSTEM_FOLDERS:
         return False
 
-    # INBOX is a special case - it's a label in Gmail
-    if folder_name == "INBOX":
+    # imap_common.FOLDER_INBOX is a special case - it's a label in Gmail
+    if folder_name == imap_common.FOLDER_INBOX:
         return True
 
     # [Gmail]/Sent Mail and [Gmail]/Starred are labels worth preserving
-    if folder_name in ("[Gmail]/Sent Mail", "[Gmail]/Starred"):
+    if folder_name in (imap_common.GMAIL_SENT, imap_common.GMAIL_STARRED):
         return True
 
     # Any folder NOT under [Gmail]/ is a user label
@@ -195,7 +186,7 @@ def is_gmail_label_folder(folder_name):
 # Standard IMAP flags that can be preserved during migration
 # \Recent is session-specific and cannot be set by clients
 # \Deleted should not be preserved as it marks messages for removal
-PRESERVABLE_FLAGS = {"\\Seen", "\\Answered", "\\Flagged", "\\Draft"}
+PRESERVABLE_FLAGS = imap_common.PRESERVABLE_FLAGS
 
 
 def get_message_info_in_folder(imap_conn, folder_name, progress_callback=None):
@@ -249,7 +240,7 @@ def get_message_info_in_folder(imap_conn, folder_name, progress_callback=None):
 
                         # Extract all preservable flags from the metadata
                         flags = []
-                        for flag in PRESERVABLE_FLAGS:
+                        for flag in imap_common.PRESERVABLE_FLAGS:
                             if flag in meta_str:
                                 flags.append(flag)
 
@@ -324,7 +315,7 @@ def build_labels_manifest(imap_conn, local_path):
             flush=True,
         )
 
-    all_mail_info = get_message_info_in_folder(imap_conn, "[Gmail]/All Mail", all_mail_progress_cb)
+    all_mail_info = get_message_info_in_folder(imap_conn, imap_common.GMAIL_ALL_MAIL, all_mail_progress_cb)
     print()  # New line after progress
 
     # Initialize manifest with flags from All Mail
@@ -333,8 +324,8 @@ def build_labels_manifest(imap_conn, local_path):
 
     all_mail_elapsed = time.time() - all_mail_start
     # Count flag statistics
-    read_count = sum(1 for m in manifest.values() if "\\Seen" in m.get("flags", []))
-    flagged_count = sum(1 for m in manifest.values() if "\\Flagged" in m.get("flags", []))
+    read_count = sum(1 for m in manifest.values() if imap_common.FLAG_SEEN in m.get("flags", []))
+    flagged_count = sum(1 for m in manifest.values() if imap_common.FLAG_FLAGGED in m.get("flags", []))
     safe_print(f"  -> {len(all_mail_info)} emails scanned ({all_mail_elapsed:.1f}s)")
     safe_print(f"  -> Read: {read_count}, Unread: {len(manifest) - read_count}, Starred: {flagged_count}\n")
 
@@ -396,8 +387,8 @@ def build_labels_manifest(imap_conn, local_path):
 
     # Summary
     total_elapsed = time.time() - start_time
-    read_count = sum(1 for m in manifest.values() if "\\Seen" in m.get("flags", []))
-    flagged_count = sum(1 for m in manifest.values() if "\\Flagged" in m.get("flags", []))
+    read_count = sum(1 for m in manifest.values() if imap_common.FLAG_SEEN in m.get("flags", []))
+    flagged_count = sum(1 for m in manifest.values() if imap_common.FLAG_FLAGGED in m.get("flags", []))
     safe_print("\nManifest building complete:")
     safe_print(f"  - Folders scanned: {total_folders + 1}")  # +1 for All Mail
     safe_print(f"  - Total email-label mappings: {total_emails_scanned}")
@@ -406,7 +397,7 @@ def build_labels_manifest(imap_conn, local_path):
     safe_print(f"  - Time elapsed: {total_elapsed:.1f}s")
 
     # Save manifest
-    manifest_path = os.path.join(local_path, "labels_manifest.json")
+    manifest_path = os.path.join(local_path, MANIFEST_FILENAME)
     try:
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
@@ -481,8 +472,8 @@ def build_flags_manifest(imap_conn, local_path, folders_to_scan=None):
 
     # Summary
     total_elapsed = time.time() - start_time
-    read_count = sum(1 for m in manifest.values() if "\\Seen" in m.get("flags", []))
-    flagged_count = sum(1 for m in manifest.values() if "\\Flagged" in m.get("flags", []))
+    read_count = sum(1 for m in manifest.values() if imap_common.FLAG_SEEN in m.get("flags", []))
+    flagged_count = sum(1 for m in manifest.values() if imap_common.FLAG_FLAGGED in m.get("flags", []))
     safe_print("\nFlags manifest building complete:")
     safe_print(f"  - Folders scanned: {total_folders}")
     safe_print(f"  - Unique emails: {len(manifest)}")
@@ -506,7 +497,7 @@ def load_labels_manifest(local_path):
     Loads an existing labels manifest from the backup directory.
     Returns the manifest dict or empty dict if not found.
     """
-    manifest_path = os.path.join(local_path, "labels_manifest.json")
+    manifest_path = os.path.join(local_path, MANIFEST_FILENAME)
     if os.path.exists(manifest_path):
         try:
             with open(manifest_path, encoding="utf-8") as f:
@@ -785,7 +776,7 @@ def main():
         # If manifest-only mode, we're done
         if args.manifest_only:
             src.logout()
-            manifest_path = os.path.join(local_path, "labels_manifest.json")
+            manifest_path = os.path.join(local_path, MANIFEST_FILENAME)
             print("\nManifest-only mode complete.")
             print(f"Labels manifest saved to: {manifest_path}")
             print("\nTo download emails, run again without --manifest-only:")
@@ -794,7 +785,7 @@ def main():
 
         # Gmail mode: backup only [Gmail]/All Mail
         if args.gmail_mode:
-            backup_folder(src, "[Gmail]/All Mail", local_path, src_conf, args.dest_delete)
+            backup_folder(src, imap_common.GMAIL_ALL_MAIL, local_path, src_conf, args.dest_delete)
         elif args.folder:
             backup_folder(src, args.folder, local_path, src_conf, args.dest_delete)
         else:
