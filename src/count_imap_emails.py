@@ -45,6 +45,7 @@ import argparse
 import imaplib
 import os
 import sys
+from typing import Optional
 
 import imap_common
 import imap_oauth2
@@ -179,7 +180,7 @@ def count_local_emails(local_path: str) -> None:
     print(f"{'TOTAL':<40} {total_all_folders:>10}")
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: Optional[list[str]] = None) -> None:
     # Phase 1: determine whether we're in local mode (--path)
     default_path = os.getenv("BACKUP_LOCAL_PATH") or os.getenv("SRC_LOCAL_PATH")
     pre_parser = argparse.ArgumentParser(add_help=False)
