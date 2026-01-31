@@ -156,6 +156,26 @@ def decode_mime_header(header_value):
         return str(header_value)
 
 
+def parse_message_id_and_subject_from_bytes(raw_message):
+    """Parse Message-ID and decoded Subject from RFC822 bytes.
+
+    Uses header-only parsing to avoid walking large message bodies.
+    Returns a tuple: (message_id, subject).
+    """
+    if not raw_message:
+        return None, "(No Subject)"
+
+    try:
+        parser = BytesParser()
+        email_obj = parser.parsebytes(raw_message, headersonly=True)
+        msg_id = email_obj.get("Message-ID")
+        raw_subject = email_obj.get("Subject")
+        subject = decode_mime_header(raw_subject) if raw_subject else "(No Subject)"
+        return msg_id, subject
+    except Exception:
+        return None, "(No Subject)"
+
+
 def get_msg_details(imap_conn, uid):
     """
     Fetches simplified message details (Message-ID, Size, Subject) for a given UID.

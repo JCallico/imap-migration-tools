@@ -94,32 +94,10 @@ def process_batch(uids, folder_name, src_conf, local_folder_path):
 
     for uid in uids:
         try:
-            # 1. Fetch Subject for Filename
-            # We fetch headers first to generate the nice filename
-            _, _, subject = imap_common.get_msg_details(src, uid)
-
             # Helper to handle byte UIDs
             uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
 
-            if not subject:
-                clean_subject = "No Subject"
-            else:
-                clean_subject = imap_common.sanitize_filename(subject)
-                # Limit subject len to avoid FS path length limits (max 255 usually)
-                clean_subject = clean_subject[:100]
-
-            filename = f"{uid_str}_{clean_subject}.eml"
-            full_path = os.path.join(local_folder_path, filename)
-
-            # Double check existence (in case optimization missed it or naming collision)
-            # Actually, the main purpose here is just to save.
-            # However, if we migrated to a new naming convention, we might have duplicates with different names?
-            # The incremental check in `backup_folder` relies on UID prefix, so we are safe.
-
-            if os.path.exists(full_path):
-                continue
-
-            # 2. Fetch Full Content
+            # Fetch Full Content
             # RFC822 gets the whole message including headers and attachments
             resp, data = src.uid("fetch", uid, "(RFC822)")
             if resp != "OK" or not data or data[0] is None:
@@ -131,6 +109,22 @@ def process_batch(uids, folder_name, src_conf, local_folder_path):
                 if isinstance(item, tuple):
                     raw_email = item[1]
                     break
+
+            # Derive Subject for filename from the already-fetched message bytes.
+            _, subject = imap_common.parse_message_id_and_subject_from_bytes(raw_email)
+            if not subject:
+                clean_subject = "No Subject"
+            else:
+                clean_subject = imap_common.sanitize_filename(subject)
+                # Limit subject len to avoid FS path length limits (max 255 usually)
+                clean_subject = clean_subject[:100]
+
+            filename = f"{uid_str}_{clean_subject}.eml"
+            full_path = os.path.join(local_folder_path, filename)
+
+            # Double check existence (in case incremental UID checks missed it or naming collision).
+            if os.path.exists(full_path):
+                continue
 
             if raw_email:
                 try:

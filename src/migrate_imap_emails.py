@@ -3,7 +3,7 @@ IMAP Email Migration Script
 
 This script migrates emails from a source IMAP account to a destination IMAP account.
 It iterates through all folders in the source account and copies emails to the destination.
-It effectively handles folder creation and duplication checks (based on Message-ID and Size).
+It effectively handles folder creation and duplication checks (based on Message-ID).
 
 Features:
 - Progressive migration (folder by folder, email by email).
@@ -428,15 +428,11 @@ def process_batch(
     deleted_count = 0
     for uid in uids:
         try:
-            msg_id, size, subject = imap_common.get_msg_details(src, uid)
-
-            # Format size for display
-            size_str = f"{size / 1024:.1f}KB" if size else "0KB"
-
             # Fetch full message (needed to copy and/or apply labels)
             resp, data = src.uid("fetch", uid, "(FLAGS INTERNALDATE BODY.PEEK[])")
             if resp != "OK":
-                safe_print(f"[{folder_name}] ERROR Fetch | {subject[:40]}")
+                uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
+                safe_print(f"[{folder_name}] ERROR Fetch | UID {uid_str}")
                 continue
 
             msg_content = None
@@ -457,7 +453,12 @@ def process_batch(
             if not msg_content:
                 continue
 
-            # Prefer Message-ID from body if missing from header-only scan
+            # Compute size and parse headers from the already-fetched message bytes.
+            size = len(msg_content) if isinstance(msg_content, (bytes, bytearray)) else 0
+            size_str = f"{size / 1024:.1f}KB" if size else "0KB"
+            msg_id, subject = imap_common.parse_message_id_and_subject_from_bytes(msg_content)
+
+            # Prefer Message-ID from body if missing from header parse
             if not msg_id:
                 msg_id = parse_message_id_from_bytes(msg_content)
 
