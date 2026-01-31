@@ -64,6 +64,27 @@ def normalize_folder_name(folder_info_str):
     return folder_info_str.split()[-1].strip('"')
 
 
+def list_selectable_folders(imap_conn):
+    """
+    Lists all selectable folders (excluding \\Noselect) on the IMAP connection.
+    Returns a list of normalized folder name strings, or an empty list on failure.
+    """
+    try:
+        status, folders = imap_conn.list()
+        if status != "OK" or not folders:
+            return []
+    except Exception:
+        return []
+
+    result = []
+    for f in folders:
+        f_str = f.decode("utf-8", errors="ignore") if isinstance(f, bytes) else str(f)
+        if "\\Noselect" in f_str:
+            continue
+        result.append(normalize_folder_name(f))
+    return result
+
+
 def decode_mime_header(header_value):
     """
     Decodes MIME encoded headers (Subject, etc.) to a unicode (str) string.
