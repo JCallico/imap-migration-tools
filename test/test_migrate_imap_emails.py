@@ -269,6 +269,94 @@ class TestFolderHandling:
         migrate_imap_emails.main()
 
 
+class TestPreserveFlags:
+    def test_preserve_flags_applied_on_copy(self, mock_server_factory, monkeypatch):
+        msg = b"Subject: Flagged\r\nMessage-ID: <f1@test>\r\n\r\nBody"
+        src_data = {"INBOX": [msg]}
+        dest_data = {"INBOX": []}
+
+        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+        src_server.folders["INBOX"][0]["flags"].add("\\Seen")
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+            "MAX_WORKERS": "1",
+            "PRESERVE_FLAGS": "true",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX"]) == 1
+        assert "\\Seen" in dest_server.folders["INBOX"][0]["flags"]
+
+    def test_preserve_flags_syncs_on_duplicate(self, mock_server_factory, monkeypatch):
+        msg = b"Subject: DupFlags\r\nMessage-ID: <df1@test>\r\n\r\nBody"
+        src_data = {"INBOX": [msg]}
+        dest_data = {"INBOX": [msg]}
+
+        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+        src_server.folders["INBOX"][0]["flags"].add("\\Seen")
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+            "MAX_WORKERS": "1",
+            "PRESERVE_FLAGS": "true",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX"]) == 1
+        assert "\\Seen" in dest_server.folders["INBOX"][0]["flags"]
+
+
+class TestGmailModeLabels:
+    def test_gmail_mode_migrates_all_mail_and_applies_labels(self, mock_server_factory, monkeypatch):
+        msg1 = b"Subject: One\r\nMessage-ID: <gm1@test>\r\n\r\nBody 1"
+        msg2 = b"Subject: Two\r\nMessage-ID: <gm2@test>\r\n\r\nBody 2"
+
+        src_data = {
+            "[Gmail]/All Mail": [msg1, msg2],
+            "INBOX": [msg1],
+            "Work": [msg1, msg2],
+        }
+        dest_data = {"INBOX": []}
+
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+            "MAX_WORKERS": "1",
+            "GMAIL_MODE": "true",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX"]) == 1
+        assert "Work" in dest_server.folders
+        assert len(dest_server.folders["Work"]) == 2
+
+
 class TestConfigValidation:
     """Tests for configuration validation."""
 

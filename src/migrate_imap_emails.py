@@ -10,7 +10,12 @@ Features:
 - Safe duplicate detection (skips widely identical messages).
 - Optional deletion from source (set DELETE_FROM_SOURCE=true).
 - Optional deletion from destination (--dest-delete): removes emails not in source.
-- Flag preservation: copies Seen, Answered, Flagged, Draft flags.
+- Optional flag preservation (--preserve-flags): copies Seen, Answered, Flagged, Draft flags.
+    - If a message already exists on the destination, missing flags can be synced onto it.
+- Optional Gmail mode (--gmail-mode): migrates only "[Gmail]/All Mail" (no duplicates) and
+    applies additional Gmail labels by copying the message into label folders.
+    - In Gmail mode, label preservation is enabled automatically.
+    - Note: --dest-delete is not supported in --gmail-mode.
 
 Configuration (Environment Variables):
   Source Account:
@@ -35,17 +40,54 @@ Configuration (Environment Variables):
     BATCH_SIZE          : Number of emails to process in a batch per thread (default: 10).
 
 Usage Example:
-  export SRC_IMAP_HOST="imap.gmail.com"
-  export SRC_IMAP_USERNAME="user@gmail.com"
-  export SRC_IMAP_PASSWORD="secretpassword"
-  export DEST_IMAP_HOST="imap.other.com"
-  export DEST_IMAP_USERNAME="user@other.com"
-  export DEST_IMAP_PASSWORD="otherpassword"
+    # Basic migration (all folders)
+    python3 migrate_imap_emails.py \
+        --src-host "imap.example.com" \
+        --src-user "source@example.com" \
+        --src-pass "SOURCE_PASSWORD" \
+        --dest-host "imap.example.com" \
+        --dest-user "dest@example.com" \
+        --dest-pass "DEST_PASSWORD"
 
-  python3 migrate_imap_emails.py
+    # Migrate only one folder (positional argument)
+    python3 migrate_imap_emails.py "INBOX" \
+        --src-host "imap.example.com" \
+        --src-user "source@example.com" \
+        --src-pass "SOURCE_PASSWORD" \
+        --dest-host "imap.example.com" \
+        --dest-user "dest@example.com" \
+        --dest-pass "DEST_PASSWORD"
 
-  # With destination deletion (sync mode - removes emails from dest not in source)
-  python3 migrate_imap_emails.py --dest-delete
+    # Preserve IMAP flags (read/starred/answered/draft). If the message already exists on the
+    # destination, missing flags may be synced on it.
+    python3 migrate_imap_emails.py \
+        --preserve-flags \
+        --src-host "imap.example.com" \
+        --src-user "source@example.com" \
+        --src-pass "SOURCE_PASSWORD" \
+        --dest-host "imap.example.com" \
+        --dest-user "dest@example.com" \
+        --dest-pass "DEST_PASSWORD"
+
+    # Sync mode: delete emails from dest that aren't in the source folder (non-Gmail-mode only)
+    python3 migrate_imap_emails.py --dest-delete \
+        --src-host "imap.example.com" \
+        --src-user "source@example.com" \
+        --src-pass "SOURCE_PASSWORD" \
+        --dest-host "imap.example.com" \
+        --dest-user "dest@example.com" \
+        --dest-pass "DEST_PASSWORD"
+
+    # Gmail mode (recommended for Gmail -> Gmail): migrates only "[Gmail]/All Mail" and
+    # applies labels by copying messages into label folders.
+    python3 migrate_imap_emails.py \
+        --gmail-mode \
+        --src-host "imap.gmail.com" \
+        --src-user "source@gmail.com" \
+        --src-pass "SOURCE_APP_PASSWORD" \
+        --dest-host "imap.gmail.com" \
+        --dest-user "dest@gmail.com" \
+        --dest-pass "DEST_APP_PASSWORD"
 """
 
 import argparse
@@ -54,6 +96,7 @@ import os
 import re
 import sys
 import threading
+from email.parser import BytesParser
 
 import imap_common
 
@@ -85,6 +128,110 @@ def filter_preservable_flags(flags_str):
     # Split and filter
     flags = [f for f in flags_str.split() if f in imap_common.PRESERVABLE_FLAGS]
     return " ".join(flags) if flags else None
+
+
+def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
+    """Sync preservable flags on an existing email.
+
+    This mirrors the restore script behavior: if the destination email exists but
+    is missing flags, add them and log each synced flag.
+    """
+    if not flags or not message_id:
+        return
+
+    try:
+        imap_conn.select(f'"{folder_name}"')
+
+        clean_id = message_id.replace('"', '\\"')
+        typ, data = imap_conn.search(None, f'(HEADER Message-ID "{clean_id}")')
+        if typ != "OK" or not data or not data[0]:
+            return
+
+        # Use the first match (best-effort)
+        msg_num = data[0].split()[0]
+
+        typ, msg_data = imap_conn.fetch(msg_num, "(FLAGS)")
+        if typ != "OK" or not msg_data:
+            return
+
+        current_flags = set()
+        for item in msg_data:
+            if isinstance(item, tuple) and item[0]:
+                resp_str = item[0].decode("utf-8", errors="ignore")
+                match = re.search(r"FLAGS\s+\((.*?)\)", resp_str)
+                if match:
+                    current_flags.update(match.group(1).split())
+
+        desired_flags = set(flags.split())
+        missing = desired_flags - current_flags
+        for flag in missing:
+            try:
+                imap_conn.store(msg_num, "+FLAGS", flag)
+                safe_print(f"  -> Synced flag: {flag}")
+            except Exception:
+                pass
+
+    except Exception as e:
+        safe_print(f"Error syncing flags for {message_id} in {folder_name}: {e}")
+
+
+def is_gmail_label_folder(folder_name):
+    """Determine whether a folder represents a Gmail label worth preserving."""
+    if folder_name in imap_common.GMAIL_SYSTEM_FOLDERS:
+        return False
+    if folder_name == imap_common.FOLDER_INBOX:
+        return True
+    if folder_name in (imap_common.GMAIL_SENT, imap_common.GMAIL_STARRED):
+        return True
+    if not folder_name.startswith("[Gmail]/"):
+        return True
+    return False
+
+
+def folder_to_label(folder_name):
+    """Convert an IMAP folder name to a Gmail label name (backup/restore compatible)."""
+    if folder_name == imap_common.FOLDER_INBOX:
+        return imap_common.FOLDER_INBOX
+    if folder_name.startswith("[Gmail]/"):
+        return folder_name.split("/", 1)[1]
+    return folder_name
+
+
+def label_to_folder(label):
+    """Convert a Gmail label name to an IMAP folder path (restore compatible)."""
+    if label == imap_common.FOLDER_INBOX:
+        return imap_common.FOLDER_INBOX
+    if label in ("Sent Mail", "Starred", "Drafts", "Important"):
+        return f"[Gmail]/{label}"
+    return label
+
+
+def build_gmail_label_index(src_conn):
+    """Build a mapping of Message-ID -> set(labels) by scanning label folders."""
+    folders = imap_common.list_selectable_folders(src_conn)
+    label_folders = [f for f in folders if is_gmail_label_folder(f)]
+
+    label_index = {}
+    total = len(label_folders)
+    for i, folder in enumerate(label_folders, start=1):
+        safe_print(f"[{i}/{total}] Scanning label folder for Message-IDs: {folder}")
+        msg_ids = get_message_ids_in_folder(src_conn, folder)
+        label = folder_to_label(folder)
+        for msg_id in msg_ids:
+            label_index.setdefault(msg_id, set()).add(label)
+
+    return label_index
+
+
+def parse_message_id_from_bytes(raw_message):
+    if not raw_message:
+        return None
+    try:
+        parser = BytesParser()
+        email_obj = parser.parsebytes(raw_message)
+        return email_obj.get("Message-ID")
+    except Exception:
+        return None
 
 
 def get_message_ids_in_folder(imap_conn, folder_name):
@@ -229,19 +376,44 @@ def get_thread_connections(src_conf, dest_conf):
     return thread_local.src, thread_local.dest
 
 
-def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source, trash_folder=None):
+def process_batch(
+    uids,
+    folder_name,
+    src_conf,
+    dest_conf,
+    delete_from_source,
+    trash_folder=None,
+    preserve_flags=False,
+    gmail_mode=False,
+    label_index=None,
+):
     src, dest = get_thread_connections(src_conf, dest_conf)
     if not src or not dest:
         safe_print("Error: Could not establish connections in worker thread.")
         return
 
-    # Select folders
+    # Select source folder
     try:
         src.select(f'"{folder_name}"', readonly=False)
-        dest.select(f'"{folder_name}"')
     except Exception as e:
         safe_print(f"Error selecting folder {folder_name} in worker: {e}")
         return
+
+    def ensure_dest_folder(folder):
+        try:
+            if folder.upper() != imap_common.FOLDER_INBOX:
+                dest.create(f'"{folder}"')
+        except Exception:
+            pass
+
+    # In non-Gmail-mode, we keep a selected destination folder for efficiency
+    if not gmail_mode:
+        try:
+            ensure_dest_folder(folder_name)
+            dest.select(f'"{folder_name}"')
+        except Exception as e:
+            safe_print(f"Error selecting folder {folder_name} in worker: {e}")
+            return
 
     deleted_count = 0
     for uid in uids:
@@ -251,60 +423,109 @@ def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source, tr
             # Format size for display
             size_str = f"{size / 1024:.1f}KB" if size else "0KB"
 
-            is_duplicate = False
-            if msg_id:
-                is_duplicate = imap_common.message_exists_in_folder(dest, msg_id)
+            # Fetch full message (needed to copy and/or apply labels)
+            resp, data = src.uid("fetch", uid, "(FLAGS INTERNALDATE BODY.PEEK[])")
+            if resp != "OK":
+                safe_print(f"[{folder_name}] ERROR Fetch | {subject[:40]}")
+                continue
+
+            msg_content = None
+            flags = None
+            date_str = None
+
+            for item in data:
+                if isinstance(item, tuple):
+                    msg_content = item[1]
+                    meta = item[0].decode("utf-8", errors="ignore")
+                    flags_match = re.search(r"FLAGS\s+\((.*?)\)", meta)
+                    if flags_match:
+                        flags = filter_preservable_flags(flags_match.group(1))
+                    date_match = re.search(r"INTERNALDATE\s+\"(.*?)\"", meta)
+                    if date_match:
+                        date_str = f'"{date_match.group(1)}"'
+
+            if not msg_content:
+                continue
+
+            # Prefer Message-ID from body if missing from header-only scan
+            if not msg_id:
+                msg_id = parse_message_id_from_bytes(msg_content)
+
+            # Determine target folder and labels for Gmail mode
+            apply_labels = gmail_mode
+            labels = []
+            if apply_labels and msg_id and label_index is not None:
+                labels = sorted(label_index.get(msg_id, set()))
+
+            if apply_labels:
+                skip_folders = {imap_common.GMAIL_ALL_MAIL, imap_common.GMAIL_SPAM, imap_common.GMAIL_TRASH}
+                target_folder = None
+                remaining_labels = []
+
+                for label in labels:
+                    label_folder = label_to_folder(label)
+                    if label_folder in skip_folders:
+                        continue
+                    if target_folder is None:
+                        target_folder = label_folder
+                    else:
+                        remaining_labels.append(label)
+
+                if target_folder is None:
+                    target_folder = imap_common.GMAIL_DRAFTS
+                    remaining_labels = []
+            else:
+                target_folder = folder_name
+                remaining_labels = []
+
+            ensure_dest_folder(target_folder)
+            dest.select(f'"{target_folder}"')
+
+            is_duplicate = bool(msg_id and imap_common.message_exists_in_folder(dest, msg_id))
 
             if is_duplicate:
-                safe_print(f"[{folder_name}] {'SKIP (Dup)':<18} | {size_str:<8} | {subject[:40]}")
-                # If it's a duplicate, we can still delete source if requested
-                if delete_from_source:
-                    # Move to trash if configured
-                    if trash_folder and folder_name != trash_folder:
-                        try:
-                            src.uid("copy", uid, f'"{trash_folder}"')
-                        except Exception:
-                            pass
-                    src.uid("store", uid, "+FLAGS", "(\\Deleted)")
-                    deleted_count += 1
+                safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {subject[:40]}")
+                if preserve_flags and flags and msg_id:
+                    sync_flags_on_existing(dest, target_folder, msg_id, flags, size)
             else:
-                # Fetch full message
-                resp, data = src.uid("fetch", uid, "(FLAGS INTERNALDATE BODY.PEEK[])")
-                if resp != "OK":
-                    safe_print(f"[{folder_name}] ERROR Fetch | {subject[:40]}")
-                    continue
+                valid_flags = f"({flags})" if (preserve_flags and flags) else None
+                dest.append(f'"{target_folder}"', valid_flags, date_str, msg_content)
+                safe_print(f"[{target_folder}] {'COPIED':<12} | {size_str:<8} | {subject[:40]}")
+                if preserve_flags and flags:
+                    for flag in flags.split():
+                        safe_print(f"  -> Applied flag: {flag}")
 
-                msg_content = None
-                flags = None
-                date_str = None
+            # Apply remaining Gmail labels (always, whether copied or skipped)
+            if apply_labels and remaining_labels and msg_id:
+                for label in remaining_labels:
+                    label_folder = label_to_folder(label)
+                    if label_folder == target_folder:
+                        continue
+                    if label_folder in (imap_common.GMAIL_ALL_MAIL, imap_common.GMAIL_SPAM, imap_common.GMAIL_TRASH):
+                        continue
+                    try:
+                        ensure_dest_folder(label_folder)
+                        dest.select(f'"{label_folder}"')
+                        if not imap_common.message_exists_in_folder(dest, msg_id):
+                            valid_flags = f"({flags})" if (preserve_flags and flags) else None
+                            dest.append(f'"{label_folder}"', valid_flags, date_str, msg_content)
+                            safe_print(f"  -> Applied label: {label}")
+                            if preserve_flags and flags:
+                                for flag in flags.split():
+                                    safe_print(f"    -> Applied flag: {flag}")
+                        elif preserve_flags and flags:
+                            sync_flags_on_existing(dest, label_folder, msg_id, flags, size)
+                    except Exception as e:
+                        safe_print(f"  -> Error applying label {label}: {e}")
 
-                for item in data:
-                    if isinstance(item, tuple):
-                        msg_content = item[1]
-                        meta = item[0].decode("utf-8", errors="ignore")
-                        flags_match = re.search(r"FLAGS\s+\((.*?)\)", meta)
-                        if flags_match:
-                            # Filter to only preservable flags
-                            flags = filter_preservable_flags(flags_match.group(1))
-                        date_match = re.search(r'INTERNALDATE\s+"(.*?)"', meta)
-                        if date_match:
-                            date_str = f'"{date_match.group(1)}"'
-
-                if msg_content:
-                    valid_flags = f"({flags})" if flags else None
-                    dest.append(f'"{folder_name}"', valid_flags, date_str, msg_content)
-                    flag_info = f" [{flags}]" if flags else ""
-                    safe_print(f"[{folder_name}] {'COPIED':<18} | {size_str:<8} | {subject[:40]}{flag_info}")
-
-                    if delete_from_source:
-                        # Move to trash if configured
-                        if trash_folder and folder_name != trash_folder:
-                            try:
-                                src.uid("copy", uid, f'"{trash_folder}"')
-                            except Exception:
-                                pass
-                        src.uid(imap_common.CMD_STORE, uid, imap_common.OP_ADD_FLAGS, imap_common.FLAG_DELETED_LITERAL)
-                        deleted_count += 1
+            if delete_from_source:
+                if trash_folder and folder_name != trash_folder:
+                    try:
+                        src.uid("copy", uid, f'"{trash_folder}"')
+                    except Exception:
+                        pass
+                src.uid(imap_common.CMD_STORE, uid, imap_common.OP_ADD_FLAGS, imap_common.FLAG_DELETED_LITERAL)
+                deleted_count += 1
 
         except Exception as e:
             safe_print(f"[{folder_name}] ERROR Exec | UID {uid}: {e}")
@@ -318,21 +539,33 @@ def process_batch(uids, folder_name, src_conf, dest_conf, delete_from_source, tr
 
 
 def migrate_folder(
-    src, dest, folder_name, delete_from_source, src_conf, dest_conf, trash_folder=None, dest_delete=False
+    src,
+    dest,
+    folder_name,
+    delete_from_source,
+    src_conf,
+    dest_conf,
+    trash_folder=None,
+    dest_delete=False,
+    preserve_flags=False,
+    gmail_mode=False,
+    label_index=None,
 ):
     safe_print(f"--- Preparing Folder: {folder_name} ---")
 
-    # Maintain folder structure
-    try:
-        if folder_name.upper() != imap_common.FOLDER_INBOX:
-            dest.create(f'"{folder_name}"')
-    except Exception:
-        pass  # Ignore if exists
+    # Maintain folder structure (skip in Gmail mode; worker will create/select target label folders)
+    if not gmail_mode:
+        try:
+            if folder_name.upper() != imap_common.FOLDER_INBOX:
+                dest.create(f'"{folder_name}"')
+        except Exception:
+            pass
 
     # Select in main thread to get UIDs
     try:
         src.select(f'"{folder_name}"', readonly=False)
-        dest.select(f'"{folder_name}"')
+        if not gmail_mode:
+            dest.select(f'"{folder_name}"')
     except Exception as e:
         safe_print(f"Skipping {folder_name}: {e}")
         return
@@ -358,10 +591,12 @@ def migrate_folder(
 
     # If dest_delete is enabled, gather source Message-IDs first
     source_msg_ids = None
-    if dest_delete:
+    if dest_delete and not gmail_mode:
         safe_print("Building source Message-ID index for sync...")
         source_msg_ids = get_message_ids_in_folder(src, folder_name)
         safe_print(f"Found {len(source_msg_ids)} unique Message-IDs in source.")
+    elif dest_delete and gmail_mode:
+        safe_print("Warning: --dest-delete is not supported in --gmail-mode; ignoring.")
 
     # Create batches
     uid_batches = [uids[i : i + BATCH_SIZE] for i in range(0, len(uids), BATCH_SIZE)]
@@ -372,7 +607,16 @@ def migrate_folder(
         for batch in uid_batches:
             futures.append(
                 executor.submit(
-                    process_batch, batch, folder_name, src_conf, dest_conf, delete_from_source, trash_folder
+                    process_batch,
+                    batch,
+                    folder_name,
+                    src_conf,
+                    dest_conf,
+                    delete_from_source,
+                    trash_folder,
+                    preserve_flags,
+                    gmail_mode,
+                    label_index,
                 )
             )
 
@@ -398,7 +642,7 @@ def migrate_folder(
             safe_print(f"Error Expunging: {e}")
 
     # Delete orphan emails from destination if enabled
-    if dest_delete and source_msg_ids is not None:
+    if dest_delete and source_msg_ids is not None and not gmail_mode:
         safe_print("Syncing destination: removing emails not in source...")
         delete_orphan_emails(dest, folder_name, source_msg_ids)
 
@@ -475,6 +719,14 @@ def main():
     DELETE_SOURCE = args.delete
     DEST_DELETE = args.dest_delete
 
+    gmail_mode = bool(args.gmail_mode)
+    preserve_flags = bool(args.preserve_flags) or gmail_mode
+    preserve_labels = bool(args.preserve_labels) or gmail_mode
+
+    if preserve_labels and not gmail_mode:
+        safe_print("Warning: --preserve-labels is only applied in --gmail-mode for direct migration; ignoring.")
+        preserve_labels = False
+
     # Folder priority: CLI Arg > Env Var
     TARGET_FOLDER = args.folder
     if not TARGET_FOLDER and os.getenv("MIGRATE_ONLY_FOLDER"):
@@ -512,6 +764,8 @@ def main():
     print(f"Destination User: {DEST_USER}")
     print(f"Delete fm Source: {DELETE_SOURCE}")
     print(f"Dest Delete     : {DEST_DELETE}")
+    print(f"Preserve Flags  : {preserve_flags}")
+    print(f"Gmail Mode      : {gmail_mode}")
     if TARGET_FOLDER:
         print(f"Target Folder   : {TARGET_FOLDER}")
     print("-----------------------------\n")
@@ -544,6 +798,12 @@ def main():
         if not dest_main:
             sys.exit(1)
 
+        label_index = None
+        if gmail_mode and preserve_labels:
+            safe_print("Gmail mode enabled: building label index from source...")
+            label_index = build_gmail_label_index(src_main)
+            safe_print(f"Label index built for {len(label_index)} messages.")
+
         if TARGET_FOLDER:
             # Migration for specific folder
             if DELETE_SOURCE and trash_folder and trash_folder == TARGET_FOLDER:
@@ -555,19 +815,62 @@ def main():
             safe_print(f"Starting migration for single folder: {TARGET_FOLDER}")
             # Verify folder exists first? imaplib usually handles select error if not found
             migrate_folder(
-                src_main, dest_main, TARGET_FOLDER, DELETE_SOURCE, src_conf, dest_conf, trash_folder, DEST_DELETE
+                src_main,
+                dest_main,
+                TARGET_FOLDER,
+                DELETE_SOURCE,
+                src_conf,
+                dest_conf,
+                trash_folder,
+                DEST_DELETE,
+                preserve_flags,
+                gmail_mode,
+                label_index,
             )
         else:
             # Migration for all folders
-            folders = imap_common.list_selectable_folders(src_main)
-            for name in folders:
-                # Auto-skip trash folder if we are utilizing it as a dump target
-                # This prevents re-migrating the emails we just moved to trash
-                if DELETE_SOURCE and trash_folder and name == trash_folder:
-                    safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
-                    continue
+            if gmail_mode:
+                folders = imap_common.list_selectable_folders(src_main)
+                if imap_common.GMAIL_ALL_MAIL not in folders:
+                    safe_print(
+                        "Warning: --gmail-mode requested but source does not have [Gmail]/All Mail. Falling back to normal folder migration."
+                    )
+                    gmail_mode = False
+                else:
+                    migrate_folder(
+                        src_main,
+                        dest_main,
+                        imap_common.GMAIL_ALL_MAIL,
+                        DELETE_SOURCE,
+                        src_conf,
+                        dest_conf,
+                        trash_folder,
+                        DEST_DELETE,
+                        preserve_flags,
+                        True,
+                        label_index,
+                    )
 
-                migrate_folder(src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf, trash_folder, DEST_DELETE)
+            if not gmail_mode:
+                folders = imap_common.list_selectable_folders(src_main)
+                for name in folders:
+                    if DELETE_SOURCE and trash_folder and name == trash_folder:
+                        safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
+                        continue
+
+                    migrate_folder(
+                        src_main,
+                        dest_main,
+                        name,
+                        DELETE_SOURCE,
+                        src_conf,
+                        dest_conf,
+                        trash_folder,
+                        DEST_DELETE,
+                        preserve_flags,
+                        False,
+                        None,
+                    )
 
         src_main.logout()
         dest_main.logout()
