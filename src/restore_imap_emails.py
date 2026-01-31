@@ -376,9 +376,10 @@ def process_restore_batch(eml_files, folder_name, dest_conf, manifest, apply_lab
                     else:
                         remaining_labels.append(label)
 
-                # If no valid label found, use Drafts as fallback (won't appear in INBOX)
+                # If no valid label found, use a dedicated label folder as fallback.
+                # This avoids placing non-draft messages into Gmail Drafts.
                 if target_folder is None:
-                    target_folder = "[Gmail]/Drafts"
+                    target_folder = imap_common.FOLDER_RESTORED_UNLABELED
                     remaining_labels = []
             else:
                 target_folder = folder_name

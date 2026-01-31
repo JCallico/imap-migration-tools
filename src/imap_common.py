@@ -46,6 +46,10 @@ GMAIL_SYSTEM_FOLDERS = {
 # IMAP Folder Constants
 FOLDER_INBOX = "INBOX"
 
+# Gmail-mode restore/migrate fallback folder for messages with no usable labels.
+# Keeping this as a normal folder (not [Gmail]/Drafts) avoids populating Drafts with non-drafts.
+FOLDER_RESTORED_UNLABELED = "Restored/Unlabeled"
+
 # IMAP Commands
 CMD_STORE = "store"
 CMD_SEARCH = "search"
