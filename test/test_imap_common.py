@@ -274,7 +274,7 @@ class TestMessageExistsInFolder:
     def test_no_message_id(self):
         """Test returns False when message_id is None."""
         mock_conn = Mock()
-        result = imap_common.message_exists_in_folder(mock_conn, None, 100)
+        result = imap_common.message_exists_in_folder(mock_conn, None)
         assert result is False
 
     def test_search_fails(self):
@@ -282,7 +282,7 @@ class TestMessageExistsInFolder:
         mock_conn = Mock()
         mock_conn.search.return_value = ("NO", [])
 
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>", 100)
+        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
         assert result is False
 
     def test_no_matches(self):
@@ -290,25 +290,23 @@ class TestMessageExistsInFolder:
         mock_conn = Mock()
         mock_conn.search.return_value = ("OK", [b""])
 
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>", 100)
+        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
         assert result is False
 
-    def test_match_found_same_size(self):
-        """Test returns True when message with same ID and size found."""
+    def test_match_found(self):
+        """Test returns True when message with same ID found."""
         mock_conn = Mock()
         mock_conn.search.return_value = ("OK", [b"1"])
-        mock_conn.fetch.return_value = ("OK", [b"1 (RFC822.SIZE 100)"])
 
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>", 100)
+        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
         assert result is True
 
-    def test_match_found_different_size(self):
-        """Test returns False when message with same ID but different size found."""
+    def test_search_exception(self):
+        """Test returns False when search raises an exception."""
         mock_conn = Mock()
-        mock_conn.search.return_value = ("OK", [b"1"])
-        mock_conn.fetch.return_value = ("OK", [b"1 (RFC822.SIZE 200)"])
+        mock_conn.search.side_effect = Exception("Connection error")
 
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>", 100)
+        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
         assert result is False
 
 
