@@ -56,7 +56,7 @@ This repository contains a set of Python scripts designed to migrate emails betw
 ## Getting Started
 
 ### 1. Prerequisites
-- **Python 3.6+**
+- **Python 3.9+**
 - **No external installations required for basic (password) authentication.**
   The scripts use only the Python Standard Library for standard IMAP login.
 
