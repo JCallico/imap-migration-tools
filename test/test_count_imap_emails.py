@@ -77,6 +77,28 @@ class TestEmailCounting:
         assert "0" in captured.out
 
 
+class TestLocalEmailCounting:
+    """Tests for counting emails from a local backup folder."""
+
+    def test_count_local_folders(self, tmp_path, capsys):
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+        (inbox_path / "1_a.eml").write_bytes(b"Subject: A\r\n\r\nBody")
+        (inbox_path / "2_b.eml").write_bytes(b"Subject: B\r\n\r\nBody")
+
+        gmail_all_mail = tmp_path / "[Gmail]" / "All Mail"
+        gmail_all_mail.mkdir(parents=True)
+        (gmail_all_mail / "1_c.eml").write_bytes(b"Subject: C\r\n\r\nBody")
+
+        count_imap_emails.count_local_emails(str(tmp_path))
+
+        captured = capsys.readouterr()
+        assert "INBOX" in captured.out
+        assert "[Gmail]/All Mail" in captured.out
+        assert "TOTAL" in captured.out
+        assert "3" in captured.out
+
+
 class TestEmailCountingErrors:
     """Tests for error handling in email counting."""
 
