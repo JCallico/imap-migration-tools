@@ -567,9 +567,7 @@ def main():
                     safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
                     continue
 
-                migrate_folder(
-                    src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf, trash_folder, DEST_DELETE
-                )
+                migrate_folder(src_main, dest_main, name, DELETE_SOURCE, src_conf, dest_conf, trash_folder, DEST_DELETE)
 
         src_main.logout()
         dest_main.logout()
