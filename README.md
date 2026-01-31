@@ -20,7 +20,8 @@ This repository contains a set of Python scripts designed to migrate emails betw
    - Migrates emails folder-by-folder.
    - **Multi-threaded**: Uses a thread pool to copy messages in parallel for high speed.
    - **Smart De-duplication**: Checks if a message already exists in the destination (matching Message-ID and Size) and skips it if found.
-   - **Robust**: Preserves read/unread status (flags) and original dates.
+  - **Robust**: Preserves original dates and can preserve IMAP flags with `--preserve-flags`.
+  - **Gmail Mode**: For Gmail -> Gmail migrations, use `--gmail-mode` to migrate `[Gmail]/All Mail` (no duplicates) and apply Gmail labels by copying messages into label folders.
    - **Cleanup**: Optionally deletes messages from the source after successful transfer (effectively a "Move" operation).
      - *Improved for Gmail*: Automatically detects "Trash" folders to ensure emails are properly binned rather than just archived.
    - **Sync Mode**: Optionally deletes emails from destination that no longer exist in source (`--dest-delete`).
@@ -110,6 +111,8 @@ You can configure the scripts using **Environment Variables** (recommended for s
    # Options (Optional)
    export DELETE_FROM_SOURCE="false"  # Set to "true" to delete from source after copy
    export DEST_DELETE="false"         # Set to "true" to delete orphans from destination (sync mode)
+  export PRESERVE_FLAGS="false"      # Set to "true" to preserve IMAP flags (read/starred/etc)
+  export GMAIL_MODE="false"          # Set to "true" for Gmail mode (All Mail + label application)
    export MAX_WORKERS=4               # Number of parallel threads
    export BATCH_SIZE=10               # Emails per batch
    ```
@@ -212,6 +215,40 @@ python3 migrate_imap_emails.py \
   --dest-pass "dest-app-password"
 ```
 
+### 1a. Gmail Mode Migration (Gmail -> Gmail)
+For Gmail -> Gmail migrations, `--gmail-mode` migrates only `[Gmail]/All Mail` (no duplicates) and applies labels by copying messages into label folders.
+
+```bash
+python3 migrate_imap_emails.py \
+  --gmail-mode \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-host "imap.gmail.com" \
+  --dest-user "dest@gmail.com" \
+  --dest-pass "dest-app-password"
+```
+
+Notes:
+- `--preserve-flags` is enabled automatically in `--gmail-mode`.
+- `--dest-delete` is not supported in `--gmail-mode`.
+
+### 1b. Preserve Flags (Any IMAP Server)
+Preserve IMAP flags (`\Seen`, `\Flagged`, `\Answered`, `\Draft`) during migration.
+
+If an email already exists on the destination (duplicate), the script can still sync missing flags on the existing message.
+
+```bash
+python3 migrate_imap_emails.py \
+  --preserve-flags \
+  --src-host "imap.example.com" \
+  --src-user "source@example.com" \
+  --src-pass "source-password" \
+  --dest-host "imap.example.com" \
+  --dest-user "dest@example.com" \
+  --dest-pass "dest-password"
+```
+
 ### 2. Single Folder Migration
 Migrate ONLY a specific folder (e.g., trying to fix just "Important" or "Sent").
 ```bash
@@ -253,6 +290,8 @@ python3 migrate_imap_emails.py \
 
 ### 4. Sync Mode (Delete from Destination)
 Keep destination in sync by deleting emails that no longer exist in the source.
+
+Note: `--dest-delete` is not supported in `--gmail-mode`.
 ```bash
 # Migration: Delete destination emails not found in source
 python3 migrate_imap_emails.py \

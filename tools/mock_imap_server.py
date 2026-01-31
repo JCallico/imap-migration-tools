@@ -254,13 +254,22 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                             self.wfile.write(b"+ Ready\r\n")
                             data = self.rfile.read(size)
 
+                            # Args format (typical): <folder> (<flags>) "<internaldate>" {<size>}
+                            # We only care about folder + flags for tests.
                             folder_arg = args.split(" ")[0].strip().strip('"')
+                            flags_match = re.search(r"\(([^)]*)\)", args)
+                            flags_set = set()
+                            if flags_match:
+                                flags_str = flags_match.group(1).strip()
+                                if flags_str:
+                                    flags_set = {f.strip() for f in flags_str.split() if f.strip()}
+
                             if folder_arg in self.current_folders:
                                 dest_msgs = self.current_folders[folder_arg]
                                 max_uid = max([m["uid"] for m in dest_msgs], default=0)
 
                                 # IMPORTANT: Reset pointer or copy
-                                new_msg = {"uid": max_uid + 1, "flags": set(), "content": data}
+                                new_msg = {"uid": max_uid + 1, "flags": flags_set, "content": data}
                                 dest_msgs.append(new_msg)
                                 print(f"MOCK APPEND SUCCESS: {folder_arg} now has {len(dest_msgs)}")
                                 self.send_response(tag, "OK APPEND completed")
@@ -315,6 +324,44 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                     indices_str = " ".join(found_indices)
                     self.wfile.write(f"* SEARCH {indices_str}\r\n".encode())
                     self.send_response(tag, RESPONSE_SEARCH_COMPLETED)
+
+                elif cmd == "STORE":
+                    # STORE <msg_set> +FLAGS (\Seen)  (non-UID; uses message sequence numbers)
+                    if not self.selected_folder:
+                        self.send_response(tag, RESPONSE_SELECT_FIRST)
+                        continue
+
+                    try:
+                        store_parts = args.split(" ", 2)
+                        msg_set = store_parts[0]
+                        action = store_parts[1].upper()  # +FLAGS or -FLAGS
+                        flags_str = store_parts[2].strip().strip("()")
+                        flags_list = {f.strip() for f in flags_str.split() if f.strip()}
+
+                        msgs = self.current_folders[self.selected_folder]
+
+                        # Only implement single message number for now (sufficient for tests)
+                        try:
+                            msg_num = int(msg_set)
+                        except Exception:
+                            self.send_response(tag, "BAD STORE")
+                            continue
+
+                        if msg_num < 1 or msg_num > len(msgs):
+                            self.send_response(tag, "NO Message not found")
+                            continue
+
+                        m = msgs[msg_num - 1]
+                        if action == "+FLAGS":
+                            m["flags"].update(flags_list)
+                        elif action == "-FLAGS":
+                            m["flags"].difference_update(flags_list)
+
+                        flag_output = " ".join(m["flags"])
+                        self.wfile.write(f"* {msg_num} FETCH (FLAGS ({flag_output}))\r\n".encode())
+                        self.send_response(tag, "OK STORE completed")
+                    except Exception:
+                        self.send_response(tag, "BAD STORE")
 
                 elif cmd == "FETCH":
                     # Non-UID FETCH - args is e.g. "1 (RFC822.SIZE)"
