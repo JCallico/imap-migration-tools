@@ -192,11 +192,11 @@ class TestEmptyFolderHandling:
 class TestConfigValidation:
     """Tests for configuration validation."""
 
-    def test_missing_credentials(self, monkeypatch, capsys):
+    def test_missing_credentials(self, monkeypatch, capsys, tmp_path):
         """Test that missing credentials cause exit."""
         env = {}
         monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py", "--dest-path", "/tmp"])
+        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py", "--dest-path", str(tmp_path)])
 
         with pytest.raises(SystemExit) as exc_info:
             backup_imap_emails.main()
@@ -265,22 +265,22 @@ class TestGetExistingUids:
 class TestBackupErrorHandling:
     """Tests for error handling scenarios in backup."""
 
-    def test_connection_error_in_worker(self, monkeypatch):
+    def test_connection_error_in_worker(self, monkeypatch, tmp_path):
         """Test worker handles connection failure gracefully."""
         # Mock get_imap_connection to fail
         monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: None)
 
         # Should return None/Exit without crashing
-        backup_imap_emails.process_batch([], "INBOX", ("h", "u", "p"), "/tmp")
+        backup_imap_emails.process_batch([], "INBOX", ("h", "u", "p"), str(tmp_path))
 
-    def test_select_error_in_worker(self, monkeypatch):
+    def test_select_error_in_worker(self, monkeypatch, tmp_path):
         """Test worker handles SELECT failure."""
         mock_conn = MagicMock()
         mock_conn.select.side_effect = Exception("Select error")
         monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: mock_conn)
 
         # Should log error and return
-        backup_imap_emails.process_batch([], "INBOX", ("h", "u", "p"), "/tmp")
+        backup_imap_emails.process_batch([], "INBOX", ("h", "u", "p"), str(tmp_path))
         mock_conn.select.assert_called()
 
     def test_fetch_body_error(self, monkeypatch, tmp_path):
@@ -318,7 +318,7 @@ class TestBackupErrorHandling:
 
         backup_imap_emails.process_batch([b"1"], "INBOX", ("h", "u", "p"), str(tmp_path))
 
-    def test_folder_creation_error(self, monkeypatch):
+    def test_folder_creation_error(self, monkeypatch, tmp_path):
         """Test handling failure to create local folder."""
 
         def mock_makedirs(path, exist_ok=False):
@@ -329,25 +329,25 @@ class TestBackupErrorHandling:
         mock_conn = MagicMock()
 
         # backup_folder should return early
-        backup_imap_emails.backup_folder(mock_conn, "INBOX", "/tmp", ("h", "u", "p"))
+        backup_imap_emails.backup_folder(mock_conn, "INBOX", str(tmp_path), ("h", "u", "p"))
         mock_conn.select.assert_not_called()
 
-    def test_select_folder_error(self, monkeypatch):
+    def test_select_folder_error(self, monkeypatch, tmp_path):
         """Test handling of select folder failure in main loop."""
         mock_conn = MagicMock()
         mock_conn.select.side_effect = Exception("Select failed")
         monkeypatch.setattr(os, "makedirs", lambda p, exist_ok: None)
 
-        backup_imap_emails.backup_folder(mock_conn, "INBOX", "/tmp", ("h", "u", "p"))
+        backup_imap_emails.backup_folder(mock_conn, "INBOX", str(tmp_path), ("h", "u", "p"))
         mock_conn.uid.assert_not_called()
 
-    def test_search_error(self, monkeypatch):
+    def test_search_error(self, monkeypatch, tmp_path):
         """Test handling of search failure."""
         mock_conn = MagicMock()
         mock_conn.uid.return_value = ("NO", [])
         monkeypatch.setattr(os, "makedirs", lambda p, exist_ok: None)
 
-        backup_imap_emails.backup_folder(mock_conn, "INBOX", "/tmp", ("h", "u", "p"))
+        backup_imap_emails.backup_folder(mock_conn, "INBOX", str(tmp_path), ("h", "u", "p"))
 
     def test_main_makedirs_error(self, monkeypatch, capsys):
         """Test failure to create main backup directory."""

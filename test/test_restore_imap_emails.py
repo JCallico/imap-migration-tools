@@ -216,11 +216,11 @@ class TestGetBackupFolders:
 class TestConfigValidation:
     """Tests for configuration validation."""
 
-    def test_missing_credentials(self, monkeypatch, capsys):
+    def test_missing_credentials(self, monkeypatch, capsys, tmp_path):
         """Test that missing credentials cause exit."""
         env = {}
         monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["restore_imap_emails.py", "--src-path", "/tmp"])
+        monkeypatch.setattr(sys, "argv", ["restore_imap_emails.py", "--src-path", str(tmp_path)])
 
         with pytest.raises(SystemExit) as exc_info:
             restore_imap_emails.main()

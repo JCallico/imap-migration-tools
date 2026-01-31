@@ -1,7 +1,8 @@
 """
 IMAP Folder Comparison Script
 
-This script compares email counts between a source IMAP account and a destination IMAP account.
+This script compares email counts between a source and a destination.
+Each side can be either an IMAP account or a local backup folder.
 It iterates through all folders found in the source account and checks the corresponding
 folder in the destination account.
 
@@ -16,18 +17,34 @@ Configuration (Environment Variables):
     DEST_IMAP_USERNAME  : Destination Username/Email
     DEST_IMAP_PASSWORD  : Destination Password
 
+Also supports local folders as source and/or destination:
+    SRC_LOCAL_PATH      : Source local folder (backup root)
+    DEST_LOCAL_PATH     : Destination local folder (backup root)
+
 Usage:
   python3 compare_imap_folders.py
+
+Examples:
+    # IMAP -> IMAP
+    python3 compare_imap_folders.py
+
+    # Local -> IMAP
+    python3 compare_imap_folders.py --src-path ./my_backup
+
+    # IMAP -> Local
+    python3 compare_imap_folders.py --dest-path ./my_backup
 """
 
 import argparse
 import os
 import sys
+from typing import Optional
 
 import imap_common
 
 
 def get_email_count(conn, folder_name):
+    """Return the IMAP message count for a folder, or None on error."""
     try:
         # Select folder in read-only mode
         # Quote folder name handles spaces
@@ -46,8 +63,69 @@ def get_email_count(conn, folder_name):
         return None
 
 
+def _is_ignored_local_dir(dirname: str) -> bool:
+    return dirname.startswith(".") or dirname == "__pycache__"
+
+
+def list_local_folders(local_root: str) -> list[str]:
+    """List all folders under a local backup root in IMAP-style names.
+
+    The local backup format is expected to mirror IMAP folder hierarchy using
+    subdirectories (e.g. "[Gmail]/All Mail" becomes "[Gmail]/All Mail/").
+    """
+    folders: set[str] = set()
+
+    for dirpath, dirnames, _filenames in os.walk(local_root):
+        dirnames[:] = [d for d in dirnames if not _is_ignored_local_dir(d)]
+
+        if os.path.abspath(dirpath) == os.path.abspath(local_root):
+            continue
+
+        rel = os.path.relpath(dirpath, local_root)
+        if rel == ".":
+            continue
+
+        parts = [p for p in rel.split(os.sep) if p and not _is_ignored_local_dir(p)]
+        if not parts:
+            continue
+
+        folders.add("/".join(parts))
+
+    return sorted(folders)
+
+
+def get_local_email_count(local_root: str, folder_name: str) -> Optional[int]:
+    """Return the count of .eml files in a local folder, or None if missing/unreadable."""
+    folder_path = os.path.join(local_root, *folder_name.split("/"))
+    if not os.path.isdir(folder_path):
+        return None
+
+    try:
+        count = 0
+        for filename in os.listdir(folder_path):
+            if not filename.endswith(".eml"):
+                continue
+            full_path = os.path.join(folder_path, filename)
+            if os.path.isfile(full_path):
+                count += 1
+        return count
+    except OSError:
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Compare email counts between two IMAP accounts.")
+
+    parser.add_argument(
+        "--src-path",
+        default=os.getenv("SRC_LOCAL_PATH"),
+        help="Source local folder (backup root). If set, IMAP source args are ignored.",
+    )
+    parser.add_argument(
+        "--dest-path",
+        default=os.getenv("DEST_LOCAL_PATH"),
+        help="Destination local folder (backup root). If set, IMAP destination args are ignored.",
+    )
 
     # Source args
     parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_HOST"), help="Source IMAP Server")
@@ -61,28 +139,35 @@ def main():
 
     args = parser.parse_args()
 
-    # Assign to variables
-    SRC_HOST = args.src_host
-    SRC_USER = args.src_user
-    SRC_PASS = args.src_pass
-    DEST_HOST = args.dest_host
-    DEST_USER = args.dest_user
-    DEST_PASS = args.dest_pass
+    src_is_local = bool(args.src_path)
+    dest_is_local = bool(args.dest_path)
 
     # Validation
     missing_vars = []
-    if not SRC_HOST:
-        missing_vars.append("SRC_IMAP_HOST")
-    if not SRC_USER:
-        missing_vars.append("SRC_IMAP_USERNAME")
-    if not SRC_PASS:
-        missing_vars.append("SRC_IMAP_PASSWORD")
-    if not DEST_HOST:
-        missing_vars.append("DEST_IMAP_HOST")
-    if not DEST_USER:
-        missing_vars.append("DEST_IMAP_USERNAME")
-    if not DEST_PASS:
-        missing_vars.append("DEST_IMAP_PASSWORD")
+
+    if src_is_local:
+        if not os.path.isdir(args.src_path):
+            print(f"Error: Source local path does not exist or is not a directory: {args.src_path}")
+            sys.exit(1)
+    else:
+        if not args.src_host:
+            missing_vars.append("SRC_IMAP_HOST")
+        if not args.src_user:
+            missing_vars.append("SRC_IMAP_USERNAME")
+        if not args.src_pass:
+            missing_vars.append("SRC_IMAP_PASSWORD")
+
+    if dest_is_local:
+        if not os.path.isdir(args.dest_path):
+            print(f"Error: Destination local path does not exist or is not a directory: {args.dest_path}")
+            sys.exit(1)
+    else:
+        if not args.dest_host:
+            missing_vars.append("DEST_IMAP_HOST")
+        if not args.dest_user:
+            missing_vars.append("DEST_IMAP_USERNAME")
+        if not args.dest_pass:
+            missing_vars.append("DEST_IMAP_PASSWORD")
 
     if missing_vars:
         print(f"Error: Missing configuration variables: {', '.join(missing_vars)}")
@@ -90,31 +175,44 @@ def main():
         sys.exit(1)
 
     print("\n--- Configuration Summary ---")
-    print(f"Source Host     : {SRC_HOST}")
-    print(f"Source User     : {SRC_USER}")
-    print(f"Destination Host: {DEST_HOST}")
-    print(f"Destination User: {DEST_USER}")
+    if src_is_local:
+        print(f"Source (Local)  : {args.src_path}")
+    else:
+        print(f"Source Host     : {args.src_host}")
+        print(f"Source User     : {args.src_user}")
+
+    if dest_is_local:
+        print(f"Destination (Local): {args.dest_path}")
+    else:
+        print(f"Destination Host: {args.dest_host}")
+        print(f"Destination User: {args.dest_user}")
     print("-----------------------------\n")
 
     src = None
     dest = None
 
     try:
-        # Connect to Source
-        print("Connecting to Source...")
-        src = imap_common.get_imap_connection(SRC_HOST, SRC_USER, SRC_PASS)
-        if not src:
-            return
+        if not src_is_local:
+            # Connect to Source
+            print("Connecting to Source...")
+            src = imap_common.get_imap_connection(args.src_host, args.src_user, args.src_pass)
+            if not src:
+                return
 
-        # Connect to Dest
-        print("Connecting to Destination...")
-        dest = imap_common.get_imap_connection(DEST_HOST, DEST_USER, DEST_PASS)
-        if not dest:
-            return
+        if not dest_is_local:
+            # Connect to Dest
+            print("Connecting to Destination...")
+            dest = imap_common.get_imap_connection(args.dest_host, args.dest_user, args.dest_pass)
+            if not dest:
+                return
 
         # List Source Folders
         print("Listing folders in Source...")
-        folders = imap_common.list_selectable_folders(src)
+        if src_is_local:
+            folders = list_local_folders(args.src_path)
+        else:
+            folders = imap_common.list_selectable_folders(src)
+
         if not folders:
             print("Failed to list source folders.")
             return
@@ -130,10 +228,16 @@ def main():
 
         # Iterate through Source folders
         for folder_name in folders:
-
             # Get Counts
-            src_count = get_email_count(src, folder_name)
-            dest_count = get_email_count(dest, folder_name)
+            if src_is_local:
+                src_count = get_local_email_count(args.src_path, folder_name)
+            else:
+                src_count = get_email_count(src, folder_name)
+
+            if dest_is_local:
+                dest_count = get_local_email_count(args.dest_path, folder_name)
+            else:
+                dest_count = get_email_count(dest, folder_name)
 
             # Format for display
             src_str = str(src_count) if src_count is not None else "Err"

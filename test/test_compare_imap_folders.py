@@ -20,7 +20,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import compare_imap_folders
-from conftest import make_mock_connection
+from conftest import make_mock_connection, make_single_mock_connection
 
 
 class TestFolderComparison:
@@ -346,3 +346,78 @@ class TestTotals:
         assert "TOTAL" in captured.out
         assert "5" in captured.out
         assert "2" in captured.out
+
+
+class TestLocalFolderComparison:
+    """Tests for comparing IMAP folders to local backup folders."""
+
+    def test_local_source_to_imap_dest(self, single_mock_server, monkeypatch, tmp_path, capsys):
+        """Local source folder list drives the comparison; destination is IMAP."""
+        # Local source: INBOX has 2 emails, Archive has 1
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+        (inbox_path / "1_a.eml").write_bytes(b"Subject: A\r\n\r\nBody")
+        (inbox_path / "2_b.eml").write_bytes(b"Subject: B\r\n\r\nBody")
+
+        archive_path = tmp_path / "Archive"
+        archive_path.mkdir()
+        (archive_path / "1_c.eml").write_bytes(b"Subject: C\r\n\r\nBody")
+
+        # Destination IMAP: INBOX has 1, Archive is missing
+        dest_data = {"INBOX": [b"Subject: 1\r\n\r\nB"]}
+        _, port = single_mock_server(dest_data)
+
+        env = {
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["compare_imap_folders.py", "--src-path", str(tmp_path)],
+        )
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        compare_imap_folders.main()
+
+        captured = capsys.readouterr()
+        assert "INBOX" in captured.out
+        assert "Archive" in captured.out
+        # Destination should show N/A for missing Archive
+        assert "N/A" in captured.out
+
+    def test_imap_source_to_local_dest(self, single_mock_server, monkeypatch, tmp_path, capsys):
+        """IMAP source folder list drives the comparison; destination is local."""
+        # Source IMAP: INBOX has 2, Sent has 1
+        src_data = {
+            "INBOX": [b"Subject: 1\r\n\r\nB", b"Subject: 2\r\n\r\nB"],
+            "Sent": [b"Subject: 3\r\n\r\nB"],
+        }
+        _, port = single_mock_server(src_data)
+
+        # Local dest: INBOX has 1, Sent missing
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+        (inbox_path / "1_a.eml").write_bytes(b"Subject: A\r\n\r\nBody")
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["compare_imap_folders.py", "--dest-path", str(tmp_path)],
+        )
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        compare_imap_folders.main()
+
+        captured = capsys.readouterr()
+        assert "INBOX" in captured.out
+        assert "Sent" in captured.out
+        assert "N/A" in captured.out

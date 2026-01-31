@@ -29,10 +29,12 @@ This repository contains a set of Python scripts designed to migrate emails betw
 2. **`compare_imap_folders.py`** (The Validator)
    - Connects to both Source and Destination accounts.
    - Prints a side-by-side comparison table of message counts for every folder.
-   - Essential for verifying that the migration was successful and that counts match.
+  - Supports comparing IMAP to a local backup folder (`.eml` files) as either the source or destination.
+  - Essential for verifying that the migration was successful and that counts match.
 
 3. **`count_imap_emails.py`** (The Investigator)
-   - A simple utility to connect to a single account and count emails in all folders. Useful for initial assessment.
+  - Counts emails in all folders for a single IMAP account (initial assessment / sizing).
+  - Also supports counting a local backup folder (`.eml` files) via `--path` (or `BACKUP_LOCAL_PATH`).
 
 4. **`backup_imap_emails.py`** (The Backup)
    - Downloads emails from an IMAP account to a local disk.
@@ -145,11 +147,24 @@ python3 migrate_imap_emails.py --src-user "me@gmail.com" --dest-user "you@domain
 **Comparison:**
 ```bash
 python3 compare_imap_folders.py --src-host "imap.gmail.com" --dest-host "imap.other.com"
+
+# Compare IMAP source to a local backup folder
+python3 compare_imap_folders.py --dest-path "./my_backup"
+
+# Compare a local backup folder to an IMAP destination
+python3 compare_imap_folders.py --src-path "./my_backup" --dest-host "imap.other.com"
 ```
 
 **Counting:**
 ```bash
 python3 count_imap_emails.py --host "imap.gmail.com" --user "me@gmail.com" --pass "secret"
+
+# Count a local backup folder
+python3 count_imap_emails.py --path "./my_backup"
+
+# Or via environment variable
+export BACKUP_LOCAL_PATH="./my_backup"
+python3 count_imap_emails.py
 ```
 
 **Backup:**
@@ -201,6 +216,12 @@ python3 restore_imap_emails.py --src-path "./backup" --dest-delete
 Compare counts between source and destination.
 ```bash
 python3 compare_imap_folders.py
+
+# IMAP source -> local backup destination
+python3 compare_imap_folders.py --dest-path "./my_backup"
+
+# local backup source -> IMAP destination
+python3 compare_imap_folders.py --src-path "./my_backup" --dest-host "imap.other.com"
 ```
 *Output Example:*
 ```
@@ -222,6 +243,36 @@ python3 backup_imap_emails.py --dest-path "/Users/jdoe/Documents/Emails"
 
 # Backup single folder
 python3 backup_imap_emails.py --dest-path "./my_backup" "[Gmail]/Sent Mail"
+```
+
+### 6a. Compare IMAP vs Local Backup
+Use `compare_imap_folders.py` to validate an IMAP account against a local backup created by `backup_imap_emails.py`.
+
+```bash
+# Option 1: IMAP source -> local destination
+python3 compare_imap_folders.py --dest-path "./my_backup"
+
+# Option 2: local source -> IMAP destination
+python3 compare_imap_folders.py --src-path "./my_backup" --dest-host "imap.other.com"
+```
+
+You can also set local paths via environment variables:
+
+```bash
+export SRC_LOCAL_PATH="./my_backup"
+export DEST_LOCAL_PATH="./my_backup"
+```
+
+### 6b. Count a Local Backup
+Use `count_imap_emails.py` to get per-folder counts from a local backup created by `backup_imap_emails.py`.
+
+```bash
+# Option 1: explicit path
+python3 count_imap_emails.py --path "./my_backup"
+
+# Option 2: environment variable
+export BACKUP_LOCAL_PATH="./my_backup"
+python3 count_imap_emails.py
 ```
 
 ### 7. Gmail Backup with Labels Preservation
