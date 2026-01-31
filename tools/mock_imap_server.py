@@ -2,6 +2,9 @@ import re
 import socketserver
 import threading
 
+RESPONSE_SEARCH_COMPLETED = "OK SEARCH completed"
+RESPONSE_SELECT_FIRST = "NO Select first"
+
 
 class MockIMAPHandler(socketserver.StreamRequestHandler):
     """
@@ -84,12 +87,11 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                         # We use a dictionary-like structure implicitly via dicts in list now
                         # Check "flags" set in msg object
                         new_msgs = [m for m in msgs if "\\Deleted" not in m["flags"]]
-                        removed_count = len(msgs) - len(new_msgs)
                         self.current_folders[self.selected_folder] = new_msgs
                         # According to IMAP, we should send Expunge indices but we'll skip for mock
                         self.send_response(tag, "OK EXPUNGE completed")
                     else:
-                        self.send_response(tag, "NO Select first")
+                        self.send_response(tag, RESPONSE_SELECT_FIRST)
 
                 elif cmd == "UID":
                     sub_parts = args.split(" ", 1)
@@ -99,7 +101,7 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                     if sub_cmd == "SEARCH":
                         sub_args = sub_rest
                         if not self.selected_folder:
-                            self.send_response(tag, "NO Select first")
+                            self.send_response(tag, RESPONSE_SELECT_FIRST)
                             continue
                         msgs = self.current_folders[self.selected_folder]
 
@@ -113,7 +115,7 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
 
                         uids_str = " ".join(valid_uids)
                         self.wfile.write(f"* SEARCH {uids_str}\r\n".encode())
-                        self.send_response(tag, "OK SEARCH completed")
+                        self.send_response(tag, RESPONSE_SEARCH_COMPLETED)
 
                     elif sub_cmd == "STORE":
                         # UID STORE <uid> +FLAGS (\Deleted)
@@ -148,7 +150,7 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                             else:
                                 self.send_response(tag, "NO UID not found")
                         else:
-                            self.send_response(tag, "NO Select first")
+                            self.send_response(tag, RESPONSE_SELECT_FIRST)
 
                     elif sub_cmd == "FETCH":
                         # sub_rest is e.g. "1 (RFC822.SIZE BODY.PEEK[...])"
@@ -157,7 +159,7 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                         opts = parts[1].upper() if len(parts) > 1 else ""
 
                         if not self.selected_folder:
-                            self.send_response(tag, "NO Select first")
+                            self.send_response(tag, RESPONSE_SELECT_FIRST)
                             continue
 
                         msgs = self.current_folders[self.selected_folder]
@@ -172,13 +174,13 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                             try:
                                 uid_list = [int(u) for u in uid_set.split(",")]
                                 target_msgs = [m for m in msgs if m["uid"] in uid_list]
-                            except:
+                            except Exception:
                                 pass
                         else:
                             try:
                                 t_uid = int(uid_set)
                                 target_msgs = [m for m in msgs if m["uid"] == t_uid]
-                            except:
+                            except Exception:
                                 pass
 
                         for m in target_msgs:
@@ -278,7 +280,7 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
 
                     if not self.selected_folder:
                         self.wfile.write(b"* SEARCH\r\n")
-                        self.send_response(tag, "OK SEARCH completed")
+                        self.send_response(tag, RESPONSE_SEARCH_COMPLETED)
                         continue
 
                     msgs = self.current_folders[self.selected_folder]
@@ -312,12 +314,12 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
 
                     indices_str = " ".join(found_indices)
                     self.wfile.write(f"* SEARCH {indices_str}\r\n".encode())
-                    self.send_response(tag, "OK SEARCH completed")
+                    self.send_response(tag, RESPONSE_SEARCH_COMPLETED)
 
                 elif cmd == "FETCH":
                     # Non-UID FETCH - args is e.g. "1 (RFC822.SIZE)"
                     if not self.selected_folder:
-                        self.send_response(tag, "NO Select first")
+                        self.send_response(tag, RESPONSE_SELECT_FIRST)
                         continue
 
                     parts = args.split(" ", 1)
@@ -362,8 +364,8 @@ class MockIMAPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-    def __init__(self, server_address, RequestHandlerClass, initial_folders=None):
-        super().__init__(server_address, RequestHandlerClass)
+    def __init__(self, server_address, request_handler_class, initial_folders=None):
+        super().__init__(server_address, request_handler_class)
         self.folders = {}
         if initial_folders:
             for fname, contents in initial_folders.items():

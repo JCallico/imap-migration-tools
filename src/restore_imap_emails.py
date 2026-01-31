@@ -261,7 +261,7 @@ def upload_email(dest, folder_name, raw_content, date_str, message_id, subject, 
     """
     try:
         # Ensure folder exists
-        if folder_name.upper() != "INBOX":
+        if folder_name.upper() != imap_common.FOLDER_INBOX:
             try:
                 dest.create(f'"{folder_name}"')
             except Exception:
@@ -304,8 +304,8 @@ def label_to_folder(label):
     """
     Convert a Gmail label name to an IMAP folder path.
     """
-    if label == "INBOX":
-        return "INBOX"
+    if label == imap_common.FOLDER_INBOX:
+        return imap_common.FOLDER_INBOX
     elif label in ("Sent Mail", "Starred", "Drafts", "Important"):
         return f"[Gmail]/{label}"
     else:
@@ -401,12 +401,16 @@ def process_restore_batch(eml_files, folder_name, dest_conf, manifest, apply_lab
                         continue
 
                     # Skip system folders we can't upload to
-                    if label_folder in ("[Gmail]/All Mail", "[Gmail]/Spam", "[Gmail]/Trash"):
+                    if label_folder in (
+                        imap_common.GMAIL_ALL_MAIL,
+                        imap_common.GMAIL_SPAM,
+                        imap_common.GMAIL_TRASH,
+                    ):
                         continue
 
                     try:
                         # Ensure label folder exists
-                        if label_folder.upper() != "INBOX":
+                        if label_folder.upper() != imap_common.FOLDER_INBOX:
                             try:
                                 dest.create(f'"{label_folder}"')
                             except Exception:
