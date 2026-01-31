@@ -509,7 +509,12 @@ class TestGmailModeDraftsFallbackRegression:
             return True
 
         def fake_parse_eml_file(_path):
-            return "<no-labels@test>", '"01-Jan-2024 00:00:00 +0000"', b"Subject: X\r\nMessage-ID: <no-labels@test>\r\n\r\nBody", "X"
+            return (
+                "<no-labels@test>",
+                '"01-Jan-2024 00:00:00 +0000"',
+                b"Subject: X\r\nMessage-ID: <no-labels@test>\r\n\r\nBody",
+                "X",
+            )
 
         monkeypatch.setattr(restore_imap_emails, "get_thread_connection", lambda _conf: MagicMock())
         monkeypatch.setattr(restore_imap_emails, "upload_email", fake_upload_email)

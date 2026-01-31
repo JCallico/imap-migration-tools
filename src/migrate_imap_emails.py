@@ -8,7 +8,7 @@ It effectively handles folder creation and duplication checks (based on Message-
 Features:
 - Progressive migration (folder by folder, email by email).
 - Safe duplicate detection (skips widely identical messages).
-- Optional deletion from source (set DELETE_FROM_SOURCE=true).
+- Optional deletion from source (set DELETE_FROM_SOURCE=true or use --src-delete).
 - Optional deletion from destination (--dest-delete): removes emails not in source.
 - Optional flag preservation (--preserve-flags): copies Seen, Answered, Flagged, Draft flags.
     - If a message already exists on the destination, missing flags can be synced onto it.
@@ -71,6 +71,16 @@ Usage Example:
 
     # Sync mode: delete emails from dest that aren't in the source folder (non-Gmail-mode only)
     python3 migrate_imap_emails.py --dest-delete \
+        --src-host "imap.example.com" \
+        --src-user "source@example.com" \
+        --src-pass "SOURCE_PASSWORD" \
+        --dest-host "imap.example.com" \
+        --dest-user "dest@example.com" \
+        --dest-pass "DEST_PASSWORD"
+
+    # Move instead of copy: delete from source after successful migration
+    python3 migrate_imap_emails.py \
+        --src-delete \
         --src-host "imap.example.com" \
         --src-user "source@example.com" \
         --src-pass "SOURCE_PASSWORD" \
@@ -667,7 +677,11 @@ def main():
     # Check env var for boolean default (msg "true" -> True)
     env_delete = os.getenv("DELETE_FROM_SOURCE", "false").lower() == "true"
     parser.add_argument(
-        "--delete", action="store_true", default=env_delete, help="Delete from source after migration (default: False)"
+        "--src-delete",
+        dest="delete",
+        action="store_true",
+        default=env_delete,
+        help="Delete from source after migration (move semantics)",
     )
 
     # Sync mode: delete from dest emails not in source
@@ -808,7 +822,7 @@ def main():
             # Migration for specific folder
             if DELETE_SOURCE and trash_folder and trash_folder == TARGET_FOLDER:
                 safe_print(
-                    f"Aborting: Cannot migrate Trash folder '{TARGET_FOLDER}' while --delete is enabled. This would create a loop."
+                    f"Aborting: Cannot migrate Trash folder '{TARGET_FOLDER}' while --src-delete is enabled. This would create a loop."
                 )
                 sys.exit(1)
 

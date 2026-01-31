@@ -152,7 +152,7 @@ python3 migrate_imap_emails.py \
   --dest-user "you@domain.com" \
   --dest-pass "your-app-password" \
   --workers 4 \
-  --delete
+  --src-delete
 ```
 
 **Comparison:**
@@ -274,7 +274,7 @@ python3 migrate_imap_emails.py \
   --dest-host "imap.other.com" \
   --dest-user "dest@domain.com" \
   --dest-pass "dest-app-password" \
-  --delete
+  --src-delete
 
 # Or specific folder with delete
 python3 migrate_imap_emails.py \
@@ -285,7 +285,7 @@ python3 migrate_imap_emails.py \
   --dest-user "dest@domain.com" \
   --dest-pass "dest-app-password" \
   "INBOX" \
-  --delete
+  --src-delete
 ```
 
 ### 4. Sync Mode (Delete from Destination)
@@ -582,7 +582,7 @@ python3 restore_imap_emails.py \
   Migrating 100k+ emails is network intensive. If the script crashes, simply run it again. The built-in de-duplication will skip already migrated messages and resume where it left off.
 
 ### Gmail "All Mail" & Deletion
-If you are migrating **from** a Gmail account and using the `--delete` option:
+If you are migrating **from** a Gmail account and using the `--src-delete` option:
 - The script attempts to detect your Trash folder (e.g., `[Gmail]/Trash` or `[Gmail]/Bin`).
 - Instead of simply marking emails as deleted (which Gmail often treats as "Archive"), the script **copies the email to the Trash folder** and then marks the original as deleted.
 - This ensures that the storage count in `[Gmail]/All Mail` actually decreases, as the emails are moved to the Trash (which is auto-emptied by Google after 30 days) rather than remaining in your "All Mail" archive.
