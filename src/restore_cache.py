@@ -8,6 +8,7 @@ The caller decides where the cache file lives by passing a cache directory/root.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -25,6 +26,20 @@ _MIN_PENDING_UPDATES_BEFORE_SAVE = 50
 
 def _safe_cache_component(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value or "")
+
+
+def _prepare_cache_for_json(cache_data: dict) -> dict:
+    """Create a deep copy of cache_data suitable for JSON serialization.
+    Removes in-memory helper fields like _ids_set that should not be persisted.
+    """
+    snapshot = copy.deepcopy(cache_data)
+    folders = snapshot.get("folders", {})
+    if isinstance(folders, dict):
+        for folder_entry in folders.values():
+            if isinstance(folder_entry, dict):
+                # Remove the in-memory set cache
+                folder_entry.pop("_ids_set", None)
+    return snapshot
 
 
 def get_dest_index_cache_path(cache_root: str, dest_host: str, dest_user: str) -> str:
@@ -126,10 +141,17 @@ def add_cached_message_id(
             ids = []
             entry["message_ids"] = ids
 
-        if msg_id in ids:
+        # Maintain entry-level in-memory set for O(1) lookups (not persisted to JSON)
+        ids_set = entry.get("_ids_set")
+        if ids_set is None:
+            ids_set = set(ids)
+            entry["_ids_set"] = ids_set
+
+        if msg_id in ids_set:
             return False
 
         ids.append(msg_id)
+        ids_set.add(msg_id)
 
         meta = cache_data.setdefault("_meta", {})
         if not isinstance(meta, dict):
@@ -170,8 +192,8 @@ def maybe_save_dest_index_cache(
         meta["pending_updates"] = 0
         meta["last_saved_ts"] = now
 
-        # Write without holding the lock for the entire json.dump.
-        snapshot = json.loads(json.dumps(cache_data))
+        # Prepare a clean snapshot for JSON serialization (removes in-memory helper fields)
+        snapshot = _prepare_cache_for_json(cache_data)
 
     did_write = save_dest_index_cache(cache_path, snapshot)
     if did_write and log_fn is not None:
