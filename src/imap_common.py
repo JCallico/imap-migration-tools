@@ -259,6 +259,46 @@ def message_exists_in_folder(dest_conn, msg_id):
         return False
 
 
+def get_message_ids_in_folder(imap_conn):
+    """
+    Fetches all Message-IDs from the currently selected folder.
+    Returns a set of Message-ID strings for O(1) lookup.
+    """
+    try:
+        resp, data = imap_conn.uid("search", None, "ALL")
+        if resp != "OK" or not data[0].strip():
+            return set()
+    except Exception:
+        return set()
+
+    uids = data[0].split()
+    msg_ids = set()
+
+    # Fetch Message-ID headers in batches to avoid
+    # overwhelming the server with one giant FETCH
+    FETCH_BATCH = 500
+    for i in range(0, len(uids), FETCH_BATCH):
+        batch = b",".join(uids[i : i + FETCH_BATCH])
+        try:
+            resp, fetch_data = imap_conn.uid("fetch", batch, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+            if resp != "OK":
+                continue
+            for item in fetch_data:
+                if isinstance(item, tuple) and len(item) >= 2:
+                    header = item[1]
+                    if isinstance(header, bytes):
+                        header = header.decode("utf-8", errors="ignore")
+                    for line in header.splitlines():
+                        if line.lower().startswith("message-id:"):
+                            mid = line.split(":", 1)[1].strip()
+                            if mid:
+                                msg_ids.add(mid)
+        except Exception:
+            continue
+
+    return msg_ids
+
+
 def sanitize_filename(filename):
     """
     Sanitizes a string to be safe for use as a filename.

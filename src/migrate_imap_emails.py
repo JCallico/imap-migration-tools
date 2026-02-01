@@ -409,7 +409,8 @@ def process_batch(
     folder_name,
     src_conf,
     dest_conf,
-    delete_from_source,
+    dest_msg_ids=None,
+    delete_from_source=False,
     trash_folder=None,
     preserve_flags=False,
     gmail_mode=False,
@@ -510,7 +511,13 @@ def process_batch(
             ensure_dest_folder(target_folder)
             dest.select(f'"{target_folder}"')
 
-            is_duplicate = bool(msg_id and imap_common.message_exists_in_folder(dest, msg_id))
+            # Use pre-fetched Message-IDs for O(1) lookup when available
+            if msg_id and dest_msg_ids is not None:
+                is_duplicate = msg_id in dest_msg_ids
+            elif msg_id:
+                is_duplicate = imap_common.message_exists_in_folder(dest, msg_id)
+            else:
+                is_duplicate = False
 
             if is_duplicate:
                 safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {subject[:40]}")
@@ -616,7 +623,14 @@ def migrate_folder(
             delete_orphan_emails(dest, folder_name, set())
         return
 
-    safe_print(f"Found {total} messages. Starting parallel migration...")
+    # Pre-fetch destination Message-IDs for fast duplicate detection (non-Gmail mode only)
+    dest_msg_ids = None
+    if not gmail_mode:
+        safe_print(f"Pre-fetching destination Message-IDs for {folder_name}...")
+        dest_msg_ids = imap_common.get_message_ids_in_folder(dest)
+        safe_print(f"Found {total} source / {len(dest_msg_ids)} destination messages. Starting parallel migration...")
+    else:
+        safe_print(f"Found {total} messages. Starting parallel migration...")
 
     # If dest_delete is enabled, gather source Message-IDs first
     source_msg_ids = None
@@ -641,6 +655,7 @@ def migrate_folder(
                     folder_name,
                     src_conf,
                     dest_conf,
+                    dest_msg_ids,
                     delete_from_source,
                     trash_folder,
                     preserve_flags,
