@@ -93,23 +93,20 @@ def append_email(
             parenthesized list before being passed to `imaplib.IMAP4.append`.
         ensure_folder: If True, attempts to create the folder first (best-effort).
     """
-    try:
-        if ensure_folder:
-            ensure_folder_exists(imap_conn, folder_name)
+    if ensure_folder:
+        ensure_folder_exists(imap_conn, folder_name)
 
-        normalized_flags = None
-        if flags:
-            stripped = str(flags).strip()
-            if stripped:
-                if stripped.startswith("(") and stripped.endswith(")"):
-                    normalized_flags = stripped
-                else:
-                    normalized_flags = f"({stripped})"
+    normalized_flags = None
+    if flags:
+        stripped = str(flags).strip()
+        if stripped:
+            if stripped.startswith("(") and stripped.endswith(")"):
+                normalized_flags = stripped
+            else:
+                normalized_flags = f"({stripped})"
 
-        resp, _ = imap_conn.append(f'"{folder_name}"', normalized_flags, date_str, raw_content)
-        return resp == "OK"
-    except Exception:
-        return False
+    resp, _ = imap_conn.append(f'"{folder_name}"', normalized_flags, date_str, raw_content)
+    return resp == "OK"
 
 
 def verify_env_vars(vars_list):
