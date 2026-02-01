@@ -246,54 +246,29 @@ def build_gmail_label_index(src_conn):
     return label_index
 
 
-def delete_orphan_emails(imap_conn, folder_name, source_msg_ids):
+def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msgid=None):
     """
     Delete emails from destination folder that don't exist in source.
     Returns count of deleted emails.
+
+    If dest_uid_to_msgid is provided (dict of UID -> Message-ID), it will be used
+    instead of fetching from the server, avoiding redundant IMAP calls.
     """
     deleted_count = 0
     try:
         imap_conn.select(f'"{folder_name}"', readonly=False)
-        resp, data = imap_conn.uid("search", None, "ALL")
-        if resp != "OK" or not data or not data[0]:
-            return 0
 
-        uids = data[0].split()
-        if not uids:
-            return 0
+        # Use provided map or fetch from server
+        if dest_uid_to_msgid is None:
+            dest_uid_to_msgid = imap_common.get_message_ids_in_folder(imap_conn)
 
-        # Check each UID's Message-ID against source
-        batch_size = 100
+        # Find UIDs to delete (in destination but not in source)
         uids_to_delete = []
-
-        for i in range(0, len(uids), batch_size):
-            batch = uids[i : i + batch_size]
-            uid_range = b",".join(batch)
-            try:
-                resp, items = imap_conn.uid("fetch", uid_range, "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
-                if resp != "OK":
-                    continue
-
-                for item in items:
-                    if isinstance(item, tuple) and len(item) >= 2:
-                        # Extract UID from response
-                        meta_str = (
-                            item[0].decode("utf-8", errors="ignore") if isinstance(item[0], bytes) else str(item[0])
-                        )
-                        uid_match = re.search(r"UID\s+(\d+)", meta_str)
-                        if not uid_match:
-                            continue
-                        uid = uid_match.group(1)
-
-                        # Extract Message-ID
-                        msg_id = imap_common.extract_message_id(item[1])
-
-                        # If not in source, mark for deletion
-                        if msg_id and msg_id not in source_msg_ids:
-                            uids_to_delete.append(uid)
-
-            except Exception:
-                continue
+        for uid, msg_id in dest_uid_to_msgid.items():
+            if msg_id not in source_msg_ids:
+                # Convert bytes UID to string for STORE command
+                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+                uids_to_delete.append(uid_str)
 
         # Delete orphan emails
         for uid in uids_to_delete:
@@ -595,7 +570,7 @@ def migrate_folder(
         safe_print(f"No new messages to migrate in {folder_name}.")
         if dest_delete and src_msg_ids is not None:
             safe_print("Syncing destination: removing emails not in source...")
-            delete_orphan_emails(dest, folder_name, src_msg_ids)
+            delete_orphan_emails(dest, folder_name, src_msg_ids, dest_uid_to_msgid)
         return
 
     # Create batches from filtered UIDs
@@ -657,7 +632,7 @@ def migrate_folder(
     # Delete orphan emails from destination if enabled
     if dest_delete and src_msg_ids is not None and not gmail_mode:
         safe_print("Syncing destination: removing emails not in source...")
-        delete_orphan_emails(dest, folder_name, src_msg_ids)
+        delete_orphan_emails(dest, folder_name, src_msg_ids, dest_uid_to_msgid)
 
 
 def main():
