@@ -453,7 +453,7 @@ def process_batch(
 
             # Prefer Message-ID from body if missing from header parse
             if not msg_id:
-                msg_id = imap_common.extract_message_id(msg_content)
+                msg_id = imap_common.parse_message_id_from_bytes(msg_content)
 
             # Determine target folder and labels for Gmail mode
             apply_labels = gmail_mode

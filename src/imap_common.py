@@ -212,6 +212,21 @@ def extract_message_id(header_data):
     return None
 
 
+def parse_message_id_from_bytes(raw_message):
+    """Parse Message-ID from RFC822 bytes.
+
+    Parses the full message bytes to extract the Message-ID header.
+    """
+    if not raw_message:
+        return None
+    try:
+        parser = BytesParser()
+        msg = parser.parsebytes(raw_message)
+        return decode_message_id(msg.get("Message-ID"))
+    except Exception:
+        return None
+
+
 def parse_message_id_and_subject_from_bytes(raw_message):
     """Parse Message-ID and decoded Subject from RFC822 bytes.
 
