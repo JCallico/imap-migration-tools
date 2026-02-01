@@ -158,25 +158,22 @@ def list_selectable_folders(imap_conn):
 
 def decode_mime_header(header_value):
     """
-    Decodes MIME encoded headers (Subject, etc.) to a unicode (str) string.
+    Decodes MIME encoded headers (Subject, etc.) to a unicode string.
     """
     if not header_value:
         return "(No Subject)"
     try:
         decoded_list = decode_header(header_value)
-        default_charset = "utf-8"
         text_parts = []
-        for bytes_data, encoding in decoded_list:
-            if isinstance(bytes_data, bytes):
-                if encoding:
-                    try:
-                        text_parts.append(bytes_data.decode(encoding, errors="ignore"))
-                    except LookupError:
-                        text_parts.append(bytes_data.decode(default_charset, errors="ignore"))
-                else:
-                    text_parts.append(bytes_data.decode(default_charset, errors="ignore"))
+        for data, encoding in decoded_list:
+            if isinstance(data, bytes):
+                charset = encoding or "utf-8"
+                try:
+                    text_parts.append(data.decode(charset, errors="ignore"))
+                except LookupError:
+                    text_parts.append(data.decode("utf-8", errors="ignore"))
             else:
-                text_parts.append(str(bytes_data))
+                text_parts.append(str(data))
         return "".join(text_parts)
     except Exception:
         return str(header_value)
