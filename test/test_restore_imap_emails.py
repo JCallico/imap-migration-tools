@@ -285,11 +285,11 @@ class TestUploadEmail:
             "<test@test.com>",
         )
 
-        assert result is True
+        assert result == restore_imap_emails.UploadResult.SUCCESS
         mock_conn.append.assert_called_once()
 
     def test_upload_email_duplicate(self, monkeypatch):
-        """Test upload returns False when message exists."""
+        """Test upload returns ALREADY_EXISTS when message exists."""
         mock_conn = MagicMock()
         mock_conn.select.return_value = ("OK", [b"1"])
 
@@ -305,7 +305,7 @@ class TestUploadEmail:
             check_duplicate=True,
         )
 
-        assert result is False
+        assert result == restore_imap_emails.UploadResult.ALREADY_EXISTS
         mock_conn.append.assert_not_called()
 
     def test_upload_email_with_seen_flag(self, monkeypatch):
@@ -327,10 +327,29 @@ class TestUploadEmail:
             flags="\\Seen",  # Mark as read
         )
 
-        assert result is True
+        assert result == restore_imap_emails.UploadResult.SUCCESS
         # Check that append was called with the \\Seen flag
         call_args = mock_conn.append.call_args
         assert call_args[0][1] == "(\\Seen)"
+
+    def test_upload_email_failure(self, monkeypatch):
+        """Test upload returns FAILURE when an exception occurs."""
+        mock_conn = MagicMock()
+        mock_conn.select.side_effect = Exception("Connection error")
+
+        # Mock email_exists_in_folder to return False (not a duplicate)
+        monkeypatch.setattr(restore_imap_emails, "email_exists_in_folder", lambda *args: False)
+
+        result = restore_imap_emails.upload_email(
+            mock_conn,
+            "INBOX",
+            b"raw email content",
+            '"15-Jan-2024 10:30:00 +0000"',
+            "<test@test.com>",
+        )
+
+        assert result == restore_imap_emails.UploadResult.FAILURE
+        mock_conn.append.assert_not_called()
 
 
 class TestRestoreIntegration:
@@ -579,7 +598,7 @@ class TestGmailModeDraftsFallbackRegression:
 
         def fake_upload_email(dest, folder_name, raw_content, date_str, message_id, flags=None, check_duplicate=True):
             captured["folder_name"] = folder_name
-            return True
+            return restore_imap_emails.UploadResult.SUCCESS
 
         def fake_parse_eml_file(_path):
             return (

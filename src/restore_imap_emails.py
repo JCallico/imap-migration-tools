@@ -56,11 +56,19 @@ import time
 from email import policy
 from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
+from enum import Enum
 from typing import Optional
 
 import imap_common
 import imap_oauth2
 import restore_cache
+
+
+class UploadResult(Enum):
+    """Result of an email upload operation."""
+    SUCCESS = "success"
+    ALREADY_EXISTS = "already_exists"
+    FAILURE = "failure"
 
 # Defaults
 MAX_WORKERS = 4  # Lower default for restore to avoid rate limits
@@ -295,7 +303,7 @@ def email_exists_in_folder(imap_conn, message_id):
 def upload_email(dest, folder_name, raw_content, date_str, message_id, flags=None, check_duplicate=True):
     """
     Upload a single email to the destination folder.
-    Returns True on success, False if duplicate or on failure.
+    Returns UploadResult enum: SUCCESS, ALREADY_EXISTS, or FAILURE.
 
     Args:
         flags: Optional string of IMAP flags like "\\Seen" for read emails.
@@ -310,10 +318,10 @@ def upload_email(dest, folder_name, raw_content, date_str, message_id, flags=Non
 
         # Check for duplicates if requested
         if check_duplicate and message_id and email_exists_in_folder(dest, message_id):
-            return False  # Already exists
+            return UploadResult.ALREADY_EXISTS
 
         # Upload with original date and flags
-        return imap_common.append_email(
+        success = imap_common.append_email(
             dest,
             folder_name,
             raw_content,
@@ -321,10 +329,11 @@ def upload_email(dest, folder_name, raw_content, date_str, message_id, flags=Non
             flags,
             ensure_folder=False,
         )
+        return UploadResult.SUCCESS if success else UploadResult.FAILURE
 
     except Exception as e:
         safe_print(f"Error uploading to {folder_name}: {e}")
-        return False
+        return UploadResult.FAILURE
 
 
 def get_labels_from_manifest(manifest, message_id):
@@ -470,37 +479,42 @@ def process_restore_batch(
             # Upload to target folder.
             # Keep server-side duplicate checks enabled to avoid creating duplicates for emails
             # that exist on the destination but are not in our local progress cache.
-            uploaded = upload_email(dest, target_folder, raw_content, date_str, message_id, flags)
+            upload_result = upload_email(dest, target_folder, raw_content, date_str, message_id, flags)
 
-            restore_cache.record_progress(
-                message_id=message_id,
-                folder_name=target_folder,
-                existing_dest_msg_ids=existing_dest_msg_ids,
-                existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
-                progress_cache_path=progress_cache_path,
-                progress_cache_data=progress_cache_data,
-                progress_cache_lock=progress_cache_lock,
-                dest_host=dest_host,
-                dest_user=dest_user,
-                log_fn=safe_print,
-            )
+            # Only record progress when upload succeeds or email already exists.
+            # Failed uploads should not be marked as processed to allow retry on next run.
+            if upload_result in (UploadResult.SUCCESS, UploadResult.ALREADY_EXISTS):
+                restore_cache.record_progress(
+                    message_id=message_id,
+                    folder_name=target_folder,
+                    existing_dest_msg_ids=existing_dest_msg_ids,
+                    existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
+                    progress_cache_path=progress_cache_path,
+                    progress_cache_data=progress_cache_data,
+                    progress_cache_lock=progress_cache_lock,
+                    dest_host=dest_host,
+                    dest_user=dest_user,
+                    log_fn=safe_print,
+                )
 
-            if not uploaded:
+            if upload_result == UploadResult.ALREADY_EXISTS:
                 safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {display_subject}")
                 # Full restore preserves legacy behavior: sync flags on existing email if requested
                 if full_restore and apply_flags and flags and message_id:
                     sync_flags_on_existing(dest, target_folder, message_id, flags, size)
-            else:
+            elif upload_result == UploadResult.SUCCESS:
                 safe_print(f"[{target_folder}] UPLOADED      | {size_str:<8} | {display_subject}")
                 # Show applied flags in same style as labels
                 if flags:
                     for flag in flags.split():
                         safe_print(f"  -> Applied flag: {flag}")
+            else:  # FAILURE
+                safe_print(f"[{target_folder}] FAILED        | {size_str:<8} | {display_subject}")
 
             # Apply remaining Gmail labels:
             # - Full restore: apply/sync labels even for existing emails
             # - Incremental (default): apply labels only for newly uploaded emails
-            if apply_labels and remaining_labels and (uploaded or full_restore):
+            if apply_labels and remaining_labels and (upload_result == UploadResult.SUCCESS or full_restore):
                 for label in remaining_labels:
                     label_folder = label_to_folder(label)
 
