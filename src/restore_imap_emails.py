@@ -284,11 +284,7 @@ def upload_email(dest, folder_name, raw_content, date_str, message_id, subject, 
     """
     try:
         # Ensure folder exists
-        if folder_name.upper() != imap_common.FOLDER_INBOX:
-            try:
-                dest.create(f'"{folder_name}"')
-            except Exception:
-                pass  # Folder may already exist
+        imap_common.ensure_folder_exists(dest, folder_name)
 
         # Select folder
         dest.select(f'"{folder_name}"')
@@ -299,29 +295,19 @@ def upload_email(dest, folder_name, raw_content, date_str, message_id, subject, 
             return False  # Already exists
 
         # Upload with original date and flags
-        resp, _ = dest.append(f'"{folder_name}"', flags, date_str, raw_content)
-        return resp == "OK"
+        return imap_common.append_email(
+            dest,
+            folder_name,
+            raw_content,
+            date_str,
+            flags,
+            ensure_folder=False,
+        )
 
     except Exception as e:
         safe_print(f"Error uploading to {folder_name}: {e}")
         return False
 
-
-def append_email(dest, folder_name, raw_content, date_str, flags=None):
-    """Append an email to a folder without performing any duplicate check."""
-    try:
-        # Ensure folder exists
-        if folder_name.upper() != imap_common.FOLDER_INBOX:
-            try:
-                dest.create(f'"{folder_name}"')
-            except Exception:
-                pass
-
-        resp, _ = dest.append(f'"{folder_name}"', flags, date_str, raw_content)
-        return resp == "OK"
-    except Exception as e:
-        safe_print(f"Error appending to {folder_name}: {e}")
-        return False
 
 
 def get_labels_from_manifest(manifest, message_id):
@@ -513,16 +499,19 @@ def process_restore_batch(
 
                     try:
                         # Ensure label folder exists
-                        if label_folder.upper() != imap_common.FOLDER_INBOX:
-                            try:
-                                dest.create(f'"{label_folder}"')
-                            except Exception:
-                                pass
+                        imap_common.ensure_folder_exists(dest, label_folder)
 
                         # Select and check for duplicate
                         dest.select(f'"{label_folder}"')
                         if not email_exists_in_folder(dest, message_id):
-                            dest.append(f'"{label_folder}"', flags, date_str, raw_content)
+                            imap_common.append_email(
+                                dest,
+                                label_folder,
+                                raw_content,
+                                date_str,
+                                flags,
+                                ensure_folder=False,
+                            )
                             safe_print(f"  -> Applied label: {label}")
                         # If email exists in this label folder, sync flags (full restore only)
                         elif full_restore and apply_flags and flags:

@@ -58,6 +58,47 @@ CMD_FETCH = "fetch"
 OP_ADD_FLAGS = "+FLAGS"
 
 
+def ensure_folder_exists(imap_conn, folder_name: str) -> None:
+    """Best-effort create of a folder if it doesn't already exist.
+
+    IMAP servers typically return an error if the mailbox exists; this helper
+    intentionally ignores those errors.
+    """
+    try:
+        if folder_name and folder_name.upper() != FOLDER_INBOX:
+            imap_conn.create(f'"{folder_name}"')
+    except Exception:
+        # Folder may already exist, or server may restrict creation.
+        pass
+
+
+def append_email(
+    imap_conn,
+    folder_name: str,
+    raw_content: bytes,
+    date_str: str,
+    flags: str | None = None,
+    *,
+    ensure_folder: bool = True,
+) -> bool:
+    """Append an email message to a folder.
+
+    This is intentionally a thin wrapper around IMAP APPEND; callers can
+    perform duplicate checks or folder selection separately.
+
+    Args:
+        flags: Passed through to `imaplib.IMAP4.append` unchanged.
+        ensure_folder: If True, attempts to create the folder first (best-effort).
+    """
+    try:
+        if ensure_folder:
+            ensure_folder_exists(imap_conn, folder_name)
+        resp, _ = imap_conn.append(f'"{folder_name}"', flags, date_str, raw_content)
+        return resp == "OK"
+    except Exception:
+        return False
+
+
 def verify_env_vars(vars_list):
     """
     Checks if all environment variables in the list are set.
