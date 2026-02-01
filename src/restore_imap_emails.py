@@ -78,25 +78,6 @@ def safe_print(message):
         print(f"[{short_name}] {message}")
 
 
-def get_manifest_dir(local_path: str) -> str:
-    """Return the directory where the manifest file lives.
-
-    Cache is stored in the same directory as the manifest.
-    """
-    cur = os.path.abspath(local_path)
-    while True:
-        labels_path = os.path.join(cur, "labels_manifest.json")
-        flags_path = os.path.join(cur, "flags_manifest.json")
-        if os.path.exists(labels_path) or os.path.exists(flags_path):
-            return cur
-
-        parent = os.path.dirname(cur)
-        if parent == cur:
-            # Reached filesystem root without finding a manifest.
-            return os.path.abspath(local_path)
-        cur = parent
-
-
 def get_thread_connection(dest_conf):
     """Get or create a thread-local IMAP connection."""
     if not hasattr(thread_local, "dest") or thread_local.dest is None:
@@ -679,7 +660,7 @@ def restore_folder(
 
     safe_print(f"Found {len(eml_files)} emails to restore.")
 
-    cache_root = get_manifest_dir(cache_root or local_folder_path)
+    cache_root = cache_root or local_folder_path
     cache_path = restore_cache.get_dest_index_cache_path(cache_root, dest_conf["host"], dest_conf["user"])
     cache_data: dict = restore_cache.load_dest_index_cache(cache_path)
     cache_lock = threading.Lock()
@@ -783,8 +764,7 @@ def restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags, full
 
     batches = [eml_files[i : i + BATCH_SIZE] for i in range(0, len(eml_files), BATCH_SIZE)]
 
-    cache_dir = get_manifest_dir(local_path)
-    cache_path = restore_cache.get_dest_index_cache_path(cache_dir, dest_conf["host"], dest_conf["user"])
+    cache_path = restore_cache.get_dest_index_cache_path(local_path, dest_conf["host"], dest_conf["user"])
     progress_cache_data: dict = restore_cache.load_dest_index_cache(cache_path)
     progress_cache_lock = threading.Lock()
 

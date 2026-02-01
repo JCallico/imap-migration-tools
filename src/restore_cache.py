@@ -1,13 +1,9 @@
-"""Destination Message-ID indexing with a progress cache.
+"""Restore progress cache.
 
-This module supports fast incremental restore by keeping a per-folder cache of:
-- UIDVALIDITY (to invalidate cache on mailbox reset)
-- last_uid seen (UIDNEXT-1)
-- set of Message-IDs seen so far
+This module supports faster incremental restores by persisting, per destination+folder,
+the set of Message-IDs already seen/processed by this tool.
 
-On subsequent runs, it fetches only UIDs newer than last_uid.
-
-Cache file lives next to the manifest file (labels/flags manifest) in the backup root.
+The caller decides where the cache file lives by passing a cache directory/root.
 """
 
 from __future__ import annotations
