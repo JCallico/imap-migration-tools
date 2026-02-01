@@ -105,7 +105,10 @@ def append_email(
             else:
                 normalized_flags = f"({stripped})"
 
-    resp, _ = imap_conn.append(f'"{folder_name}"', normalized_flags, date_str, raw_content)
+    try:
+        resp, _ = imap_conn.append(f'"{folder_name}"', normalized_flags, date_str, raw_content)
+    except Exception:
+        return False
     return resp == "OK"
 
 
