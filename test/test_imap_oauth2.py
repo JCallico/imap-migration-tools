@@ -71,10 +71,12 @@ class TestDiscoverMicrosoftTenant:
     def test_successful_discovery(self):
         """Test successful tenant ID extraction from OpenID config."""
         tenant_id = "12345678-abcd-ef01-2345-67890abcdef0"
-        openid_response = json.dumps({
-            "issuer": f"https://sts.windows.net/{tenant_id}/",
-            "authorization_endpoint": f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize",
-        }).encode("utf-8")
+        openid_response = json.dumps(
+            {
+                "issuer": f"https://sts.windows.net/{tenant_id}/",
+                "authorization_endpoint": f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize",
+            }
+        ).encode("utf-8")
 
         mock_response = MagicMock()
         mock_response.read.return_value = openid_response
@@ -89,9 +91,9 @@ class TestDiscoverMicrosoftTenant:
     def test_domain_extraction(self):
         """Test that domain is correctly extracted from email."""
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "issuer": "https://sts.windows.net/abcdef01-2345-6789-abcd-ef0123456789/"
-        }).encode("utf-8")
+        mock_response.read.return_value = json.dumps(
+            {"issuer": "https://sts.windows.net/abcdef01-2345-6789-abcd-ef0123456789/"}
+        ).encode("utf-8")
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
 
@@ -126,9 +128,7 @@ class TestDiscoverMicrosoftTenant:
     def test_no_tenant_in_issuer(self, capsys):
         """Test returns None when issuer has no tenant GUID."""
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "issuer": "https://sts.windows.net/not-a-guid/"
-        }).encode("utf-8")
+        mock_response.read.return_value = json.dumps({"issuer": "https://sts.windows.net/not-a-guid/"}).encode("utf-8")
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
 
@@ -339,12 +339,15 @@ class TestGoogleTokenRefresh:
         imap_oauth2._google_creds_cache[("client-id", "client-secret")] = mock_creds
 
         mock_request_module = MagicMock()
-        with patch.dict("sys.modules", {
-            "google": MagicMock(),
-            "google.auth": MagicMock(),
-            "google.auth.transport": MagicMock(),
-            "google.auth.transport.requests": mock_request_module,
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "google": MagicMock(),
+                "google.auth": MagicMock(),
+                "google.auth.transport": MagicMock(),
+                "google.auth.transport.requests": mock_request_module,
+            },
+        ):
             result = imap_oauth2.acquire_google_oauth2_token("client-id", "client-secret")
 
         assert result == "refreshed_google_token"

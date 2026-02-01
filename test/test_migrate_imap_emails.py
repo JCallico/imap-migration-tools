@@ -372,7 +372,7 @@ class TestConfigValidation:
         with pytest.raises(SystemExit) as exc_info:
             migrate_imap_emails.main()
 
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == 2
 
     def test_missing_dest_credentials(self, monkeypatch, capsys):
         """Test that missing destination credentials cause exit."""
@@ -386,7 +386,7 @@ class TestConfigValidation:
         with pytest.raises(SystemExit) as exc_info:
             migrate_imap_emails.main()
 
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == 2
 
 
 class TestMigrateErrorHandling:

@@ -13,7 +13,13 @@ Features:
 - Gmail Labels Preservation: Creates a manifest mapping Message-IDs to Gmail labels for restoration.
 
 Configuration (Environment Variables):
-  SRC_IMAP_HOST, SRC_IMAP_USERNAME, SRC_IMAP_PASSWORD: Source credentials.
+    SRC_IMAP_HOST, SRC_IMAP_USERNAME: Source credentials.
+    SRC_IMAP_PASSWORD: Source password (or App Password).
+
+    OAuth2 (Optional - instead of password):
+    SRC_OAUTH2_CLIENT_ID: OAuth2 Client ID
+    SRC_OAUTH2_CLIENT_SECRET: OAuth2 Client Secret (required for Google)
+
   BACKUP_LOCAL_PATH: Destination local directory.
   MAX_WORKERS: Number of concurrent threads (default: 10).
   BATCH_SIZE: Number of emails to process per batch (default: 10).
@@ -71,6 +77,12 @@ def safe_print(message):
 
 
 def get_thread_connection(src_conf):
+    # Backwards-compatible: tests and some internal call sites may still pass
+    # (host, user, password) tuples. Normalize to the dict form used by
+    # imap_common.get_imap_connection_from_conf().
+    if isinstance(src_conf, tuple) and len(src_conf) == 3:
+        src_conf = {"host": src_conf[0], "user": src_conf[1], "password": src_conf[2]}
+
     if not hasattr(thread_local, "src") or thread_local.src is None:
         thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
     try:
@@ -87,6 +99,9 @@ def get_thread_connection(src_conf):
 
 
 def process_batch(uids, folder_name, src_conf, local_folder_path):
+    if isinstance(src_conf, tuple) and len(src_conf) == 3:
+        src_conf = {"host": src_conf[0], "user": src_conf[1], "password": src_conf[2]}
+
     src = get_thread_connection(src_conf)
     if not src:
         safe_print("Error: Could not establish connection for batch.")
@@ -655,18 +670,49 @@ def main():
     parser = argparse.ArgumentParser(description="Backup IMAP emails to local .eml files.")
 
     # Source
-    parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_HOST"), help="Source IMAP Server")
-    parser.add_argument("--src-user", default=os.getenv("SRC_IMAP_USERNAME"), help="Source Username")
-    parser.add_argument("--src-pass", default=os.getenv("SRC_IMAP_PASSWORD"), help="Source Password")
+    default_src_host = os.getenv("SRC_IMAP_HOST")
+    default_src_user = os.getenv("SRC_IMAP_USERNAME")
+    default_src_pass = os.getenv("SRC_IMAP_PASSWORD")
+    default_src_client_id = os.getenv("SRC_OAUTH2_CLIENT_ID")
+
+    parser.add_argument(
+        "--src-host",
+        default=default_src_host,
+        required=not bool(default_src_host),
+        help="Source IMAP Server (or SRC_IMAP_HOST)",
+    )
+    parser.add_argument(
+        "--src-user",
+        default=default_src_user,
+        required=not bool(default_src_user),
+        help="Source Username (or SRC_IMAP_USERNAME)",
+    )
+
+    # Authentication: require either password OR OAuth2 client-id (unless provided via env vars)
+    auth_required = not bool(default_src_pass or default_src_client_id)
+    auth_group = parser.add_mutually_exclusive_group(required=auth_required)
+    auth_group.add_argument("--src-pass", default=default_src_pass, help="Source Password (or SRC_IMAP_PASSWORD)")
+    auth_group.add_argument(
+        "--src-client-id",
+        default=default_src_client_id,
+        help="OAuth2 Client ID (or SRC_OAUTH2_CLIENT_ID)",
+    )
 
     # OAuth2
-    parser.add_argument("--src-client-id", default=os.getenv("SRC_OAUTH2_CLIENT_ID"), help="OAuth2 Client ID")
-    parser.add_argument("--src-client-secret", default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
-                        help="OAuth2 Client Secret (if required)")
+    parser.add_argument(
+        "--src-client-secret",
+        default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+        help="OAuth2 Client Secret (if required) (or SRC_OAUTH2_CLIENT_SECRET)",
+    )
 
     # Destination (Local Path)
     env_path = os.getenv("BACKUP_LOCAL_PATH")
-    parser.add_argument("--dest-path", default=env_path, help="Local destination path (Mandatory)")
+    parser.add_argument(
+        "--dest-path",
+        default=env_path,
+        required=not bool(env_path),
+        help="Local destination path (or BACKUP_LOCAL_PATH)",
+    )
 
     # Config
     parser.add_argument("--workers", type=int, default=int(os.getenv("MAX_WORKERS", 10)), help="Thread count")
@@ -715,24 +761,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Validate
-    missing = []
-    if not args.src_host:
-        missing.append("SRC_IMAP_HOST")
-    if not args.src_user:
-        missing.append("SRC_IMAP_USERNAME")
     use_oauth2 = bool(args.src_client_id)
-    if not args.src_pass and not use_oauth2:
-        missing.append("SRC_IMAP_PASSWORD or OAuth2 credentials")
-
-    if missing:
-        print(f"Error: Missing credentials: {', '.join(missing)}")
-        sys.exit(1)
-
-    if not args.dest_path:
-        print("Error: Destination path is required.")
-        print("Please provide --dest-path or set environment variable BACKUP_LOCAL_PATH.")
-        sys.exit(1)
 
     global MAX_WORKERS, BATCH_SIZE
     MAX_WORKERS = args.workers
@@ -766,7 +795,9 @@ def main():
             "client_id": args.src_client_id,
             "email": args.src_user,
             "client_secret": args.src_client_secret,
-        } if use_oauth2 else None,
+        }
+        if use_oauth2
+        else None,
     }
 
     # Expand path (~/...)

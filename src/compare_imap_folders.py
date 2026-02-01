@@ -12,10 +12,18 @@ Configuration (Environment Variables):
     SRC_IMAP_USERNAME   : Source Username/Email
     SRC_IMAP_PASSWORD   : Source Password
 
+    OAuth2 (Optional - instead of password):
+    SRC_OAUTH2_CLIENT_ID     : OAuth2 Client ID
+    SRC_OAUTH2_CLIENT_SECRET : OAuth2 Client Secret (required for Google)
+
   Destination Account:
     DEST_IMAP_HOST      : Destination IMAP Host
     DEST_IMAP_USERNAME  : Destination Username/Email
     DEST_IMAP_PASSWORD  : Destination Password
+
+    OAuth2 (Optional - instead of password):
+    DEST_OAUTH2_CLIENT_ID     : OAuth2 Client ID
+    DEST_OAUTH2_CLIENT_SECRET : OAuth2 Client Secret (required for Google)
 
 Also supports local folders as source and/or destination:
     SRC_LOCAL_PATH      : Source local folder (backup root)
@@ -129,39 +137,113 @@ def get_local_email_count(local_root: str, folder_name: str) -> Optional[int]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Compare email counts between two IMAP accounts.")
+    default_src_path = os.getenv("SRC_LOCAL_PATH")
+    default_dest_path = os.getenv("DEST_LOCAL_PATH")
 
+    # Phase 1: determine whether each side is local
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--src-path", default=default_src_path)
+    pre_parser.add_argument("--dest-path", default=default_dest_path)
+    pre_args, _ = pre_parser.parse_known_args()
+
+    src_requires_imap = not bool(pre_args.src_path)
+    dest_requires_imap = not bool(pre_args.dest_path)
+
+    # Phase 2: full parser with conditional requirements
+    parser = argparse.ArgumentParser(description="Compare email counts between two IMAP accounts.")
     parser.add_argument(
         "--src-path",
-        default=os.getenv("SRC_LOCAL_PATH"),
+        default=default_src_path,
         help="Source local folder (backup root). If set, IMAP source args are ignored.",
     )
     parser.add_argument(
         "--dest-path",
-        default=os.getenv("DEST_LOCAL_PATH"),
+        default=default_dest_path,
         help="Destination local folder (backup root). If set, IMAP destination args are ignored.",
     )
 
     # Source args
-    parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_HOST"), help="Source IMAP Server")
-    parser.add_argument("--src-user", default=os.getenv("SRC_IMAP_USERNAME"), help="Source Username")
-    parser.add_argument("--src-pass", default=os.getenv("SRC_IMAP_PASSWORD"), help="Source Password")
-    parser.add_argument("--src-client-id", default=os.getenv("SRC_OAUTH2_CLIENT_ID"), help="Source OAuth2 Client ID")
-    parser.add_argument("--src-client-secret", default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
-                        help="Source OAuth2 Client Secret (if required)")
+    default_src_host = os.getenv("SRC_IMAP_HOST")
+    default_src_user = os.getenv("SRC_IMAP_USERNAME")
+    default_src_pass = os.getenv("SRC_IMAP_PASSWORD")
+    default_src_client_id = os.getenv("SRC_OAUTH2_CLIENT_ID")
+
+    parser.add_argument(
+        "--src-host",
+        default=default_src_host,
+        required=src_requires_imap and not bool(default_src_host),
+        help="Source IMAP Server (or SRC_IMAP_HOST)",
+    )
+    parser.add_argument(
+        "--src-user",
+        default=default_src_user,
+        required=src_requires_imap and not bool(default_src_user),
+        help="Source Username (or SRC_IMAP_USERNAME)",
+    )
+    src_auth_required = src_requires_imap and not bool(default_src_pass or default_src_client_id)
+    src_auth = parser.add_mutually_exclusive_group(required=src_auth_required)
+    src_auth.add_argument("--src-pass", default=default_src_pass, help="Source Password (or SRC_IMAP_PASSWORD)")
+    src_auth.add_argument(
+        "--src-client-id",
+        default=default_src_client_id,
+        help="Source OAuth2 Client ID (or SRC_OAUTH2_CLIENT_ID)",
+    )
+    parser.add_argument(
+        "--src-client-secret",
+        default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+        help="Source OAuth2 Client Secret (if required) (or SRC_OAUTH2_CLIENT_SECRET)",
+    )
 
     # Dest args
-    parser.add_argument("--dest-host", default=os.getenv("DEST_IMAP_HOST"), help="Destination IMAP Server")
-    parser.add_argument("--dest-user", default=os.getenv("DEST_IMAP_USERNAME"), help="Destination Username")
-    parser.add_argument("--dest-pass", default=os.getenv("DEST_IMAP_PASSWORD"), help="Destination Password")
-    parser.add_argument("--dest-client-id", default=os.getenv("DEST_OAUTH2_CLIENT_ID"), help="Destination OAuth2 Client ID")
-    parser.add_argument("--dest-client-secret", default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
-                        help="Destination OAuth2 Client Secret (if required)")
+    default_dest_host = os.getenv("DEST_IMAP_HOST")
+    default_dest_user = os.getenv("DEST_IMAP_USERNAME")
+    default_dest_pass = os.getenv("DEST_IMAP_PASSWORD")
+    default_dest_client_id = os.getenv("DEST_OAUTH2_CLIENT_ID")
+
+    parser.add_argument(
+        "--dest-host",
+        default=default_dest_host,
+        required=dest_requires_imap and not bool(default_dest_host),
+        help="Destination IMAP Server (or DEST_IMAP_HOST)",
+    )
+    parser.add_argument(
+        "--dest-user",
+        default=default_dest_user,
+        required=dest_requires_imap and not bool(default_dest_user),
+        help="Destination Username (or DEST_IMAP_USERNAME)",
+    )
+    dest_auth_required = dest_requires_imap and not bool(default_dest_pass or default_dest_client_id)
+    dest_auth = parser.add_mutually_exclusive_group(required=dest_auth_required)
+    dest_auth.add_argument(
+        "--dest-pass",
+        default=default_dest_pass,
+        help="Destination Password (or DEST_IMAP_PASSWORD)",
+    )
+    dest_auth.add_argument(
+        "--dest-client-id",
+        default=default_dest_client_id,
+        help="Destination OAuth2 Client ID (or DEST_OAUTH2_CLIENT_ID)",
+    )
+    parser.add_argument(
+        "--dest-client-secret",
+        default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
+        help="Destination OAuth2 Client Secret (if required) (or DEST_OAUTH2_CLIENT_SECRET)",
+    )
 
     args = parser.parse_args()
 
     src_is_local = bool(args.src_path)
     dest_is_local = bool(args.dest_path)
+
+    SRC_HOST = args.src_host
+    SRC_USER = args.src_user
+    SRC_PASS = args.src_pass
+    DEST_HOST = args.dest_host
+    DEST_USER = args.dest_user
+    DEST_PASS = args.dest_pass
+
+    src_use_oauth2 = bool(args.src_client_id) and not src_is_local
+    dest_use_oauth2 = bool(args.dest_client_id) and not dest_is_local
 
     # Acquire OAuth2 tokens if configured
     src_oauth2_token = None
@@ -202,14 +284,18 @@ def main():
     else:
         print(f"Source Host     : {args.src_host}")
         print(f"Source User     : {args.src_user}")
-        print(f"Source Auth     : {'OAuth2/' + src_oauth2_provider + ' (XOAUTH2)' if src_use_oauth2 else 'Basic (password)'}")
+        print(
+            f"Source Auth     : {'OAuth2/' + src_oauth2_provider + ' (XOAUTH2)' if src_use_oauth2 else 'Basic (password)'}"
+        )
 
     if dest_is_local:
         print(f"Destination (Local): {args.dest_path}")
     else:
         print(f"Destination Host: {args.dest_host}")
         print(f"Destination User: {args.dest_user}")
-        print(f"Destination Auth: {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}")
+        print(
+            f"Destination Auth: {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}"
+        )
     print("-----------------------------\n")
 
     src = None
