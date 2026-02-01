@@ -13,6 +13,7 @@ import os
 import re
 import threading
 import time
+from collections.abc import Callable
 
 RESTORE_CACHE_VERSION = 1
 
@@ -57,9 +58,10 @@ def save_dest_index_cache(cache_path: str, cache_data: dict) -> None:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(cache_data, f, ensure_ascii=False)
         os.replace(tmp_path, cache_path)
+        return True
     except Exception:
         # Cache is best-effort; do not fail restore.
-        pass
+        return False
 
 
 def _ensure_dest(cache_data: dict, dest_host: str, dest_user: str) -> None:
@@ -143,9 +145,11 @@ def maybe_save_dest_index_cache(
     cache_lock: threading.Lock,
     *,
     force: bool = False,
+    log_fn: Callable[[str], None] | None = None,
 ) -> bool:
     """Persist cache to disk if enough updates/time has accumulated."""
     now = time.time()
+    pending = 0
     with cache_lock:
         meta = cache_data.setdefault("_meta", {})
         if not isinstance(meta, dict):
@@ -168,8 +172,10 @@ def maybe_save_dest_index_cache(
         # Write without holding the lock for the entire json.dump.
         snapshot = json.loads(json.dumps(cache_data))
 
-    save_dest_index_cache(cache_path, snapshot)
-    return True
+    did_write = save_dest_index_cache(cache_path, snapshot)
+    if did_write and log_fn is not None:
+        log_fn(f"Wrote restore cache ({pending} updates): {cache_path}")
+    return did_write
 
 
 def record_progress(
@@ -183,6 +189,7 @@ def record_progress(
     progress_cache_lock: threading.Lock | None,
     dest_host: str | None,
     dest_user: str | None,
+    log_fn: Callable[[str], None] | None = None,
 ) -> None:
     """Record a processed Message-ID for fast skipping on future incremental runs.
 
@@ -216,4 +223,9 @@ def record_progress(
             folder_name,
             msg_id,
         )
-        maybe_save_dest_index_cache(progress_cache_path, progress_cache_data, progress_cache_lock)
+        maybe_save_dest_index_cache(
+            progress_cache_path,
+            progress_cache_data,
+            progress_cache_lock,
+            log_fn=log_fn,
+        )

@@ -463,6 +463,7 @@ def process_restore_batch(
                 progress_cache_lock=progress_cache_lock,
                 dest_host=dest_host,
                 dest_user=dest_user,
+                log_fn=safe_print,
             )
 
             if not uploaded:
