@@ -184,13 +184,15 @@ def main():
     src_auth = parser.add_mutually_exclusive_group(required=src_auth_required)
     src_auth.add_argument("--src-pass", default=default_src_pass, help="Source Password (or SRC_IMAP_PASSWORD)")
     src_auth.add_argument(
-        "--src-client-id",
+        "--src-oauth2-client-id",
         default=default_src_client_id,
+        dest="src_client_id",
         help="Source OAuth2 Client ID (or SRC_OAUTH2_CLIENT_ID)",
     )
     parser.add_argument(
-        "--src-client-secret",
+        "--src-oauth2-client-secret",
         default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+        dest="src_client_secret",
         help="Source OAuth2 Client Secret (if required) (or SRC_OAUTH2_CLIENT_SECRET)",
     )
 
@@ -220,14 +222,28 @@ def main():
         help="Destination Password (or DEST_IMAP_PASSWORD)",
     )
     dest_auth.add_argument(
+        "--dest-oauth2-client-id",
+        default=default_dest_client_id,
+        dest="dest_client_id",
+        help="Destination OAuth2 Client ID (or DEST_OAUTH2_CLIENT_ID)",
+    )
+    dest_auth.add_argument(
         "--dest-client-id",
         default=default_dest_client_id,
-        help="Destination OAuth2 Client ID (or DEST_OAUTH2_CLIENT_ID)",
+        dest="dest_client_id",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--dest-oauth2-client-secret",
+        default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
+        dest="dest_client_secret",
+        help="Destination OAuth2 Client Secret (if required) (or DEST_OAUTH2_CLIENT_SECRET)",
     )
     parser.add_argument(
         "--dest-client-secret",
         default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
-        help="Destination OAuth2 Client Secret (if required) (or DEST_OAUTH2_CLIENT_SECRET)",
+        dest="dest_client_secret",
+        help=argparse.SUPPRESS,
     )
 
     args = parser.parse_args()

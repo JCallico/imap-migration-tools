@@ -735,14 +735,28 @@ def main():
         help="Destination Password (or DEST_IMAP_PASSWORD)",
     )
     dest_auth.add_argument(
+        "--dest-oauth2-client-id",
+        default=default_dest_client_id,
+        dest="dest_client_id",
+        help="Destination OAuth2 Client ID (or DEST_OAUTH2_CLIENT_ID)",
+    )
+    dest_auth.add_argument(
         "--dest-client-id",
         default=default_dest_client_id,
-        help="Destination OAuth2 Client ID (or DEST_OAUTH2_CLIENT_ID)",
+        dest="dest_client_id",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--dest-oauth2-client-secret",
+        default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
+        dest="dest_client_secret",
+        help="Destination OAuth2 Client Secret (if required) (or DEST_OAUTH2_CLIENT_SECRET)",
     )
     parser.add_argument(
         "--dest-client-secret",
         default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
-        help="Destination OAuth2 Client Secret (if required) (or DEST_OAUTH2_CLIENT_SECRET)",
+        dest="dest_client_secret",
+        help=argparse.SUPPRESS,
     )
 
     # Config
