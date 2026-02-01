@@ -546,7 +546,7 @@ def process_restore_batch(
                                 )
                                 safe_print(f"  -> Applied label: {label}")
                             else:
-                                safe_print(f"  -> Failed to apply label {label}")
+                                safe_print(f"  -> Failed to apply label {label} (will retry on next restore)")
                         # If email exists in this label folder, sync flags (full restore only)
                         elif full_restore and apply_flags and flags:
                             sync_flags_on_existing(dest, label_folder, message_id, flags, size)
