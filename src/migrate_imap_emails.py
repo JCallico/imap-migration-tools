@@ -23,10 +23,18 @@ Configuration (Environment Variables):
     SRC_IMAP_USERNAME   : Source Username/Email
     SRC_IMAP_PASSWORD   : Source Password (or App Password)
 
+    OAuth2 (Optional - instead of password):
+    SRC_OAUTH2_CLIENT_ID     : OAuth2 Client ID
+    SRC_OAUTH2_CLIENT_SECRET : OAuth2 Client Secret (required for Google)
+
   Destination Account:
     DEST_IMAP_HOST      : Destination IMAP Host
     DEST_IMAP_USERNAME  : Destination Username/Email
     DEST_IMAP_PASSWORD  : Destination Password
+
+    OAuth2 (Optional - instead of password):
+    DEST_OAUTH2_CLIENT_ID     : OAuth2 Client ID
+    DEST_OAUTH2_CLIENT_SECRET : OAuth2 Client Secret (required for Google)
 
   Options:
     DELETE_FROM_SOURCE  : Set to "true" to delete emails from source after successful transfer.
@@ -675,20 +683,72 @@ def main():
     parser.add_argument("folder", nargs="?", help="Specific folder to migrate (e.g. '[Gmail]/Important')")
 
     # Source args
-    parser.add_argument("--src-host", default=os.getenv("SRC_IMAP_HOST"), help="Source IMAP Host")
-    parser.add_argument("--src-user", default=os.getenv("SRC_IMAP_USERNAME"), help="Source Username")
-    parser.add_argument("--src-pass", default=os.getenv("SRC_IMAP_PASSWORD"), help="Source Password")
-    parser.add_argument("--src-client-id", default=os.getenv("SRC_OAUTH2_CLIENT_ID"), help="Source OAuth2 Client ID")
-    parser.add_argument("--src-client-secret", default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
-                        help="Source OAuth2 Client Secret (if required)")
+    default_src_host = os.getenv("SRC_IMAP_HOST")
+    default_src_user = os.getenv("SRC_IMAP_USERNAME")
+    default_src_pass = os.getenv("SRC_IMAP_PASSWORD")
+    default_src_client_id = os.getenv("SRC_OAUTH2_CLIENT_ID")
+
+    parser.add_argument(
+        "--src-host",
+        default=default_src_host,
+        required=not bool(default_src_host),
+        help="Source IMAP Host (or SRC_IMAP_HOST)",
+    )
+    parser.add_argument(
+        "--src-user",
+        default=default_src_user,
+        required=not bool(default_src_user),
+        help="Source Username (or SRC_IMAP_USERNAME)",
+    )
+    src_auth_required = not bool(default_src_pass or default_src_client_id)
+    src_auth = parser.add_mutually_exclusive_group(required=src_auth_required)
+    src_auth.add_argument("--src-pass", default=default_src_pass, help="Source Password (or SRC_IMAP_PASSWORD)")
+    src_auth.add_argument(
+        "--src-client-id",
+        default=default_src_client_id,
+        help="Source OAuth2 Client ID (or SRC_OAUTH2_CLIENT_ID)",
+    )
+    parser.add_argument(
+        "--src-client-secret",
+        default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+        help="Source OAuth2 Client Secret (if required) (or SRC_OAUTH2_CLIENT_SECRET)",
+    )
 
     # Dest args
-    parser.add_argument("--dest-host", default=os.getenv("DEST_IMAP_HOST"), help="Destination IMAP Host")
-    parser.add_argument("--dest-user", default=os.getenv("DEST_IMAP_USERNAME"), help="Destination Username")
-    parser.add_argument("--dest-pass", default=os.getenv("DEST_IMAP_PASSWORD"), help="Destination Password")
-    parser.add_argument("--dest-client-id", default=os.getenv("DEST_OAUTH2_CLIENT_ID"), help="Destination OAuth2 Client ID")
-    parser.add_argument("--dest-client-secret", default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
-                        help="Destination OAuth2 Client Secret (if required)")
+    default_dest_host = os.getenv("DEST_IMAP_HOST")
+    default_dest_user = os.getenv("DEST_IMAP_USERNAME")
+    default_dest_pass = os.getenv("DEST_IMAP_PASSWORD")
+    default_dest_client_id = os.getenv("DEST_OAUTH2_CLIENT_ID")
+
+    parser.add_argument(
+        "--dest-host",
+        default=default_dest_host,
+        required=not bool(default_dest_host),
+        help="Destination IMAP Host (or DEST_IMAP_HOST)",
+    )
+    parser.add_argument(
+        "--dest-user",
+        default=default_dest_user,
+        required=not bool(default_dest_user),
+        help="Destination Username (or DEST_IMAP_USERNAME)",
+    )
+    dest_auth_required = not bool(default_dest_pass or default_dest_client_id)
+    dest_auth = parser.add_mutually_exclusive_group(required=dest_auth_required)
+    dest_auth.add_argument(
+        "--dest-pass",
+        default=default_dest_pass,
+        help="Destination Password (or DEST_IMAP_PASSWORD)",
+    )
+    dest_auth.add_argument(
+        "--dest-client-id",
+        default=default_dest_client_id,
+        help="Destination OAuth2 Client ID (or DEST_OAUTH2_CLIENT_ID)",
+    )
+    parser.add_argument(
+        "--dest-client-secret",
+        default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
+        help="Destination OAuth2 Client Secret (if required) (or DEST_OAUTH2_CLIENT_SECRET)",
+    )
 
     # Options
     # Check env var for boolean default (msg "true" -> True)
@@ -768,28 +828,8 @@ def main():
     MAX_WORKERS = args.workers
     BATCH_SIZE = args.batch
 
-    # Validation
-    # Validation
-    missing_vars = []
-    if not SRC_HOST:
-        missing_vars.append("SRC_IMAP_HOST")
-    if not SRC_USER:
-        missing_vars.append("SRC_IMAP_USERNAME")
     src_use_oauth2 = bool(args.src_client_id)
-    if not SRC_PASS and not src_use_oauth2:
-        missing_vars.append("SRC_IMAP_PASSWORD")
-    if not DEST_HOST:
-        missing_vars.append("DEST_IMAP_HOST")
-    if not DEST_USER:
-        missing_vars.append("DEST_IMAP_USERNAME")
     dest_use_oauth2 = bool(args.dest_client_id)
-    if not DEST_PASS and not dest_use_oauth2:
-        missing_vars.append("DEST_IMAP_PASSWORD")
-
-    if missing_vars:
-        print(f"Error: Missing configuration variables: {', '.join(missing_vars)}")
-        print("Please provide them via environment variables or command-line arguments.")
-        sys.exit(1)
 
     # Acquire OAuth2 tokens if configured
     src_oauth2_token = None
@@ -827,10 +867,14 @@ def main():
     print("\n--- Configuration Summary ---")
     print(f"Source Host     : {SRC_HOST}")
     print(f"Source User     : {SRC_USER}")
-    print(f"Source Auth     : {'OAuth2/' + src_oauth2_provider + ' (XOAUTH2)' if src_use_oauth2 else 'Basic (password)'}")
+    print(
+        f"Source Auth     : {'OAuth2/' + src_oauth2_provider + ' (XOAUTH2)' if src_use_oauth2 else 'Basic (password)'}"
+    )
     print(f"Destination Host: {DEST_HOST}")
     print(f"Destination User: {DEST_USER}")
-    print(f"Dest Auth       : {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}")
+    print(
+        f"Destination Auth: {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}"
+    )
     print(f"Delete fm Source: {DELETE_SOURCE}")
     print(f"Dest Delete     : {DEST_DELETE}")
     print(f"Preserve Flags  : {preserve_flags}")
@@ -850,7 +894,9 @@ def main():
             "client_id": args.src_client_id,
             "email": SRC_USER,
             "client_secret": args.src_client_secret,
-        } if src_use_oauth2 else None,
+        }
+        if src_use_oauth2
+        else None,
     }
     dest_conf = {
         "host": DEST_HOST,
@@ -862,7 +908,9 @@ def main():
             "client_id": args.dest_client_id,
             "email": DEST_USER,
             "client_secret": args.dest_client_secret,
-        } if dest_use_oauth2 else None,
+        }
+        if dest_use_oauth2
+        else None,
     }
 
     try:

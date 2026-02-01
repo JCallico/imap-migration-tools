@@ -220,25 +220,14 @@ class TestMainFunction:
         assert "INBOX" in captured.out
 
     def test_missing_credentials(self, monkeypatch, capsys):
-        """Test that missing credentials cause exit."""
-        env = {}
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["count_imap_emails.py"])
+        """Test that missing auth is rejected by argparse (neither password nor OAuth2 client-id)."""
+        monkeypatch.setattr(os, "environ", {})
+        monkeypatch.setattr(sys, "argv", ["count_imap_emails.py", "--host", "localhost", "--user", "user"])
 
-        # Since the script uses if __name__ == "__main__", we need to test differently
-        # Test the validation path directly
-        with pytest.raises(SystemExit):
-            # Simulate running main
-            import argparse
+        with pytest.raises(SystemExit) as exc_info:
+            count_imap_emails.main()
 
-            parser = argparse.ArgumentParser()
-            parser.add_argument("--host", default=None)
-            parser.add_argument("--user", default=None)
-            parser.add_argument("--pass", dest="password", default=None)
-            args = parser.parse_args([])
-
-            if not all([args.host, args.user, args.password]):
-                sys.exit(1)
+        assert exc_info.value.code == 2
 
 
 class TestSrcImapFallback:

@@ -83,9 +83,7 @@ def get_imap_connection_from_conf(conf):
             "oauth2": dict or None  # Contains provider, client_id, email, client_secret
         }
     """
-    return get_imap_connection(
-        conf["host"], conf["user"], conf.get("password"), conf.get("oauth2_token")
-    )
+    return get_imap_connection(conf["host"], conf["user"], conf.get("password"), conf.get("oauth2_token"))
 
 
 def get_imap_connection(host, user, password=None, oauth2_token=None):

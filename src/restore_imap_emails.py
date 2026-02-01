@@ -7,12 +7,18 @@ Reads .eml files from a local directory and uploads them to the destination serv
 Features:
 - Folder Restoration: Recreates the folder structure from the backup.
 - Gmail Labels Restoration: Uses labels_manifest.json to apply Gmail labels.
-- Incremental Restore: Skips emails that already exist (based on Message-ID and size).
+- Incremental Restore: Skips emails that already exist (based on Message-ID).
 - Parallel Processing: Uses multithreading for fast uploads.
 - Date Preservation: Restores emails with their original dates.
 
 Configuration (Environment Variables):
-  DEST_IMAP_HOST, DEST_IMAP_USERNAME, DEST_IMAP_PASSWORD: Destination credentials.
+    DEST_IMAP_HOST, DEST_IMAP_USERNAME: Destination credentials.
+    DEST_IMAP_PASSWORD: Destination password (or App Password).
+
+    OAuth2 (Optional - instead of password):
+    DEST_OAUTH2_CLIENT_ID: OAuth2 Client ID
+    DEST_OAUTH2_CLIENT_SECRET: OAuth2 Client Secret (required for Google)
+
   BACKUP_LOCAL_PATH: Source local directory containing the backup.
   MAX_WORKERS: Number of concurrent threads (default: 4).
   BATCH_SIZE: Number of emails to process per batch (default: 10).
@@ -695,33 +701,48 @@ def main():
 
     # Source (Local Path)
     env_path = os.getenv("BACKUP_LOCAL_PATH")
-    parser.add_argument("--src-path", default=env_path, help="Local source path containing backup")
+    parser.add_argument(
+        "--src-path",
+        default=env_path,
+        required=not bool(env_path),
+        help="Local source path containing backup (or BACKUP_LOCAL_PATH)",
+    )
 
     # Destination
+    default_dest_host = os.getenv("DEST_IMAP_HOST")
+    default_dest_user = os.getenv("DEST_IMAP_USERNAME")
+    default_dest_pass = os.getenv("DEST_IMAP_PASSWORD")
+    default_dest_client_id = os.getenv("DEST_OAUTH2_CLIENT_ID")
+
     parser.add_argument(
         "--dest-host",
-        default=os.getenv("DEST_IMAP_HOST"),
-        help="Destination IMAP Server",
+        default=default_dest_host,
+        required=not bool(default_dest_host),
+        help="Destination IMAP Server (or DEST_IMAP_HOST)",
     )
     parser.add_argument(
         "--dest-user",
-        default=os.getenv("DEST_IMAP_USERNAME"),
-        help="Destination Username",
+        default=default_dest_user,
+        required=not bool(default_dest_user),
+        help="Destination Username (or DEST_IMAP_USERNAME)",
     )
-    parser.add_argument(
+
+    dest_auth_required = not bool(default_dest_pass or default_dest_client_id)
+    dest_auth = parser.add_mutually_exclusive_group(required=dest_auth_required)
+    dest_auth.add_argument(
         "--dest-pass",
-        default=os.getenv("DEST_IMAP_PASSWORD"),
-        help="Destination Password",
+        default=default_dest_pass,
+        help="Destination Password (or DEST_IMAP_PASSWORD)",
     )
-    parser.add_argument(
+    dest_auth.add_argument(
         "--dest-client-id",
-        default=os.getenv("DEST_OAUTH2_CLIENT_ID"),
-        help="Destination OAuth2 Client ID",
+        default=default_dest_client_id,
+        help="Destination OAuth2 Client ID (or DEST_OAUTH2_CLIENT_ID)",
     )
     parser.add_argument(
         "--dest-client-secret",
         default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
-        help="Destination OAuth2 Client Secret (if required)",
+        help="Destination OAuth2 Client Secret (if required) (or DEST_OAUTH2_CLIENT_SECRET)",
     )
 
     # Config
@@ -775,24 +796,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Validate
     dest_use_oauth2 = bool(args.dest_client_id)
-    missing = []
-    if not args.dest_host:
-        missing.append("DEST_IMAP_HOST")
-    if not args.dest_user:
-        missing.append("DEST_IMAP_USERNAME")
-    if not args.dest_pass and not dest_use_oauth2:
-        missing.append("DEST_IMAP_PASSWORD (or --dest-client-id for OAuth2)")
-
-    if missing:
-        print(f"Error: Missing credentials: {', '.join(missing)}")
-        sys.exit(1)
-
-    if not args.src_path:
-        print("Error: Source path is required.")
-        print("Please provide --src-path or set environment variable BACKUP_LOCAL_PATH.")
-        sys.exit(1)
 
     global MAX_WORKERS, BATCH_SIZE
     MAX_WORKERS = args.workers
@@ -826,7 +830,9 @@ def main():
             "client_id": args.dest_client_id,
             "email": args.dest_user,
             "client_secret": args.dest_client_secret,
-        } if dest_use_oauth2 else None,
+        }
+        if dest_use_oauth2
+        else None,
     }
 
     # Expand path
@@ -855,7 +861,9 @@ def main():
     print(f"Source Path     : {local_path}")
     print(f"Destination Host: {args.dest_host}")
     print(f"Destination User: {args.dest_user}")
-    print(f"Destination Auth: {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}")
+    print(
+        f"Destination Auth: {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}"
+    )
     print(f"Workers         : {args.workers}")
     if args.gmail_mode:
         print("Mode            : Gmail Restore with Labels + Flags")
