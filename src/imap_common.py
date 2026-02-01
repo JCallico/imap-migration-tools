@@ -334,7 +334,9 @@ def extract_message_id(header_data):
         msg = parser.parsebytes(header_data)
         mid = msg.get("Message-ID")
         if mid:
-            return mid.strip()
+            # Unfold any header continuation lines (CRLF/LF + whitespace)
+            # to make the return value stable across email.policy behaviors.
+            return re.sub(r"\r?\n[ \t]+", " ", str(mid)).strip()
     except Exception:
         pass
     return None
