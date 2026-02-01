@@ -594,20 +594,21 @@ class TestAppendEmail:
 
         assert result is False
 
-    def test_append_exception_returns_false(self):
-        """Test append returns False when exception occurs."""
+    def test_append_exception_propagates(self):
+        """Test append propagates exceptions so callers can handle/log."""
         mock_conn = Mock()
         mock_conn.append.side_effect = Exception("Connection error")
 
-        result = imap_common.append_email(
-            mock_conn,
-            "TestFolder",
-            b"email content",
-            "01-Jan-2024 12:00:00 +0000",
-            ensure_folder=False,
-        )
+        import pytest
 
-        assert result is False
+        with pytest.raises(Exception, match="Connection error"):
+            imap_common.append_email(
+                mock_conn,
+                "TestFolder",
+                b"email content",
+                "01-Jan-2024 12:00:00 +0000",
+                ensure_folder=False,
+            )
 
     def test_append_with_multiple_flags(self):
         """Test append with multiple flags."""
