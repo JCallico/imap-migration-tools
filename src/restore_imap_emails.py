@@ -90,18 +90,14 @@ def safe_print(message):
 
 def get_thread_connection(dest_conf):
     """Get or create a thread-local IMAP connection."""
-    if not hasattr(thread_local, "dest") or thread_local.dest is None:
-        thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
-    try:
-        if thread_local.dest:
-            thread_local.dest.noop()
-    except Exception:
-        thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
-        # If reconnection failed (possibly expired token), try refreshing
-        if thread_local.dest is None and dest_conf.get("oauth2"):
-            old_token = dest_conf["oauth2_token"]
-            imap_oauth2.refresh_oauth2_token(dest_conf, old_token)
-            thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
+    # Proactively refresh OAuth2 token if configured (handles expiry before connection fails)
+    if dest_conf.get("oauth2"):
+        imap_oauth2.refresh_oauth2_token(dest_conf, dest_conf.get("oauth2_token"))
+
+    # Ensure connection exists and is healthy
+    thread_local.dest = imap_common.ensure_connection_from_conf(
+        getattr(thread_local, "dest", None), dest_conf
+    )
     return thread_local.dest
 
 

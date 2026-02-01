@@ -83,18 +83,14 @@ def get_thread_connection(src_conf):
     if isinstance(src_conf, tuple) and len(src_conf) == 3:
         src_conf = {"host": src_conf[0], "user": src_conf[1], "password": src_conf[2]}
 
-    if not hasattr(thread_local, "src") or thread_local.src is None:
-        thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
-    try:
-        if thread_local.src:
-            thread_local.src.noop()
-    except Exception:
-        thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
-        # If reconnection failed (possibly expired token), try refreshing
-        if thread_local.src is None and src_conf.get("oauth2"):
-            old_token = src_conf["oauth2_token"]
-            imap_oauth2.refresh_oauth2_token(src_conf, old_token)
-            thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
+    # Proactively refresh OAuth2 token if configured (handles expiry before connection fails)
+    if src_conf.get("oauth2"):
+        imap_oauth2.refresh_oauth2_token(src_conf, src_conf.get("oauth2_token"))
+
+    # Ensure connection exists and is healthy
+    thread_local.src = imap_common.ensure_connection_from_conf(
+        getattr(thread_local, "src", None), src_conf
+    )
     return thread_local.src
 
 
@@ -862,12 +858,15 @@ def main():
         else:
             folders = imap_common.list_selectable_folders(src)
             for name in folders:
-                try:
-                    src.noop()
-                except Exception:
-                    if src_conf.get("oauth2"):
-                        safe_print("Refreshing OAuth2 token...")
-                        imap_oauth2.refresh_oauth2_token(src_conf, src_conf["oauth2_token"])
+                # Proactively refresh OAuth2 token if configured (handles expiry before connection fails)
+                if src_conf.get("oauth2"):
+                    imap_oauth2.refresh_oauth2_token(src_conf, src_conf.get("oauth2_token"))
+
+                # Ensure connection is alive (reconnect on broken pipe, timeout, etc.)
+                src = imap_common.ensure_connection_from_conf(src, src_conf)
+                if not src:
+                    print("Fatal: Could not reconnect to IMAP server. Aborting.")
+                    sys.exit(1)
 
                 backup_folder(src, name, local_path, src_conf, args.dest_delete)
 

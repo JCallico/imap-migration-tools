@@ -289,33 +289,19 @@ def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msg
 
 
 def get_thread_connections(src_conf, dest_conf):
-    # Initialize connections for this thread if they don't exist or are closed
-    if not hasattr(thread_local, "src") or thread_local.src is None:
-        thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
-    if not hasattr(thread_local, "dest") or thread_local.dest is None:
-        thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
+    # Proactively refresh OAuth2 tokens if configured (handles expiry before connection fails)
+    if src_conf.get("oauth2"):
+        imap_oauth2.refresh_oauth2_token(src_conf, src_conf.get("oauth2_token"))
+    if dest_conf.get("oauth2"):
+        imap_oauth2.refresh_oauth2_token(dest_conf, dest_conf.get("oauth2_token"))
 
-    # Simple check if alive (noop), reconnect if dead
-    try:
-        if thread_local.src:
-            thread_local.src.noop()
-    except Exception:
-        thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
-        # If reconnection failed (possibly expired token), try refreshing
-        if thread_local.src is None and src_conf.get("oauth2"):
-            old_token = src_conf["oauth2_token"]
-            imap_oauth2.refresh_oauth2_token(src_conf, old_token)
-            thread_local.src = imap_common.get_imap_connection_from_conf(src_conf)
-
-    try:
-        if thread_local.dest:
-            thread_local.dest.noop()
-    except Exception:
-        thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
-        if thread_local.dest is None and dest_conf.get("oauth2"):
-            old_token = dest_conf["oauth2_token"]
-            imap_oauth2.refresh_oauth2_token(dest_conf, old_token)
-            thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
+    # Ensure connections exist and are healthy
+    thread_local.src = imap_common.ensure_connection_from_conf(
+        getattr(thread_local, "src", None), src_conf
+    )
+    thread_local.dest = imap_common.ensure_connection_from_conf(
+        getattr(thread_local, "dest", None), dest_conf
+    )
 
     return thread_local.src, thread_local.dest
 
@@ -980,20 +966,21 @@ def main():
                         safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
                         continue
 
-                    # Ensure main connections are alive (reconnect on broken pipe, token expiry, etc.)
-                    try:
-                        src_main.noop()
-                    except Exception:
-                        if src_conf.get("oauth2"):
-                            safe_print("Refreshing source OAuth2 token...")
-                            imap_oauth2.refresh_oauth2_token(src_conf, src_conf["oauth2_token"])
+                    # Proactively refresh OAuth2 tokens if configured (handles expiry before connection fails)
+                    if src_conf.get("oauth2"):
+                        imap_oauth2.refresh_oauth2_token(src_conf, src_conf.get("oauth2_token"))
+                    if dest_conf.get("oauth2"):
+                        imap_oauth2.refresh_oauth2_token(dest_conf, dest_conf.get("oauth2_token"))
 
-                    try:
-                        dest_main.noop()
-                    except Exception:
-                        if dest_conf.get("oauth2"):
-                            safe_print("Refreshing destination OAuth2 token...")
-                            imap_oauth2.refresh_oauth2_token(dest_conf, dest_conf["oauth2_token"])
+                    # Ensure main connections are alive (reconnect on broken pipe, timeout, etc.)
+                    src_main = imap_common.ensure_connection_from_conf(src_main, src_conf)
+                    if not src_main:
+                        safe_print("Fatal: Could not reconnect to source IMAP server. Aborting.")
+                        sys.exit(1)
+                    dest_main = imap_common.ensure_connection_from_conf(dest_main, dest_conf)
+                    if not dest_main:
+                        safe_print("Fatal: Could not reconnect to destination IMAP server. Aborting.")
+                        sys.exit(1)
 
                     migrate_folder(
                         src_main,
