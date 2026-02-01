@@ -309,7 +309,6 @@ def upload_email(dest, folder_name, raw_content, date_str, message_id, subject, 
         return False
 
 
-
 def get_labels_from_manifest(manifest, message_id):
     """
     Get the list of labels for a message from the manifest.
