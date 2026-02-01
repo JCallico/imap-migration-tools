@@ -310,30 +310,6 @@ class TestMessageExistsInFolder:
         assert result is False
 
 
-class TestGetMsgDetails:
-    """Tests for get_msg_details function."""
-
-    def test_fetch_error(self):
-        """Test returns None tuple on fetch error."""
-        mock_conn = Mock()
-        mock_conn.uid.side_effect = Exception("Fetch error")
-
-        msg_id, size, subject = imap_common.get_msg_details(mock_conn, b"1")
-        assert msg_id is None
-        assert size is None
-        assert subject is None
-
-    def test_not_ok_response(self):
-        """Test returns None tuple on non-OK response."""
-        mock_conn = Mock()
-        mock_conn.uid.return_value = ("NO", None)
-
-        msg_id, size, subject = imap_common.get_msg_details(mock_conn, b"1")
-        assert msg_id is None
-        assert size is None
-        assert subject is None
-
-
 class TestExtractMessageId:
     """Tests for extract_message_id function."""
 

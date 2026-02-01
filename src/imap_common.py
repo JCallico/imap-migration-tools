@@ -248,45 +248,6 @@ def parse_message_id_and_subject_from_bytes(raw_message):
         return None, "(No Subject)"
 
 
-def get_msg_details(imap_conn, uid):
-    """
-    Fetches simplified message details (Message-ID, Size, Subject) for a given UID.
-    Returns (msg_id, size, subject) tuple.
-    """
-    try:
-        resp, data = imap_conn.uid("fetch", uid, "(RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT)])")
-    except Exception:
-        return None, None, None
-
-    if resp != "OK":
-        return None, None, None
-
-    msg_id = None
-    subject = "(No Subject)"
-    size = 0
-
-    for item in data:
-        if isinstance(item, tuple):
-            content = item[0].decode("utf-8", errors="ignore")
-
-            # Parse Size
-            size_match = re.search(r"RFC822\.SIZE\s+(\d+)", content)
-            if size_match:
-                size = int(size_match.group(1))
-
-            # Parse Headers
-            msg_bytes = item[1]
-            # Use compat32 to preserve raw headers with continuation lines
-            parser = BytesParser(policy=policy.compat32)
-            email_obj = parser.parsebytes(msg_bytes, headersonly=True)
-            msg_id = decode_message_id(email_obj.get("Message-ID"))
-            raw_subject = email_obj.get("Subject")
-            if raw_subject:
-                subject = decode_mime_header(raw_subject)
-
-    return msg_id, size, subject
-
-
 def message_exists_in_folder(dest_conn, msg_id):
     """
     Checks if a message with the given Message-ID exists in the CURRENTLY SELECTED folder of dest_conn.
