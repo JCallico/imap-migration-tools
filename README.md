@@ -210,8 +210,8 @@ python3 count_imap_emails.py
 python3 count_imap_emails.py \
    --host "imap.gmail.com" \
    --user "me@gmail.com" \
-   --client-id "id" \
-   --client-secret "secret"
+   --oauth2-client-id "id" \
+   --oauth2-client-secret "secret"
 
 # Or via environment variables (single-account script)
 export IMAP_HOST="imap.gmail.com"
@@ -607,7 +607,7 @@ All scripts support OAuth2 as an alternative to password-based authentication. T
 | `outlook`, `office365`, `microsoft` | Microsoft |
 | `gmail`, `google` | Google |
 
-To use OAuth2, pass `--client-id` (or `--src-client-id`/`--dest-client-id` for dual-account scripts) instead of the password argument.
+To use OAuth2, pass `--oauth2-client-id` (or `--src-oauth2-client-id`/`--dest-oauth2-client-id` for dual-account scripts) instead of the password argument.
 
 Environment variable equivalents:
 - Dual-account scripts: `SRC_OAUTH2_CLIENT_ID`, `SRC_OAUTH2_CLIENT_SECRET` and `DEST_OAUTH2_CLIENT_ID`, `DEST_OAUTH2_CLIENT_SECRET`.
@@ -625,7 +625,7 @@ Requires the `msal` package (`pip install msal`). Uses the **device code flow** 
    - **Supported account types**: Select based on your needs (single tenant or multi-tenant)
    - **Redirect URI**: Leave blank (not needed for device code flow)
 3. Click **Register**
-4. Copy the **Application (client) ID** — this is your `--client-id`
+4. Copy the **Application (client) ID** — this is your `--oauth2-client-id`
 
 #### Adding API Permissions
 
@@ -653,7 +653,7 @@ pip install msal
 python3 migrate_imap_emails.py \
   --src-host "outlook.office365.com" \
   --src-user "user@contoso.com" \
-  --src-client-id "your-azure-app-client-id" \
+  --src-oauth2-client-id "your-azure-app-client-id" \
   --dest-host "imap.other.com" \
   --dest-user "user@other.com" \
   --dest-pass "password"
@@ -663,7 +663,7 @@ The script will print a device code and URL. Open the URL in a browser, enter th
 
 ### Google (Gmail)
 
-Requires the `google-auth-oauthlib` package (`pip install google-auth-oauthlib`). Uses the **installed app flow** — opens a browser window for consent. Both `--client-id` and `--client-secret` are required.
+Requires the `google-auth-oauthlib` package (`pip install google-auth-oauthlib`). Uses the **installed app flow** — opens a browser window for consent. Both `--oauth2-client-id` and `--oauth2-client-secret` are required.
 
 ```bash
 # Install dependency
@@ -673,8 +673,8 @@ pip install google-auth-oauthlib
 python3 backup_imap_emails.py \
   --src-host "imap.gmail.com" \
   --src-user "you@gmail.com" \
-  --src-client-id "your-google-client-id" \
-  --src-client-secret "your-google-client-secret" \
+  --src-oauth2-client-id "your-google-client-id" \
+  --src-oauth2-client-secret "your-google-client-secret" \
   --dest-path "./gmail_backup"
 ```
 

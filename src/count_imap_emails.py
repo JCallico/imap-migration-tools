@@ -221,15 +221,29 @@ def main(argv: list[str] | None = None) -> None:
         "--pass", dest="password", default=default_pass, help="Password (or IMAP_PASSWORD / SRC_IMAP_PASSWORD)"
     )
     auth_group.add_argument(
+        "--oauth2-client-id",
+        default=default_client_id,
+        dest="client_id",
+        help="OAuth2 Client ID (or OAUTH2_CLIENT_ID / SRC_OAUTH2_CLIENT_ID)",
+    )
+    auth_group.add_argument(
         "--client-id",
         default=default_client_id,
-        help="OAuth2 Client ID (or OAUTH2_CLIENT_ID / SRC_OAUTH2_CLIENT_ID)",
+        dest="client_id",
+        help=argparse.SUPPRESS,
     )
 
     parser.add_argument(
+        "--oauth2-client-secret",
+        default=os.getenv("OAUTH2_CLIENT_SECRET") or os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+        dest="client_secret",
+        help="OAuth2 Client Secret (if required) (or OAUTH2_CLIENT_SECRET / SRC_OAUTH2_CLIENT_SECRET)",
+    )
+    parser.add_argument(
         "--client-secret",
         default=os.getenv("OAUTH2_CLIENT_SECRET") or os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
-        help="OAuth2 Client Secret (if required) (or OAUTH2_CLIENT_SECRET / SRC_OAUTH2_CLIENT_SECRET)",
+        dest="client_secret",
+        help=argparse.SUPPRESS,
     )
 
     args = parser.parse_args(argv)

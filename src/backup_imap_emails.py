@@ -692,16 +692,17 @@ def main():
     auth_required = not bool(default_src_pass or default_src_client_id)
     auth_group = parser.add_mutually_exclusive_group(required=auth_required)
     auth_group.add_argument("--src-pass", default=default_src_pass, help="Source Password (or SRC_IMAP_PASSWORD)")
+    # OAuth2
     auth_group.add_argument(
-        "--src-client-id",
+        "--src-oauth2-client-id",
         default=default_src_client_id,
+        dest="src_client_id",
         help="OAuth2 Client ID (or SRC_OAUTH2_CLIENT_ID)",
     )
-
-    # OAuth2
     parser.add_argument(
-        "--src-client-secret",
+        "--src-oauth2-client-secret",
         default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+        dest="src_client_secret",
         help="OAuth2 Client Secret (if required) (or SRC_OAUTH2_CLIENT_SECRET)",
     )
 
