@@ -557,7 +557,12 @@ def process_restore_batch(
                                     # Lazy-load per-folder progress cache if not yet loaded
                                     if label_folder_msg_ids is None:
                                         built: set[str] = set()
-                                        if progress_cache_data is not None and progress_cache_lock is not None and dest_host and dest_user:
+                                        if (
+                                            progress_cache_data is not None
+                                            and progress_cache_lock is not None
+                                            and dest_host
+                                            and dest_user
+                                        ):
                                             built = restore_cache.get_cached_message_ids(
                                                 progress_cache_data,
                                                 progress_cache_lock,
