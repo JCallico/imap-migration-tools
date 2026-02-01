@@ -8,6 +8,7 @@ import imaplib
 import os
 import re
 import sys
+from email import policy
 from email.header import decode_header
 from email.parser import BytesParser
 
@@ -181,6 +182,39 @@ def decode_mime_header(header_value):
         return str(header_value)
 
 
+def decode_message_id(msg_id):
+    """
+    Decodes a Message-ID header value by unfolding continuation lines.
+    Returns the stripped Message-ID string or None if empty.
+    """
+    if not msg_id:
+        return None
+    # Unfold any header continuation lines (CRLF/LF + whitespace)
+    return re.sub(r"\r?\n[ \t]+", " ", str(msg_id)).strip() or None
+
+
+def extract_message_id(header_data):
+    """
+    Extracts the Message-ID from header bytes or string using BytesParser.
+    Returns the stripped Message-ID string or None if not found.
+    """
+    if not header_data:
+        return None
+
+    try:
+        # Use compat32 to preserve raw header with continuation lines
+        # (policy.default's _MessageIDHeader parser truncates at newlines)
+        parser = BytesParser(policy=policy.compat32)
+        if isinstance(header_data, str):
+            header_data = header_data.encode("utf-8", errors="ignore")
+
+        msg = parser.parsebytes(header_data, headersonly=True)
+        return decode_message_id(msg.get("Message-ID"))
+    except Exception:
+        pass
+    return None
+
+
 def parse_message_id_and_subject_from_bytes(raw_message):
     """Parse Message-ID and decoded Subject from RFC822 bytes.
 
@@ -191,9 +225,10 @@ def parse_message_id_and_subject_from_bytes(raw_message):
         return None, "(No Subject)"
 
     try:
-        parser = BytesParser()
+        # Use compat32 to preserve raw headers with continuation lines
+        parser = BytesParser(policy=policy.compat32)
         email_obj = parser.parsebytes(raw_message, headersonly=True)
-        msg_id = email_obj.get("Message-ID")
+        msg_id = decode_message_id(email_obj.get("Message-ID"))
         raw_subject = email_obj.get("Subject")
         subject = decode_mime_header(raw_subject) if raw_subject else "(No Subject)"
         return msg_id, subject
@@ -229,9 +264,10 @@ def get_msg_details(imap_conn, uid):
 
             # Parse Headers
             msg_bytes = item[1]
-            parser = BytesParser()
-            email_obj = parser.parsebytes(msg_bytes)
-            msg_id = email_obj.get("Message-ID")
+            # Use compat32 to preserve raw headers with continuation lines
+            parser = BytesParser(policy=policy.compat32)
+            email_obj = parser.parsebytes(msg_bytes, headersonly=True)
+            msg_id = decode_message_id(email_obj.get("Message-ID"))
             raw_subject = email_obj.get("Subject")
             if raw_subject:
                 subject = decode_mime_header(raw_subject)
@@ -315,28 +351,4 @@ def detect_trash_folder(imap_conn):
         if candidate in all_folder_names:
             return candidate
 
-    return None
-
-
-def extract_message_id(header_data):
-    """
-    Extracts the Message-ID from header bytes or string using BytesParser.
-    Returns the stripped Message-ID string or None if not found.
-    """
-    if not header_data:
-        return None
-
-    try:
-        parser = BytesParser()
-        if isinstance(header_data, str):
-            header_data = header_data.encode("utf-8", errors="ignore")
-
-        msg = parser.parsebytes(header_data)
-        mid = msg.get("Message-ID")
-        if mid:
-            # Unfold any header continuation lines (CRLF/LF + whitespace)
-            # to make the return value stable across email.policy behaviors.
-            return re.sub(r"\r?\n[ \t]+", " ", str(mid)).strip()
-    except Exception:
-        pass
     return None

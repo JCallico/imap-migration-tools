@@ -216,7 +216,7 @@ def parse_eml_file(file_path):
             raw_content = f.read()
 
         parser = BytesParser(policy=policy.default)
-        msg = parser.parsebytes(raw_content)
+        msg = parser.parsebytes(raw_content, headersonly=True)
 
         message_id = msg.get("Message-ID", "").strip()
         subject = msg.get("Subject", "(No Subject)")
