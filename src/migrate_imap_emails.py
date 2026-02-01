@@ -344,13 +344,10 @@ def process_batch(
         safe_print(f"Error selecting folder {folder_name} in worker: {e}")
         return
 
-    def ensure_dest_folder(folder):
-        imap_common.ensure_folder_exists(dest, folder)
-
     # In non-Gmail-mode, we keep a selected destination folder for efficiency
     if not gmail_mode:
         try:
-            ensure_dest_folder(folder_name)
+            imap_common.ensure_folder_exists(dest, folder_name)
             dest.select(f'"{folder_name}"')
         except Exception as e:
             safe_print(f"Error selecting folder {folder_name} in worker: {e}")
@@ -420,7 +417,7 @@ def process_batch(
                 target_folder = folder_name
                 remaining_labels = []
 
-            ensure_dest_folder(target_folder)
+            imap_common.ensure_folder_exists(dest, target_folder)
             dest.select(f'"{target_folder}"')
 
             is_duplicate = bool(msg_id and check_duplicate and imap_common.message_exists_in_folder(dest, msg_id))
@@ -453,7 +450,7 @@ def process_batch(
                     if label_folder in (imap_common.GMAIL_ALL_MAIL, imap_common.GMAIL_SPAM, imap_common.GMAIL_TRASH):
                         continue
                     try:
-                        ensure_dest_folder(label_folder)
+                        imap_common.ensure_folder_exists(dest, label_folder)
                         dest.select(f'"{label_folder}"')
                         if not imap_common.message_exists_in_folder(dest, msg_id):
                             valid_flags = f"({flags})" if (preserve_flags and flags) else None
