@@ -67,7 +67,7 @@ def load_dest_index_cache(cache_path: str) -> dict:
         return {"version": RESTORE_CACHE_VERSION, "folders": {}, "_meta": {}}
 
 
-def save_dest_index_cache(cache_path: str, cache_data: dict) -> None:
+def save_dest_index_cache(cache_path: str, cache_data: dict) -> bool:
     try:
         tmp_path = f"{cache_path}.tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
