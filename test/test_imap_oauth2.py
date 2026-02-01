@@ -254,7 +254,7 @@ class TestAcquireOauth2TokenForProvider:
 
         assert result is None
         captured = capsys.readouterr()
-        assert "--client-secret" in captured.out
+        assert "--oauth2-client-secret" in captured.out
 
     def test_unknown_provider(self, capsys):
         """Test returns None for unknown provider."""

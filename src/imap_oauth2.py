@@ -187,7 +187,11 @@ def acquire_oauth2_token_for_provider(provider, client_id, email, client_secret=
         return acquire_microsoft_oauth2_token(client_id, email)
     elif provider == "google":
         if not client_secret:
-            print("Error: --client-secret is required for Google OAuth2.")
+            print(
+                "Error: OAuth2 client secret is required for Google OAuth2. "
+                "Provide --oauth2-client-secret (or --src-oauth2-client-secret / --dest-oauth2-client-secret), "
+                "or set OAUTH2_CLIENT_SECRET / SRC_OAUTH2_CLIENT_SECRET / DEST_OAUTH2_CLIENT_SECRET."
+            )
             return None
         return acquire_google_oauth2_token(client_id, client_secret)
     else:
