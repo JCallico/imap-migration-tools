@@ -287,8 +287,6 @@ class TestBackupErrorHandling:
         """Test handling of fetch body failure."""
         mock_conn = MagicMock()
         mock_conn.select.return_value = "OK"
-        # get_msg_details calls fetch headers, make it work
-        monkeypatch.setattr("imap_common.get_msg_details", lambda conn, uid: (uid, 100, "Subject"))
 
         # Fetch body fails
         mock_conn.uid.return_value = ("NO", [None])
@@ -307,7 +305,6 @@ class TestBackupErrorHandling:
         monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: mock_conn)
 
         # Mock fetched data
-        monkeypatch.setattr("imap_common.get_msg_details", lambda conn, uid: (uid, 100, "Subject"))
         mock_conn.uid.return_value = ("OK", [(b"1 (RFC822 {10}", b"Content")])
 
         # Mock open to fail
