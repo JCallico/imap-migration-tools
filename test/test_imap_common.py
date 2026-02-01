@@ -332,3 +332,106 @@ class TestGetMsgDetails:
         assert msg_id is None
         assert size is None
         assert subject is None
+
+
+class TestGetMessageIdsInFolder:
+    """Tests for get_message_ids_in_folder function."""
+
+    def test_empty_folder(self):
+        """Test returns empty set for folder with no messages."""
+        mock_conn = Mock()
+        mock_conn.uid.return_value = ("OK", [b""])
+
+        result = imap_common.get_message_ids_in_folder(mock_conn)
+        assert result == set()
+
+    def test_search_fails(self):
+        """Test returns empty set when search fails."""
+        mock_conn = Mock()
+        mock_conn.uid.return_value = ("NO", [])
+
+        result = imap_common.get_message_ids_in_folder(mock_conn)
+        assert result == set()
+
+    def test_search_exception(self):
+        """Test returns empty set when search raises exception."""
+        mock_conn = Mock()
+        mock_conn.uid.side_effect = Exception("Connection error")
+
+        result = imap_common.get_message_ids_in_folder(mock_conn)
+        assert result == set()
+
+    def test_single_message(self):
+        """Test fetching single message ID."""
+        mock_conn = Mock()
+        # First call: search returns one UID
+        # Second call: fetch returns the Message-ID header
+        mock_conn.uid.side_effect = [
+            ("OK", [b"1"]),
+            ("OK", [(b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {50}", b"Message-ID: <test@example.com>\r\n"), b")"]),
+        ]
+
+        result = imap_common.get_message_ids_in_folder(mock_conn)
+        assert result == {"<test@example.com>"}
+
+    def test_multiple_messages(self):
+        """Test fetching multiple message IDs."""
+        mock_conn = Mock()
+        mock_conn.uid.side_effect = [
+            ("OK", [b"1 2 3"]),
+            (
+                "OK",
+                [
+                    (b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {50}", b"Message-ID: <msg1@example.com>\r\n"),
+                    b")",
+                    (b"2 (BODY[HEADER.FIELDS (MESSAGE-ID)] {50}", b"Message-ID: <msg2@example.com>\r\n"),
+                    b")",
+                    (b"3 (BODY[HEADER.FIELDS (MESSAGE-ID)] {50}", b"Message-ID: <msg3@example.com>\r\n"),
+                    b")",
+                ],
+            ),
+        ]
+
+        result = imap_common.get_message_ids_in_folder(mock_conn)
+        assert result == {"<msg1@example.com>", "<msg2@example.com>", "<msg3@example.com>"}
+
+    def test_fetch_fails_for_batch(self):
+        """Test continues when fetch fails for a batch."""
+        mock_conn = Mock()
+        mock_conn.uid.side_effect = [
+            ("OK", [b"1"]),
+            ("NO", []),  # Fetch fails
+        ]
+
+        result = imap_common.get_message_ids_in_folder(mock_conn)
+        assert result == set()
+
+    def test_fetch_exception_for_batch(self):
+        """Test continues when fetch raises exception for a batch."""
+        mock_conn = Mock()
+        mock_conn.uid.side_effect = [
+            ("OK", [b"1"]),
+            Exception("Fetch error"),
+        ]
+
+        result = imap_common.get_message_ids_in_folder(mock_conn)
+        assert result == set()
+
+    def test_skips_empty_message_id(self):
+        """Test that empty message IDs are not added to set."""
+        mock_conn = Mock()
+        mock_conn.uid.side_effect = [
+            ("OK", [b"1 2"]),
+            (
+                "OK",
+                [
+                    (b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {50}", b"Message-ID: <valid@example.com>\r\n"),
+                    b")",
+                    (b"2 (BODY[HEADER.FIELDS (MESSAGE-ID)] {50}", b"Message-ID: \r\n"),  # Empty
+                    b")",
+                ],
+            ),
+        ]
+
+        result = imap_common.get_message_ids_in_folder(mock_conn)
+        assert result == {"<valid@example.com>"}
