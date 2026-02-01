@@ -523,7 +523,7 @@ def process_restore_batch(
                         # Select and check for duplicate
                         dest.select(f'"{label_folder}"')
                         if not email_exists_in_folder(dest, message_id):
-                            imap_common.append_email(
+                            append_success = imap_common.append_email(
                                 dest,
                                 label_folder,
                                 raw_content,
@@ -531,19 +531,22 @@ def process_restore_batch(
                                 flags,
                                 ensure_folder=False,
                             )
-                            restore_cache.record_progress(
-                                message_id=message_id,
-                                folder_name=label_folder,
-                                existing_dest_msg_ids=existing_dest_msg_ids,
-                                existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
-                                progress_cache_path=progress_cache_path,
-                                progress_cache_data=progress_cache_data,
-                                progress_cache_lock=progress_cache_lock,
-                                dest_host=dest_host,
-                                dest_user=dest_user,
-                                log_fn=safe_print,
-                            )
-                            safe_print(f"  -> Applied label: {label}")
+                            if append_success:
+                                restore_cache.record_progress(
+                                    message_id=message_id,
+                                    folder_name=label_folder,
+                                    existing_dest_msg_ids=existing_dest_msg_ids,
+                                    existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
+                                    progress_cache_path=progress_cache_path,
+                                    progress_cache_data=progress_cache_data,
+                                    progress_cache_lock=progress_cache_lock,
+                                    dest_host=dest_host,
+                                    dest_user=dest_user,
+                                    log_fn=safe_print,
+                                )
+                                safe_print(f"  -> Applied label: {label}")
+                            else:
+                                safe_print(f"  -> Failed to apply label {label} (will retry on next restore)")
                         # If email exists in this label folder, sync flags (full restore only)
                         elif full_restore and apply_flags and flags:
                             sync_flags_on_existing(dest, label_folder, message_id, flags, size)

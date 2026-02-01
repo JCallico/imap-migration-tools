@@ -814,3 +814,70 @@ class TestDestDeleteRestoreFunctionality:
         restore_imap_emails.main()
 
         assert len(server.folders["INBOX"]) == 0
+
+
+
+class TestAppendEmailReturnValueChecking:
+    """Tests that verify append_email return values are checked before recording progress."""
+
+    def test_record_progress_not_called_on_append_failure(self, tmp_path, monkeypatch):
+        """Test that record_progress is not called when append_email fails during label application."""
+        from unittest.mock import Mock, patch
+
+        # Create test email file
+        backup_root = tmp_path / "backup"
+        inbox = backup_root / "INBOX"
+        inbox.mkdir(parents=True)
+
+        eml_content = b"""From: sender@test.com
+To: recipient@test.com
+Subject: Test Email
+Message-ID: <test123@test.com>
+Date: Mon, 15 Jan 2024 10:30:00 +0000
+
+Body content.
+"""
+        (inbox / "1_Test_Email.eml").write_bytes(eml_content)
+
+        # Create labels manifest with multiple labels
+        manifest = {
+            "<test123@test.com>": {"labels": ["INBOX", "Work"], "flags": []}
+        }
+        manifest_path = backup_root / "labels_manifest.json"
+        manifest_path.write_text(json.dumps(manifest))
+
+        # Mock IMAP connection that fails on the second append (for label)
+        mock_conn = Mock()
+        mock_conn.select.return_value = ("OK", [b"0"])
+        mock_conn.search.return_value = ("OK", [b""])  # No duplicates
+
+        # First append succeeds (INBOX), second append fails (Work label)
+        mock_conn.append.side_effect = [
+            ("OK", []),  # INBOX upload succeeds
+            ("NO", []),  # Work label append fails
+        ]
+
+        # Track calls to record_progress
+        with patch("restore_cache.record_progress") as mock_record_progress:
+            # Set up environment
+            monkeypatch.setenv("DEST_IMAP_HOST", "localhost")
+            monkeypatch.setenv("DEST_IMAP_USERNAME", "user")
+            monkeypatch.setenv("DEST_IMAP_PASSWORD", "pass")
+            monkeypatch.setenv("MAX_WORKERS", "1")
+
+            # Mock the connection
+            def mock_get_connection(*args, **kwargs):
+                return mock_conn
+
+            monkeypatch.setattr("imap_common.get_imap_connection", mock_get_connection)
+            monkeypatch.setattr(sys, "argv", ["restore_imap_emails.py", "--src-path", str(backup_root), "INBOX"])
+
+            # Run restore
+            restore_imap_emails.main()
+
+            # Verify record_progress was called only once (for successful INBOX upload)
+            # and NOT called for the failed Work label append
+            assert mock_record_progress.call_count == 1
+            # Verify it was called for INBOX only
+            call_args = mock_record_progress.call_args
+            assert call_args[1]["folder_name"] == "INBOX"
