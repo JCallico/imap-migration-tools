@@ -19,7 +19,7 @@ This repository contains a set of Python scripts designed to migrate emails betw
 1. **`migrate_imap_emails.py`** (The Solution)
    - Migrates emails folder-by-folder.
    - **Multi-threaded**: Uses a thread pool to copy messages in parallel for high speed.
-   - **Smart De-duplication**: Checks if a message already exists in the destination (matching Message-ID and Size) and skips it if found.
+  - **Smart De-duplication**: Checks if a message already exists in the destination (matching Message-ID) and skips it if found.
   - **Robust**: Preserves original dates and can preserve IMAP flags with `--preserve-flags`.
   - **Gmail Mode**: For Gmail -> Gmail migrations, use `--gmail-mode` to migrate `[Gmail]/All Mail` (no duplicates) and apply Gmail labels by copying messages into label folders.
    - **Cleanup**: Optionally deletes messages from the source after successful transfer (effectively a "Move" operation).
@@ -49,7 +49,7 @@ This repository contains a set of Python scripts designed to migrate emails betw
    - Uploads emails from a local backup to an IMAP server.
    - **Format**: Reads `.eml` files and uploads them preserving original dates.
    - **Structure**: Recreates the folder hierarchy on the destination server.
-   - **Incremental**: Skips emails that already exist (based on Message-ID and size), but still syncs labels and flags.
+  - **Incremental**: Skips emails that already exist (based on Message-ID), but still syncs labels and flags.
    - **Sync Mode**: Optionally deletes emails from destination that no longer exist in local backup (`--dest-delete`).
    - **Gmail Labels Restoration**: Applies labels from `labels_manifest.json` to recreate the original Gmail label structure.
 
@@ -120,8 +120,8 @@ You can configure the scripts using **Environment Variables** (recommended for s
    # Options (Optional)
    export DELETE_FROM_SOURCE="false"  # Set to "true" to delete from source after copy
    export DEST_DELETE="false"         # Set to "true" to delete orphans from destination (sync mode)
-  export PRESERVE_FLAGS="false"      # Set to "true" to preserve IMAP flags (read/starred/etc)
-  export GMAIL_MODE="false"          # Set to "true" for Gmail mode (All Mail + label application)
+   export PRESERVE_FLAGS="false"      # Set to "true" to preserve IMAP flags (read/starred/etc)
+   export GMAIL_MODE="false"          # Set to "true" for Gmail mode (All Mail + label application)
    export MAX_WORKERS=4               # Number of parallel threads
    export BATCH_SIZE=10               # Emails per batch
    ```
@@ -191,10 +191,14 @@ python3 compare_imap_folders.py \
 
 **Counting:**
 ```bash
-python3 count_imap_emails.py --host "imap.gmail.com" --user "me@gmail.com" --pass "secret"
+python3 count_imap_emails.py \
+   --host "imap.gmail.com" \
+   --user "me@gmail.com" \
+   --pass "secret"
 
 # Count a local backup folder
-python3 count_imap_emails.py --path "./my_backup"
+python3 count_imap_emails.py \
+   --path "./my_backup"
 
 # Or via environment variable
 export BACKUP_LOCAL_PATH="./my_backup"
@@ -203,8 +207,18 @@ python3 count_imap_emails.py
 
 **Counting (OAuth2):**
 ```bash
-python3 count_imap_emails.py --host "imap.gmail.com" --user "me@gmail.com" \
-  --client-id "id" --client-secret "secret"
+python3 count_imap_emails.py \
+   --host "imap.gmail.com" \
+   --user "me@gmail.com" \
+   --client-id "id" \
+   --client-secret "secret"
+
+# Or via environment variables (single-account script)
+export IMAP_HOST="imap.gmail.com"
+export IMAP_USERNAME="me@gmail.com"
+export OAUTH2_CLIENT_ID="id"
+export OAUTH2_CLIENT_SECRET="secret"  # Required for Google
+python3 count_imap_emails.py
 ```
 
 **Backup:**
@@ -594,6 +608,10 @@ All scripts support OAuth2 as an alternative to password-based authentication. T
 | `gmail`, `google` | Google |
 
 To use OAuth2, pass `--client-id` (or `--src-client-id`/`--dest-client-id` for dual-account scripts) instead of the password argument.
+
+Environment variable equivalents:
+- Dual-account scripts: `SRC_OAUTH2_CLIENT_ID`, `SRC_OAUTH2_CLIENT_SECRET` and `DEST_OAUTH2_CLIENT_ID`, `DEST_OAUTH2_CLIENT_SECRET`.
+- Single-account scripts (like `count_imap_emails.py`): `OAUTH2_CLIENT_ID`, `OAUTH2_CLIENT_SECRET` (also accepts `SRC_OAUTH2_CLIENT_ID`, `SRC_OAUTH2_CLIENT_SECRET`).
 
 ### Microsoft (Outlook / Office 365)
 

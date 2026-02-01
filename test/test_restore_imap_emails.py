@@ -226,7 +226,7 @@ class TestConfigValidation:
         with pytest.raises(SystemExit) as exc_info:
             restore_imap_emails.main()
 
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == 2
 
     def test_missing_src_path(self, monkeypatch, capsys):
         """Test that missing source path causes exit."""
@@ -241,7 +241,7 @@ class TestConfigValidation:
         with pytest.raises(SystemExit) as exc_info:
             restore_imap_emails.main()
 
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == 2
 
     def test_nonexistent_src_path(self, monkeypatch, capsys):
         """Test that non-existent source path causes exit."""

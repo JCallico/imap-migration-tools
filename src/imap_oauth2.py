@@ -4,12 +4,17 @@ IMAP OAuth2 Authentication
 OAuth2 token acquisition and refresh for Microsoft and Google IMAP providers.
 Supports device code flow (Microsoft) and installed app flow (Google),
 with in-memory caching for silent token refresh.
+
+Notes:
+- Microsoft OAuth2 requires the `msal` package and uses device code flow.
+- Google OAuth2 requires the `google-auth-oauthlib` package and uses an installed-app flow
+    (opens a browser and listens on a local HTTP redirect).
+- Provider is auto-detected from the IMAP host string.
 """
 
 import re
 import sys
 import threading
-
 
 # Module-level caches for OAuth2 token refresh
 _msal_app_cache = {}  # (client_id, tenant_id) -> PublicClientApplication
@@ -68,15 +73,15 @@ def acquire_microsoft_oauth2_token(client_id, email):
     On subsequent calls, silently refreshes the token using the cached MSAL app
     (which holds the refresh token in its in-memory cache).
     """
+    tenant_id = discover_microsoft_tenant(email)
+    if not tenant_id:
+        return None
+
     try:
         import msal
     except ImportError:
         print("Error: 'msal' package is required for Microsoft OAuth2. Install it with: pip install msal")
         sys.exit(1)
-
-    tenant_id = discover_microsoft_tenant(email)
-    if not tenant_id:
-        return None
 
     authority = f"https://login.microsoftonline.com/{tenant_id}"
     scopes = ["https://outlook.office365.com/IMAP.AccessAsUser.All"]

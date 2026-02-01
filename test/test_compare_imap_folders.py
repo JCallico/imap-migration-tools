@@ -227,7 +227,9 @@ class TestCompareFoldersErrorHandling:
         mock_src.list.return_value = ("NO", [])
         mock_dest = MagicMock()
 
-        monkeypatch.setattr("imap_common.get_imap_connection", lambda h, u, p, oauth2_token=None: mock_src if u == "s" else mock_dest)
+        monkeypatch.setattr(
+            "imap_common.get_imap_connection", lambda h, u, p, oauth2_token=None: mock_src if u == "s" else mock_dest
+        )
 
         env = {
             "SRC_IMAP_HOST": "h",
@@ -294,7 +296,7 @@ class TestConfigValidation:
         with pytest.raises(SystemExit) as exc_info:
             compare_imap_folders.main()
 
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == 2
 
     def test_missing_dest_credentials(self, monkeypatch, capsys):
         """Test that missing destination credentials cause exit."""
@@ -309,7 +311,7 @@ class TestConfigValidation:
         with pytest.raises(SystemExit) as exc_info:
             compare_imap_folders.main()
 
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == 2
 
 
 class TestTotals:

@@ -9,6 +9,12 @@ Configuration (Environment Variables):
     IMAP_USERNAME    : Username/Email
     IMAP_PASSWORD    : Password (or App Password)
 
+    OAuth2 (Optional - instead of password):
+    OAUTH2_CLIENT_ID        : OAuth2 Client ID
+    OAUTH2_CLIENT_SECRET    : OAuth2 Client Secret (required for Google)
+    SRC_OAUTH2_CLIENT_ID    : Alternate OAuth2 client ID env var
+    SRC_OAUTH2_CLIENT_SECRET: Alternate OAuth2 client secret env var
+
 Local backup counting:
     BACKUP_LOCAL_PATH : Local backup root (preferred)
     SRC_LOCAL_PATH    : Alternate local backup root
@@ -18,6 +24,13 @@ Examples:
     export IMAP_HOST="imap.gmail.com"
     export IMAP_USERNAME="user@gmail.com"
     export IMAP_PASSWORD="secretpassword"
+    python3 count_imap_emails.py
+
+    # Count an IMAP account using OAuth2
+    export IMAP_HOST="imap.gmail.com"
+    export IMAP_USERNAME="user@gmail.com"
+    export OAUTH2_CLIENT_ID="your-client-id"
+    export OAUTH2_CLIENT_SECRET="your-client-secret"  # Required for Google
     python3 count_imap_emails.py
 
     # Count a local backup
@@ -166,10 +179,17 @@ def count_local_emails(local_path: str) -> None:
     print(f"{'TOTAL':<40} {total_all_folders:>10}")
 
 
-if __name__ == "__main__":
+def main(argv: list[str] | None = None) -> None:
+    # Phase 1: determine whether we're in local mode (--path)
+    default_path = os.getenv("BACKUP_LOCAL_PATH") or os.getenv("SRC_LOCAL_PATH")
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--path", default=default_path)
+    pre_args, _ = pre_parser.parse_known_args(argv)
+    require_imap = not bool(pre_args.path)
+
+    # Phase 2: full parser with conditional requirements
     parser = argparse.ArgumentParser(description="Count emails in IMAP account.")
 
-    default_path = os.getenv("BACKUP_LOCAL_PATH") or os.getenv("SRC_LOCAL_PATH")
     parser.add_argument(
         "--path",
         default=default_path,
@@ -180,17 +200,39 @@ if __name__ == "__main__":
     default_host = os.getenv("IMAP_HOST") or os.getenv("SRC_IMAP_HOST")
     default_user = os.getenv("IMAP_USERNAME") or os.getenv("SRC_IMAP_USERNAME")
     default_pass = os.getenv("IMAP_PASSWORD") or os.getenv("SRC_IMAP_PASSWORD")
+    default_client_id = os.getenv("OAUTH2_CLIENT_ID") or os.getenv("SRC_OAUTH2_CLIENT_ID")
 
-    parser.add_argument("--host", default=default_host, help="IMAP Server")
-    parser.add_argument("--user", default=default_user, help="Username")
-    parser.add_argument("--pass", dest="password", default=default_pass, help="Password")
+    parser.add_argument(
+        "--host",
+        default=default_host,
+        required=require_imap and not bool(default_host),
+        help="IMAP Server (or IMAP_HOST / SRC_IMAP_HOST)",
+    )
+    parser.add_argument(
+        "--user",
+        default=default_user,
+        required=require_imap and not bool(default_user),
+        help="Username (or IMAP_USERNAME / SRC_IMAP_USERNAME)",
+    )
 
-    # OAuth2
-    parser.add_argument("--client-id", default=os.getenv("OAUTH2_CLIENT_ID") or os.getenv("SRC_OAUTH2_CLIENT_ID"), help="OAuth2 Client ID")
-    parser.add_argument("--client-secret", default=os.getenv("OAUTH2_CLIENT_SECRET") or os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
-                        help="OAuth2 Client Secret (if required)")
+    auth_required = require_imap and not bool(default_pass or default_client_id)
+    auth_group = parser.add_mutually_exclusive_group(required=auth_required)
+    auth_group.add_argument(
+        "--pass", dest="password", default=default_pass, help="Password (or IMAP_PASSWORD / SRC_IMAP_PASSWORD)"
+    )
+    auth_group.add_argument(
+        "--client-id",
+        default=default_client_id,
+        help="OAuth2 Client ID (or OAUTH2_CLIENT_ID / SRC_OAUTH2_CLIENT_ID)",
+    )
 
-    args = parser.parse_args()
+    parser.add_argument(
+        "--client-secret",
+        default=os.getenv("OAUTH2_CLIENT_SECRET") or os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+        help="OAuth2 Client Secret (if required) (or OAUTH2_CLIENT_SECRET / SRC_OAUTH2_CLIENT_SECRET)",
+    )
+
+    args = parser.parse_args(argv)
 
     if args.path:
         if not os.path.isdir(args.path):
@@ -208,9 +250,6 @@ if __name__ == "__main__":
     PASSWORD = args.password
 
     use_oauth2 = bool(args.client_id)
-    if not IMAP_SERVER or not USERNAME or (not PASSWORD and not use_oauth2):
-        print("Error: Missing credentials.")
-        sys.exit(1)
 
     # Acquire OAuth2 token if configured
     oauth2_token = None
@@ -236,3 +275,7 @@ if __name__ == "__main__":
     print("-----------------------------\n")
 
     count_emails(IMAP_SERVER, USERNAME, PASSWORD, oauth2_token)
+
+
+if __name__ == "__main__":
+    main()
