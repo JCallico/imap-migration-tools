@@ -105,10 +105,21 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                             continue
                         msgs = self.current_folders[self.selected_folder]
 
+                        # Support UID range searches like: UID SEARCH UID 101:*
+                        uid_min = None
+                        try:
+                            m = re.search(r"UID\s+(\d+)", sub_args, re.IGNORECASE)
+                            if m:
+                                uid_min = int(m.group(1))
+                        except Exception:
+                            uid_min = None
+
                         # Handle UNDELETED
                         # If args has UNDELETED, filter flags
                         valid_uids = []
                         for m in msgs:
+                            if uid_min is not None and m["uid"] < uid_min:
+                                continue
                             if "UNDELETED" in sub_args and "\\Deleted" in m["flags"]:
                                 continue
                             valid_uids.append(str(m["uid"]))

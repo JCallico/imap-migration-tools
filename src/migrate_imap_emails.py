@@ -344,17 +344,10 @@ def process_batch(
         safe_print(f"Error selecting folder {folder_name} in worker: {e}")
         return
 
-    def ensure_dest_folder(folder):
-        try:
-            if folder.upper() != imap_common.FOLDER_INBOX:
-                dest.create(f'"{folder}"')
-        except Exception:
-            pass
-
     # In non-Gmail-mode, we keep a selected destination folder for efficiency
     if not gmail_mode:
         try:
-            ensure_dest_folder(folder_name)
+            imap_common.ensure_folder_exists(dest, folder_name)
             dest.select(f'"{folder_name}"')
         except Exception as e:
             safe_print(f"Error selecting folder {folder_name} in worker: {e}")
@@ -424,7 +417,7 @@ def process_batch(
                 target_folder = folder_name
                 remaining_labels = []
 
-            ensure_dest_folder(target_folder)
+            imap_common.ensure_folder_exists(dest, target_folder)
             dest.select(f'"{target_folder}"')
 
             is_duplicate = bool(msg_id and check_duplicate and imap_common.message_exists_in_folder(dest, msg_id))
@@ -435,7 +428,14 @@ def process_batch(
                     sync_flags_on_existing(dest, target_folder, msg_id, flags, size)
             else:
                 valid_flags = f"({flags})" if (preserve_flags and flags) else None
-                dest.append(f'"{target_folder}"', valid_flags, date_str, msg_content)
+                imap_common.append_email(
+                    dest,
+                    target_folder,
+                    msg_content,
+                    date_str,
+                    valid_flags,
+                    ensure_folder=False,
+                )
                 safe_print(f"[{target_folder}] {'COPIED':<12} | {size_str:<8} | {subject[:40]}")
                 if preserve_flags and flags:
                     for flag in flags.split():
@@ -450,11 +450,18 @@ def process_batch(
                     if label_folder in (imap_common.GMAIL_ALL_MAIL, imap_common.GMAIL_SPAM, imap_common.GMAIL_TRASH):
                         continue
                     try:
-                        ensure_dest_folder(label_folder)
+                        imap_common.ensure_folder_exists(dest, label_folder)
                         dest.select(f'"{label_folder}"')
                         if not imap_common.message_exists_in_folder(dest, msg_id):
                             valid_flags = f"({flags})" if (preserve_flags and flags) else None
-                            dest.append(f'"{label_folder}"', valid_flags, date_str, msg_content)
+                            imap_common.append_email(
+                                dest,
+                                label_folder,
+                                msg_content,
+                                date_str,
+                                valid_flags,
+                                ensure_folder=False,
+                            )
                             safe_print(f"  -> Applied label: {label}")
                             if preserve_flags and flags:
                                 for flag in flags.split():

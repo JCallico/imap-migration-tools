@@ -350,6 +350,290 @@ class TestExtractMessageId:
         assert imap_common.extract_message_id(b"") is None
 
 
+class TestEnsureFolderExists:
+    """Tests for ensure_folder_exists function."""
+
+    def test_creates_folder_successfully(self):
+        """Test folder is created when it doesn't exist."""
+        mock_conn = Mock()
+        mock_conn.create.return_value = ("OK", [])
+
+        # Should not raise any exception
+        imap_common.ensure_folder_exists(mock_conn, "TestFolder")
+        mock_conn.create.assert_called_once_with('"TestFolder"')
+
+    def test_folder_already_exists(self):
+        """Test exception is suppressed when folder already exists."""
+        mock_conn = Mock()
+        mock_conn.create.side_effect = Exception("Folder already exists")
+
+        # Should not raise any exception
+        imap_common.ensure_folder_exists(mock_conn, "ExistingFolder")
+        mock_conn.create.assert_called_once_with('"ExistingFolder"')
+
+    def test_inbox_folder_skipped(self):
+        """Test INBOX folder is not created."""
+        mock_conn = Mock()
+
+        imap_common.ensure_folder_exists(mock_conn, "INBOX")
+        mock_conn.create.assert_not_called()
+
+        # Also test lowercase
+        imap_common.ensure_folder_exists(mock_conn, "inbox")
+        mock_conn.create.assert_not_called()
+
+    def test_empty_folder_name(self):
+        """Test empty folder name is skipped."""
+        mock_conn = Mock()
+
+        imap_common.ensure_folder_exists(mock_conn, "")
+        mock_conn.create.assert_not_called()
+
+    def test_none_folder_name(self):
+        """Test None folder name is skipped."""
+        mock_conn = Mock()
+
+        imap_common.ensure_folder_exists(mock_conn, None)
+        mock_conn.create.assert_not_called()
+
+    def test_server_restriction_error_suppressed(self):
+        """Test server restriction errors are suppressed."""
+        mock_conn = Mock()
+        mock_conn.create.side_effect = Exception("Permission denied")
+
+        # Should not raise any exception
+        imap_common.ensure_folder_exists(mock_conn, "RestrictedFolder")
+        mock_conn.create.assert_called_once()
+
+
+class TestAppendEmail:
+    """Tests for append_email function."""
+
+    def test_successful_append(self):
+        """Test successful email append returns True."""
+        mock_conn = Mock()
+        mock_conn.append.return_value = ("OK", [])
+
+        result = imap_common.append_email(
+            mock_conn,
+            "TestFolder",
+            b"email content",
+            "01-Jan-2024 12:00:00 +0000",
+            ensure_folder=False,
+        )
+
+        assert result is True
+        mock_conn.append.assert_called_once_with(
+            '"TestFolder"',
+            None,
+            "01-Jan-2024 12:00:00 +0000",
+            b"email content",
+        )
+
+    def test_append_with_flags_with_parentheses(self):
+        """Test flag normalization when flags already have parentheses."""
+        mock_conn = Mock()
+        mock_conn.append.return_value = ("OK", [])
+
+        result = imap_common.append_email(
+            mock_conn,
+            "TestFolder",
+            b"email content",
+            "01-Jan-2024 12:00:00 +0000",
+            flags="(\\Seen \\Flagged)",
+            ensure_folder=False,
+        )
+
+        assert result is True
+        # Flags should remain unchanged
+        mock_conn.append.assert_called_once_with(
+            '"TestFolder"',
+            "(\\Seen \\Flagged)",
+            "01-Jan-2024 12:00:00 +0000",
+            b"email content",
+        )
+
+    def test_append_with_flags_without_parentheses(self):
+        """Test flag normalization when flags lack parentheses."""
+        mock_conn = Mock()
+        mock_conn.append.return_value = ("OK", [])
+
+        result = imap_common.append_email(
+            mock_conn,
+            "TestFolder",
+            b"email content",
+            "01-Jan-2024 12:00:00 +0000",
+            flags="\\Seen",
+            ensure_folder=False,
+        )
+
+        assert result is True
+        # Flags should be wrapped in parentheses
+        mock_conn.append.assert_called_once_with(
+            '"TestFolder"',
+            "(\\Seen)",
+            "01-Jan-2024 12:00:00 +0000",
+            b"email content",
+        )
+
+    def test_append_with_none_flags(self):
+        """Test append with None flags."""
+        mock_conn = Mock()
+        mock_conn.append.return_value = ("OK", [])
+
+        result = imap_common.append_email(
+            mock_conn,
+            "TestFolder",
+            b"email content",
+            "01-Jan-2024 12:00:00 +0000",
+            flags=None,
+            ensure_folder=False,
+        )
+
+        assert result is True
+        mock_conn.append.assert_called_once_with(
+            '"TestFolder"',
+            None,
+            "01-Jan-2024 12:00:00 +0000",
+            b"email content",
+        )
+
+    def test_append_with_empty_flags(self):
+        """Test append with empty string flags."""
+        mock_conn = Mock()
+        mock_conn.append.return_value = ("OK", [])
+
+        result = imap_common.append_email(
+            mock_conn,
+            "TestFolder",
+            b"email content",
+            "01-Jan-2024 12:00:00 +0000",
+            flags="",
+            ensure_folder=False,
+        )
+
+        assert result is True
+        # Empty flags should result in None
+        mock_conn.append.assert_called_once_with(
+            '"TestFolder"',
+            None,
+            "01-Jan-2024 12:00:00 +0000",
+            b"email content",
+        )
+
+    def test_append_with_whitespace_only_flags(self):
+        """Test append with whitespace-only flags."""
+        mock_conn = Mock()
+        mock_conn.append.return_value = ("OK", [])
+
+        result = imap_common.append_email(
+            mock_conn,
+            "TestFolder",
+            b"email content",
+            "01-Jan-2024 12:00:00 +0000",
+            flags="   ",
+            ensure_folder=False,
+        )
+
+        assert result is True
+        # Whitespace-only flags should result in None
+        mock_conn.append.assert_called_once_with(
+            '"TestFolder"',
+            None,
+            "01-Jan-2024 12:00:00 +0000",
+            b"email content",
+        )
+
+    def test_append_with_ensure_folder_enabled(self):
+        """Test append with ensure_folder enabled."""
+        mock_conn = Mock()
+        mock_conn.create.return_value = ("OK", [])
+        mock_conn.append.return_value = ("OK", [])
+
+        result = imap_common.append_email(
+            mock_conn,
+            "TestFolder",
+            b"email content",
+            "01-Jan-2024 12:00:00 +0000",
+            ensure_folder=True,
+        )
+
+        assert result is True
+        mock_conn.create.assert_called_once_with('"TestFolder"')
+        mock_conn.append.assert_called_once()
+
+    def test_append_with_ensure_folder_disabled(self):
+        """Test append with ensure_folder disabled."""
+        mock_conn = Mock()
+        mock_conn.append.return_value = ("OK", [])
+
+        result = imap_common.append_email(
+            mock_conn,
+            "TestFolder",
+            b"email content",
+            "01-Jan-2024 12:00:00 +0000",
+            ensure_folder=False,
+        )
+
+        assert result is True
+        mock_conn.create.assert_not_called()
+        mock_conn.append.assert_called_once()
+
+    def test_append_failure_returns_false(self):
+        """Test append returns False on failure."""
+        mock_conn = Mock()
+        mock_conn.append.return_value = ("NO", [])
+
+        result = imap_common.append_email(
+            mock_conn,
+            "TestFolder",
+            b"email content",
+            "01-Jan-2024 12:00:00 +0000",
+            ensure_folder=False,
+        )
+
+        assert result is False
+
+    def test_append_exception_propagates(self):
+        """Test append propagates exceptions so callers can handle/log."""
+        mock_conn = Mock()
+        mock_conn.append.side_effect = Exception("Connection error")
+
+        import pytest
+
+        with pytest.raises(Exception, match="Connection error"):
+            imap_common.append_email(
+                mock_conn,
+                "TestFolder",
+                b"email content",
+                "01-Jan-2024 12:00:00 +0000",
+                ensure_folder=False,
+            )
+
+    def test_append_with_multiple_flags(self):
+        """Test append with multiple flags."""
+        mock_conn = Mock()
+        mock_conn.append.return_value = ("OK", [])
+
+        result = imap_common.append_email(
+            mock_conn,
+            "TestFolder",
+            b"email content",
+            "01-Jan-2024 12:00:00 +0000",
+            flags="\\Seen \\Flagged \\Answered",
+            ensure_folder=False,
+        )
+
+        assert result is True
+        # Multiple flags without parentheses should be wrapped
+        mock_conn.append.assert_called_once_with(
+            '"TestFolder"',
+            "(\\Seen \\Flagged \\Answered)",
+            "01-Jan-2024 12:00:00 +0000",
+            b"email content",
+        )
+
+
 class TestGetMessageIdsInFolder:
     """Tests for get_message_ids_in_folder function."""
 
