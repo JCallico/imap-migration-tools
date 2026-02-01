@@ -835,7 +835,6 @@ class TestDestDeleteRestoreFunctionality:
         assert len(server.folders["INBOX"]) == 0
 
 
-
 class TestAppendEmailReturnValueChecking:
     """Tests that verify append_email return values are checked before recording progress."""
 
@@ -859,9 +858,7 @@ Body content.
         (inbox / "1_Test_Email.eml").write_bytes(eml_content)
 
         # Create labels manifest with multiple labels
-        manifest = {
-            "<test123@test.com>": {"labels": ["INBOX", "Work"], "flags": []}
-        }
+        manifest = {"<test123@test.com>": {"labels": ["INBOX", "Work"], "flags": []}}
         manifest_path = backup_root / "labels_manifest.json"
         manifest_path.write_text(json.dumps(manifest))
 

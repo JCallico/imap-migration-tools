@@ -66,9 +66,11 @@ import restore_cache
 
 class UploadResult(Enum):
     """Result of an email upload operation."""
+
     SUCCESS = "success"
     ALREADY_EXISTS = "already_exists"
     FAILURE = "failure"
+
 
 # Defaults
 MAX_WORKERS = 4  # Lower default for restore to avoid rate limits
