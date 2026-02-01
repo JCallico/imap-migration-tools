@@ -233,51 +233,17 @@ def build_gmail_label_index(src_conn):
     total = len(label_folders)
     for i, folder in enumerate(label_folders, start=1):
         safe_print(f"[{i}/{total}] Scanning label folder for Message-IDs: {folder}")
-        msg_ids = get_message_ids_in_folder(src_conn, folder)
+        try:
+            src_conn.select(f'"{folder}"', readonly=True)
+            msg_ids = set(imap_common.get_message_ids_in_folder(src_conn).values())
+        except Exception as e:
+            safe_print(f"Error getting message IDs from {folder}: {e}")
+            msg_ids = set()
         label = folder_to_label(folder)
         for msg_id in msg_ids:
             label_index.setdefault(msg_id, set()).add(label)
 
     return label_index
-
-
-def get_message_ids_in_folder(imap_conn, folder_name):
-    """
-    Get a set of Message-IDs for all emails in a folder.
-    Used for destination deletion sync.
-    """
-    message_ids = set()
-    try:
-        imap_conn.select(f'"{folder_name}"', readonly=True)
-        resp, data = imap_conn.uid("search", None, "ALL")
-        if resp != "OK" or not data or not data[0]:
-            return message_ids
-
-        uids = data[0].split()
-        if not uids:
-            return message_ids
-
-        # Fetch Message-IDs in batches
-        batch_size = 200
-        for i in range(0, len(uids), batch_size):
-            batch = uids[i : i + batch_size]
-            uid_range = b",".join(batch)
-            try:
-                resp, items = imap_conn.uid("fetch", uid_range, "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
-                if resp != "OK":
-                    continue
-
-                for item in items:
-                    if isinstance(item, tuple) and len(item) >= 2:
-                        msg_id = imap_common.extract_message_id(item[1])
-                        if msg_id:
-                            message_ids.add(msg_id)
-            except Exception:
-                continue
-    except Exception as e:
-        safe_print(f"Error getting message IDs from {folder_name}: {e}")
-
-    return message_ids
 
 
 def delete_orphan_emails(imap_conn, folder_name, source_msg_ids):
