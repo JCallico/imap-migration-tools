@@ -126,7 +126,9 @@ def add_cached_message_id(
             ids = []
             entry["message_ids"] = ids
 
-        if msg_id in ids:
+        # Use a set for O(1) lookup instead of O(n) list search
+        ids_set = set(ids)
+        if msg_id in ids_set:
             return False
 
         ids.append(msg_id)
