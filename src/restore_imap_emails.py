@@ -532,8 +532,8 @@ def process_restore_batch(
                                 ensure_folder=False,
                             )
                             restore_cache.record_progress(
-                                label_folder,
-                                message_id,
+                                message_id=message_id,
+                                folder_name=label_folder,
                                 existing_dest_msg_ids=existing_dest_msg_ids,
                                 existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
                                 progress_cache_path=progress_cache_path,
@@ -541,6 +541,7 @@ def process_restore_batch(
                                 progress_cache_lock=progress_cache_lock,
                                 dest_host=dest_host,
                                 dest_user=dest_user,
+                                log_fn=safe_print,
                             )
                             safe_print(f"  -> Applied label: {label}")
                         # If email exists in this label folder, sync flags (full restore only)
