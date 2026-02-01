@@ -548,10 +548,31 @@ def process_restore_batch(
                                 ensure_folder=False,
                             )
                             if append_success:
+                                # Look up the correct set for label_folder
+                                label_folder_msg_ids: Optional[set[str]] = None
+                                if existing_dest_msg_ids_by_folder is not None:
+                                    with existing_dest_msg_ids_lock:
+                                        label_folder_msg_ids = existing_dest_msg_ids_by_folder.get(label_folder)
+
+                                    # Lazy-load per-folder progress cache if not yet loaded
+                                    if label_folder_msg_ids is None:
+                                        built: set[str] = set()
+                                        if progress_cache_data is not None and progress_cache_lock is not None and dest_host and dest_user:
+                                            built = restore_cache.get_cached_message_ids(
+                                                progress_cache_data,
+                                                progress_cache_lock,
+                                                dest_host,
+                                                dest_user,
+                                                label_folder,
+                                            )
+                                        with existing_dest_msg_ids_lock:
+                                            existing_dest_msg_ids_by_folder.setdefault(label_folder, built)
+                                            label_folder_msg_ids = existing_dest_msg_ids_by_folder[label_folder]
+
                                 restore_cache.record_progress(
                                     message_id=message_id,
                                     folder_name=label_folder,
-                                    existing_dest_msg_ids=existing_dest_msg_ids,
+                                    existing_dest_msg_ids=label_folder_msg_ids,
                                     existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
                                     progress_cache_path=progress_cache_path,
                                     progress_cache_data=progress_cache_data,
