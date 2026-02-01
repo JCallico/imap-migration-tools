@@ -307,6 +307,63 @@ def message_exists_in_folder(dest_conn, msg_id):
         return False
 
 
+def get_message_ids_in_folder(imap_conn):
+    """
+    Fetches all Message-IDs from the currently selected folder.
+    Returns a dict mapping UID (bytes) -> Message-ID (str).
+    UIDs without a Message-ID are not included in the result.
+    Use set(result.values()) to get just the Message-ID set.
+    """
+    try:
+        resp, data = imap_conn.uid("search", None, "ALL")
+        if resp != "OK" or not data[0].strip():
+            return {}
+    except Exception:
+        return {}
+
+    uids = data[0].split()
+    return get_uid_to_message_id_map(imap_conn, uids)
+
+
+def get_uid_to_message_id_map(imap_conn, uids):
+    """
+    Fetches Message-IDs for a list of UIDs from the currently selected folder.
+    Returns a dict mapping UID (bytes) -> Message-ID (str).
+    UIDs without a Message-ID are not included in the result.
+    """
+    uid_to_msgid = {}
+    if not uids:
+        return uid_to_msgid
+
+    FETCH_BATCH = 500
+    for i in range(0, len(uids), FETCH_BATCH):
+        batch = uids[i : i + FETCH_BATCH]
+        uid_range = b",".join(batch)
+        try:
+            resp, fetch_data = imap_conn.uid("fetch", uid_range, "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+            if resp != "OK":
+                continue
+            for item in fetch_data:
+                if isinstance(item, tuple) and len(item) >= 2:
+                    # Extract UID from response like b'1 (UID 12345 BODY[HEADER.FIELDS ...]'
+                    meta = item[0]
+                    if isinstance(meta, bytes):
+                        meta = meta.decode("utf-8", errors="ignore")
+                    uid_match = re.search(r"UID\s+(\d+)", meta)
+                    if not uid_match:
+                        continue
+                    uid = uid_match.group(1).encode()
+
+                    # Extract Message-ID
+                    mid = extract_message_id(item[1])
+                    if mid:
+                        uid_to_msgid[uid] = mid
+        except Exception:
+            continue
+
+    return uid_to_msgid
+
+
 def sanitize_filename(filename):
     """
     Sanitizes a string to be safe for use as a filename.

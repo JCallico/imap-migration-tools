@@ -389,6 +389,7 @@ def process_batch(
     preserve_flags=False,
     gmail_mode=False,
     label_index=None,
+    check_duplicate=True,
 ):
     src, dest = get_thread_connections(src_conf, dest_conf)
     if not src or not dest:
@@ -485,7 +486,7 @@ def process_batch(
             ensure_dest_folder(target_folder)
             dest.select(f'"{target_folder}"')
 
-            is_duplicate = bool(msg_id and imap_common.message_exists_in_folder(dest, msg_id))
+            is_duplicate = bool(msg_id and check_duplicate and imap_common.message_exists_in_folder(dest, msg_id))
 
             if is_duplicate:
                 safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {subject[:40]}")
@@ -591,23 +592,54 @@ def migrate_folder(
             delete_orphan_emails(dest, folder_name, set())
         return
 
-    safe_print(f"Found {total} messages. Starting parallel migration...")
+    # Pre-fetch destination Message-IDs for fast duplicate detection (non-Gmail mode only)
+    dest_msg_ids = None
+    if not gmail_mode:
+        safe_print(f"Pre-fetching destination Message-IDs for {folder_name}...")
+        dest_uid_to_msgid = imap_common.get_message_ids_in_folder(dest)
+        dest_msg_ids = set(dest_uid_to_msgid.values())
+        safe_print(f"Found {len(dest_msg_ids)} existing messages in destination.")
 
-    # If dest_delete is enabled, gather source Message-IDs first
-    source_msg_ids = None
-    if dest_delete and not gmail_mode:
-        safe_print("Building source Message-ID index for sync...")
-        source_msg_ids = get_message_ids_in_folder(src, folder_name)
-        safe_print(f"Found {len(source_msg_ids)} unique Message-IDs in source.")
+    # Pre-fetch source Message-IDs and filter out duplicates before processing
+    # Skip pre-filtering when preserve_flags is True (need to sync flags on duplicates)
+    uids_to_process = uids
+    src_msg_ids = None
+    skipped_duplicate_uids = []
+    pre_filtered = False
+    if not gmail_mode and dest_msg_ids is not None and not preserve_flags:
+        pre_filtered = True
+        safe_print(f"Pre-fetching source Message-IDs for {folder_name}...")
+        # Use get_uid_to_message_id_map directly since we already have UIDs from folder select
+        src_uid_to_msgid = imap_common.get_uid_to_message_id_map(src, uids)
+        src_msg_ids = set(src_uid_to_msgid.values())
+
+        # Filter to only UIDs that need migration (not already in destination)
+        uids_to_process = []
+        for uid in uids:
+            msg_id = src_uid_to_msgid.get(uid)
+            if msg_id not in dest_msg_ids:
+                uids_to_process.append(uid)
+            else:
+                skipped_duplicate_uids.append(uid)
+        safe_print(f"Skipping {len(skipped_duplicate_uids)} duplicates, {len(uids_to_process)} to migrate.")
     elif dest_delete and gmail_mode:
         safe_print("Warning: --dest-delete is not supported in --gmail-mode; ignoring.")
 
-    # Create batches
-    uid_batches = [uids[i : i + BATCH_SIZE] for i in range(0, len(uids), BATCH_SIZE)]
+    if not uids_to_process:
+        safe_print(f"No new messages to migrate in {folder_name}.")
+        if dest_delete and src_msg_ids is not None:
+            safe_print("Syncing destination: removing emails not in source...")
+            delete_orphan_emails(dest, folder_name, src_msg_ids)
+        return
+
+    # Create batches from filtered UIDs
+    uid_batches = [uids_to_process[i : i + BATCH_SIZE] for i in range(0, len(uids_to_process), BATCH_SIZE)]
 
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
     try:
         futures = []
+        # When pre-filtered, we know UIDs are non-duplicates; otherwise need to check
+        check_duplicate = not pre_filtered
         for batch in uid_batches:
             futures.append(
                 executor.submit(
@@ -621,6 +653,7 @@ def migrate_folder(
                     preserve_flags,
                     gmail_mode,
                     label_index,
+                    check_duplicate,
                 )
             )
 
@@ -638,7 +671,17 @@ def migrate_folder(
         executor.shutdown(wait=True)
 
     if delete_from_source:
-        safe_print(f"Expunging any remaining deleted messages from {folder_name}...")
+        # Delete skipped duplicates from source (already exist in destination)
+        if skipped_duplicate_uids:
+            safe_print(f"Deleting {len(skipped_duplicate_uids)} duplicates from source...")
+            try:
+                src.select(f'"{folder_name}"', readonly=False)
+                for uid in skipped_duplicate_uids:
+                    src.uid(imap_common.CMD_STORE, uid, imap_common.OP_ADD_FLAGS, imap_common.FLAG_DELETED_LITERAL)
+            except Exception as e:
+                safe_print(f"Error deleting duplicates: {e}")
+
+        safe_print(f"Expunging deleted messages from {folder_name}...")
         try:
             src.select(f'"{folder_name}"', readonly=False)
             src.expunge()
@@ -646,9 +689,9 @@ def migrate_folder(
             safe_print(f"Error Expunging: {e}")
 
     # Delete orphan emails from destination if enabled
-    if dest_delete and source_msg_ids is not None and not gmail_mode:
+    if dest_delete and src_msg_ids is not None and not gmail_mode:
         safe_print("Syncing destination: removing emails not in source...")
-        delete_orphan_emails(dest, folder_name, source_msg_ids)
+        delete_orphan_emails(dest, folder_name, src_msg_ids)
 
 
 def main():
