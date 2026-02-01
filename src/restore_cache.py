@@ -8,6 +8,7 @@ The caller decides where the cache file lives by passing a cache directory/root.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -32,8 +33,6 @@ def _prepare_cache_for_json(cache_data: dict) -> dict:
     
     Removes in-memory helper fields like _ids_set that should not be persisted.
     """
-    import copy
-
     snapshot = copy.deepcopy(cache_data)
     folders = snapshot.get("folders", {})
     if isinstance(folders, dict):
