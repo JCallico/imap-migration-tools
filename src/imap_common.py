@@ -248,45 +248,6 @@ def parse_message_id_and_subject_from_bytes(raw_message):
         return None, "(No Subject)"
 
 
-def get_msg_details(imap_conn, uid):
-    """
-    Fetches simplified message details (Message-ID, Size, Subject) for a given UID.
-    Returns (msg_id, size, subject) tuple.
-    """
-    try:
-        resp, data = imap_conn.uid("fetch", uid, "(RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID SUBJECT)])")
-    except Exception:
-        return None, None, None
-
-    if resp != "OK":
-        return None, None, None
-
-    msg_id = None
-    subject = "(No Subject)"
-    size = 0
-
-    for item in data:
-        if isinstance(item, tuple):
-            content = item[0].decode("utf-8", errors="ignore")
-
-            # Parse Size
-            size_match = re.search(r"RFC822\.SIZE\s+(\d+)", content)
-            if size_match:
-                size = int(size_match.group(1))
-
-            # Parse Headers
-            msg_bytes = item[1]
-            # Use compat32 to preserve raw headers with continuation lines
-            parser = BytesParser(policy=policy.compat32)
-            email_obj = parser.parsebytes(msg_bytes, headersonly=True)
-            msg_id = decode_message_id(email_obj.get("Message-ID"))
-            raw_subject = email_obj.get("Subject")
-            if raw_subject:
-                subject = decode_mime_header(raw_subject)
-
-    return msg_id, size, subject
-
-
 def message_exists_in_folder(dest_conn, msg_id):
     """
     Checks if a message with the given Message-ID exists in the CURRENTLY SELECTED folder of dest_conn.
@@ -305,6 +266,63 @@ def message_exists_in_folder(dest_conn, msg_id):
         return len(dest_ids) > 0
     except Exception:
         return False
+
+
+def get_message_ids_in_folder(imap_conn):
+    """
+    Fetches all Message-IDs from the currently selected folder.
+    Returns a dict mapping UID (bytes) -> Message-ID (str).
+    UIDs without a Message-ID are not included in the result.
+    Use set(result.values()) to get just the Message-ID set.
+    """
+    try:
+        resp, data = imap_conn.uid("search", None, "ALL")
+        if resp != "OK" or not data[0].strip():
+            return {}
+    except Exception:
+        return {}
+
+    uids = data[0].split()
+    return get_uid_to_message_id_map(imap_conn, uids)
+
+
+def get_uid_to_message_id_map(imap_conn, uids):
+    """
+    Fetches Message-IDs for a list of UIDs from the currently selected folder.
+    Returns a dict mapping UID (bytes) -> Message-ID (str).
+    UIDs without a Message-ID are not included in the result.
+    """
+    uid_to_msgid = {}
+    if not uids:
+        return uid_to_msgid
+
+    FETCH_BATCH = 500
+    for i in range(0, len(uids), FETCH_BATCH):
+        batch = uids[i : i + FETCH_BATCH]
+        uid_range = b",".join(batch)
+        try:
+            resp, fetch_data = imap_conn.uid("fetch", uid_range, "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
+            if resp != "OK":
+                continue
+            for item in fetch_data:
+                if isinstance(item, tuple) and len(item) >= 2:
+                    # Extract UID from response like b'1 (UID 12345 BODY[HEADER.FIELDS ...]'
+                    meta = item[0]
+                    if isinstance(meta, bytes):
+                        meta = meta.decode("utf-8", errors="ignore")
+                    uid_match = re.search(r"UID\s+(\d+)", meta)
+                    if not uid_match:
+                        continue
+                    uid = uid_match.group(1).encode()
+
+                    # Extract Message-ID
+                    mid = extract_message_id(item[1])
+                    if mid:
+                        uid_to_msgid[uid] = mid
+        except Exception:
+            continue
+
+    return uid_to_msgid
 
 
 def sanitize_filename(filename):

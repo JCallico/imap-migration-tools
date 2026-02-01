@@ -136,7 +136,7 @@ Body content.
 
         message_id, date_str, raw_content, subject = restore_imap_emails.parse_eml_file(str(eml_file))
 
-        assert message_id == ""
+        assert message_id is None
         assert raw_content is not None
 
     def test_parse_nonexistent_file(self):
@@ -273,8 +273,8 @@ class TestUploadEmail:
         mock_conn.select.return_value = ("OK", [b"1"])
         mock_conn.append.return_value = ("OK", [])
 
-        # Mock message_exists_in_folder to return False (not a duplicate)
-        monkeypatch.setattr("imap_common.message_exists_in_folder", lambda *args: False)
+        # Mock email_exists_in_folder to return False (not a duplicate)
+        monkeypatch.setattr(restore_imap_emails, "email_exists_in_folder", lambda *args: False)
 
         result = restore_imap_emails.upload_email(
             mock_conn,
@@ -282,19 +282,18 @@ class TestUploadEmail:
             b"raw email content",
             '"15-Jan-2024 10:30:00 +0000"',
             "<test@test.com>",
-            "Test Subject",
         )
 
         assert result is True
         mock_conn.append.assert_called_once()
 
     def test_upload_email_duplicate(self, monkeypatch):
-        """Test upload skips duplicate."""
+        """Test upload returns False when message exists."""
         mock_conn = MagicMock()
         mock_conn.select.return_value = ("OK", [b"1"])
 
-        # Mock message_exists_in_folder to return True (is a duplicate)
-        monkeypatch.setattr("imap_common.message_exists_in_folder", lambda *args: True)
+        # Mock email_exists_in_folder to return True (is a duplicate)
+        monkeypatch.setattr(restore_imap_emails, "email_exists_in_folder", lambda *args: True)
 
         result = restore_imap_emails.upload_email(
             mock_conn,
@@ -302,7 +301,7 @@ class TestUploadEmail:
             b"raw email content",
             '"15-Jan-2024 10:30:00 +0000"',
             "<test@test.com>",
-            "Test Subject",
+            check_duplicate=True,
         )
 
         assert result is False
@@ -315,8 +314,8 @@ class TestUploadEmail:
         mock_conn.select.return_value = ("OK", [b"1"])
         mock_conn.append.return_value = ("OK", [])
 
-        # Mock message_exists_in_folder to return False (not a duplicate)
-        monkeypatch.setattr("imap_common.message_exists_in_folder", lambda *args: False)
+        # Mock email_exists_in_folder to return False (not a duplicate)
+        monkeypatch.setattr(restore_imap_emails, "email_exists_in_folder", lambda *args: False)
 
         result = restore_imap_emails.upload_email(
             mock_conn,
@@ -324,7 +323,6 @@ class TestUploadEmail:
             b"raw email content",
             '"15-Jan-2024 10:30:00 +0000"',
             "<test@test.com>",
-            "Test Subject",
             flags="\\Seen",  # Mark as read
         )
 
@@ -504,7 +502,7 @@ class TestGmailModeDraftsFallbackRegression:
 
         captured = {}
 
-        def fake_upload_email(dest, folder_name, raw_content, date_str, message_id, subject, flags=None):
+        def fake_upload_email(dest, folder_name, raw_content, date_str, message_id, flags=None, check_duplicate=True):
             captured["folder_name"] = folder_name
             return True
 
