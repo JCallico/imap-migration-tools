@@ -332,7 +332,7 @@ class TestUploadEmail:
         assert result is True
         # Check that append was called with the \\Seen flag
         call_args = mock_conn.append.call_args
-        assert call_args[0][1] == "\\Seen"
+        assert call_args[0][1] == "(\\Seen)"
 
 
 class TestRestoreIntegration:

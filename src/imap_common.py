@@ -93,7 +93,17 @@ def append_email(
     try:
         if ensure_folder:
             ensure_folder_exists(imap_conn, folder_name)
-        resp, _ = imap_conn.append(f'"{folder_name}"', flags, date_str, raw_content)
+
+        normalized_flags = None
+        if flags:
+            stripped = str(flags).strip()
+            if stripped:
+                if stripped.startswith("(") and stripped.endswith(")"):
+                    normalized_flags = stripped
+                else:
+                    normalized_flags = f"({stripped})"
+
+        resp, _ = imap_conn.append(f'"{folder_name}"', normalized_flags, date_str, raw_content)
         return resp == "OK"
     except Exception:
         return False
