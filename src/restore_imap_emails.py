@@ -458,7 +458,12 @@ def process_restore_batch(
                         existing_dest_msg_ids = existing_dest_msg_ids_by_folder[target_folder]
 
             # Incremental default: if we already know we processed it before, skip entirely.
-            if not full_restore and message_id and existing_dest_msg_ids is not None and message_id in existing_dest_msg_ids:
+            if (
+                not full_restore
+                and message_id
+                and existing_dest_msg_ids is not None
+                and message_id in existing_dest_msg_ids
+            ):
                 safe_print(f"[{target_folder}] SKIP (already present) | {size_str:<8} | {display_subject}")
                 continue
 
