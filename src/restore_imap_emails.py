@@ -88,16 +88,16 @@ def safe_print(message):
         print(f"[{short_name}] {message}")
 
 
+def ensure_connection(conn, conf):
+    """Refresh OAuth2 token if needed and ensure connection is healthy."""
+    if conf.get("oauth2"):
+        imap_oauth2.refresh_oauth2_token(conf, conf.get("oauth2_token"))
+    return imap_common.ensure_connection_from_conf(conn, conf)
+
+
 def get_thread_connection(dest_conf):
     """Get or create a thread-local IMAP connection."""
-    # Proactively refresh OAuth2 token if configured (handles expiry before connection fails)
-    if dest_conf.get("oauth2"):
-        imap_oauth2.refresh_oauth2_token(dest_conf, dest_conf.get("oauth2_token"))
-
-    # Ensure connection exists and is healthy
-    thread_local.dest = imap_common.ensure_connection_from_conf(
-        getattr(thread_local, "dest", None), dest_conf
-    )
+    thread_local.dest = ensure_connection(getattr(thread_local, "dest", None), dest_conf)
     return thread_local.dest
 
 
@@ -815,7 +815,7 @@ def restore_folder(
     # Delete orphan emails from destination if enabled
     if dest_delete and local_msg_ids is not None:
         safe_print("Syncing destination: removing emails not in local backup...")
-        dest = imap_common.get_imap_connection_from_conf(dest_conf)
+        dest = ensure_connection(None, dest_conf)
         if dest:
             delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
             dest.logout()
@@ -1188,6 +1188,10 @@ def main():
                 # Skip manifest files
                 if folder_name in ("labels_manifest.json", "flags_manifest.json"):
                     continue
+
+                # Proactively refresh OAuth2 token between folders
+                ensure_connection(None, dest_conf)
+
                 restore_folder(
                     folder_name,
                     folder_path,

@@ -76,6 +76,13 @@ def safe_print(message):
         print(f"[{short_name}] {message}")
 
 
+def ensure_connection(conn, conf):
+    """Refresh OAuth2 token if needed and ensure connection is healthy."""
+    if conf.get("oauth2"):
+        imap_oauth2.refresh_oauth2_token(conf, conf.get("oauth2_token"))
+    return imap_common.ensure_connection_from_conf(conn, conf)
+
+
 def get_thread_connection(src_conf):
     # Backwards-compatible: tests and some internal call sites may still pass
     # (host, user, password) tuples. Normalize to the dict form used by
@@ -83,14 +90,7 @@ def get_thread_connection(src_conf):
     if isinstance(src_conf, tuple) and len(src_conf) == 3:
         src_conf = {"host": src_conf[0], "user": src_conf[1], "password": src_conf[2]}
 
-    # Proactively refresh OAuth2 token if configured (handles expiry before connection fails)
-    if src_conf.get("oauth2"):
-        imap_oauth2.refresh_oauth2_token(src_conf, src_conf.get("oauth2_token"))
-
-    # Ensure connection exists and is healthy
-    thread_local.src = imap_common.ensure_connection_from_conf(
-        getattr(thread_local, "src", None), src_conf
-    )
+    thread_local.src = ensure_connection(getattr(thread_local, "src", None), src_conf)
     return thread_local.src
 
 
@@ -858,16 +858,10 @@ def main():
         else:
             folders = imap_common.list_selectable_folders(src)
             for name in folders:
-                # Proactively refresh OAuth2 token if configured (handles expiry before connection fails)
-                if src_conf.get("oauth2"):
-                    imap_oauth2.refresh_oauth2_token(src_conf, src_conf.get("oauth2_token"))
-
-                # Ensure connection is alive (reconnect on broken pipe, timeout, etc.)
-                src = imap_common.ensure_connection_from_conf(src, src_conf)
+                src = ensure_connection(src, src_conf)
                 if not src:
                     print("Fatal: Could not reconnect to IMAP server. Aborting.")
                     sys.exit(1)
-
                 backup_folder(src, name, local_path, src_conf, args.dest_delete)
 
         src.logout()
