@@ -30,7 +30,6 @@ def _safe_cache_component(value: str) -> str:
 
 def _prepare_cache_for_json(cache_data: dict) -> dict:
     """Create a deep copy of cache_data suitable for JSON serialization.
-    
     Removes in-memory helper fields like _ids_set that should not be persisted.
     """
     snapshot = copy.deepcopy(cache_data)
@@ -142,8 +141,7 @@ def add_cached_message_id(
             ids = []
             entry["message_ids"] = ids
 
-        # Maintain an in-memory set for O(1) lookups (not persisted to JSON)
-        # The set is cached at the entry level to avoid O(n) set construction on each call
+        # Maintain entry-level in-memory set for O(1) lookups (not persisted to JSON)
         ids_set = entry.get("_ids_set")
         if ids_set is None:
             ids_set = set(ids)
