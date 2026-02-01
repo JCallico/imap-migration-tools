@@ -208,6 +208,22 @@ def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
         safe_print(f"  -> Error syncing flags: {e}")
 
 
+def extract_message_id_from_eml(file_path):
+    """
+    Extract just the Message-ID from an .eml file efficiently.
+    Returns the Message-ID string or None on error.
+    """
+    try:
+        with open(file_path, "rb") as f:
+            # Read just the first 64KB to get headers
+            header_bytes = f.read(65536)
+
+        msg_id = imap_common.extract_message_id(header_bytes)
+        return msg_id
+    except Exception:
+        return None
+
+
 def parse_eml_file(file_path):
     """
     Parse an .eml file and extract metadata.
@@ -217,11 +233,13 @@ def parse_eml_file(file_path):
         with open(file_path, "rb") as f:
             raw_content = f.read()
 
-        parser = BytesParser(policy=policy.default)
+        # Use compat32 to preserve raw headers with continuation lines
+        parser = BytesParser(policy=policy.compat32)
         msg = parser.parsebytes(raw_content, headersonly=True)
 
-        message_id = msg.get("Message-ID", "").strip()
-        subject = msg.get("Subject", "(No Subject)")
+        message_id = imap_common.decode_message_id(msg.get("Message-ID"))
+        raw_subject = msg.get("Subject")
+        subject = imap_common.decode_mime_header(raw_subject) if raw_subject else "(No Subject)"
         date_header = msg.get("Date")
 
         # Parse date for IMAP INTERNALDATE
@@ -274,13 +292,14 @@ def email_exists_in_folder(imap_conn, message_id):
         return False
 
 
-def upload_email(dest, folder_name, raw_content, date_str, message_id, subject, flags=None):
+def upload_email(dest, folder_name, raw_content, date_str, message_id, flags=None, check_duplicate=True):
     """
     Upload a single email to the destination folder.
-    Returns True on success, False on failure.
+    Returns True on success, False if duplicate or on failure.
 
     Args:
         flags: Optional string of IMAP flags like "\\Seen" for read emails.
+        check_duplicate: Whether to check for duplicates before uploading.
     """
     try:
         # Ensure folder exists
@@ -289,9 +308,8 @@ def upload_email(dest, folder_name, raw_content, date_str, message_id, subject, 
         # Select folder
         dest.select(f'"{folder_name}"')
 
-        # Check for duplicates
-        size = len(raw_content)
-        if message_id and email_exists_in_folder(dest, message_id):
+        # Check for duplicates if requested
+        if check_duplicate and message_id and email_exists_in_folder(dest, message_id):
             return False  # Already exists
 
         # Upload with original date and flags
@@ -439,19 +457,15 @@ def process_restore_batch(
                         existing_dest_msg_ids_by_folder.setdefault(target_folder, built)
                         existing_dest_msg_ids = existing_dest_msg_ids_by_folder[target_folder]
 
-            # Incremental default: if we already know it exists, skip entirely.
-            if (
-                not full_restore
-                and message_id
-                and existing_dest_msg_ids is not None
-                and message_id in existing_dest_msg_ids
-            ):
+            # Incremental default: if we already know we processed it before, skip entirely.
+            if not full_restore and message_id and existing_dest_msg_ids is not None and message_id in existing_dest_msg_ids:
                 safe_print(f"[{target_folder}] SKIP (already present) | {size_str:<8} | {display_subject}")
                 continue
 
-            # Upload to target folder
-            # Always use server-side duplicate check (no destination pre-indexing).
-            uploaded = upload_email(dest, target_folder, raw_content, date_str, message_id, display_subject, flags)
+            # Upload to target folder.
+            # Keep server-side duplicate checks enabled to avoid creating duplicates for emails
+            # that exist on the destination but are not in our local progress cache.
+            uploaded = upload_email(dest, target_folder, raw_content, date_str, message_id, flags)
 
             restore_cache.record_progress(
                 message_id=message_id,
@@ -667,8 +681,50 @@ def restore_folder(
         local_msg_ids = get_local_message_ids(local_folder_path)
         safe_print(f"Found {len(local_msg_ids)} unique Message-IDs in local backup.")
 
+    # Pre-fetch destination Message-IDs and filter duplicates (non-Gmail mode only)
+    gmail_mode = folder_name == "__GMAIL_MODE__"
+    files_to_restore = eml_files
+
+    if not gmail_mode:
+        dest_msg_ids = set()
+        try:
+            dest_tmp = imap_common.get_imap_connection_from_conf(dest_conf)
+            if dest_tmp:
+                # Ensure folder exists before selecting
+                if folder_name.upper() != "INBOX":
+                    try:
+                        dest_tmp.create(f'"{folder_name}"')
+                    except Exception:
+                        pass
+                dest_tmp.select(f'"{folder_name}"')
+                dest_msg_ids = set(imap_common.get_message_ids_in_folder(dest_tmp).values())
+                dest_tmp.logout()
+        except Exception:
+            dest_msg_ids = set()
+
+        safe_print(f"{len(dest_msg_ids)} existing messages in destination.")
+
+        # Pre-filter files to skip duplicates
+        if dest_msg_ids:
+            safe_print("Pre-filtering duplicates...")
+            files_to_restore = []
+            skipped = 0
+            for file_path, filename in eml_files:
+                msg_id = extract_message_id_from_eml(file_path)
+                if msg_id and msg_id in dest_msg_ids:
+                    skipped += 1
+                else:
+                    files_to_restore.append((file_path, filename))
+            safe_print(f"Skipping {skipped} duplicates, {len(files_to_restore)} to restore.")
+
+    if not files_to_restore:
+        safe_print("No new emails to restore.")
+        return
+
+    safe_print(f"Starting parallel restore of {len(files_to_restore)} emails...")
+
     # Create batches
-    batches = [eml_files[i : i + BATCH_SIZE] for i in range(0, len(eml_files), BATCH_SIZE)]
+    batches = [files_to_restore[i : i + BATCH_SIZE] for i in range(0, len(files_to_restore), BATCH_SIZE)]
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = []
