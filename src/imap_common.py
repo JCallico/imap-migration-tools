@@ -4,6 +4,8 @@ IMAP Common Utilities
 Shared functionality for IMAP migration, counting, and comparison scripts.
 """
 
+from __future__ import annotations
+
 import imaplib
 import os
 import re
