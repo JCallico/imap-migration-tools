@@ -170,3 +170,50 @@ def maybe_save_dest_index_cache(
 
     save_dest_index_cache(cache_path, snapshot)
     return True
+
+
+def record_progress(
+    *,
+    message_id: str | None,
+    folder_name: str,
+    existing_dest_msg_ids: set[str] | None,
+    existing_dest_msg_ids_lock: threading.Lock | None,
+    progress_cache_path: str | None,
+    progress_cache_data: dict | None,
+    progress_cache_lock: threading.Lock | None,
+    dest_host: str | None,
+    dest_user: str | None,
+) -> None:
+    """Record a processed Message-ID for fast skipping on future incremental runs.
+
+    Updates both:
+    - the in-memory set used by the current run, and
+    - the persisted progress cache on disk (throttled writes).
+    """
+    if not message_id:
+        return
+
+    msg_id = str(message_id).strip()
+    if not msg_id:
+        return
+
+    if existing_dest_msg_ids is not None and existing_dest_msg_ids_lock is not None:
+        with existing_dest_msg_ids_lock:
+            existing_dest_msg_ids.add(msg_id)
+
+    if (
+        progress_cache_path
+        and progress_cache_data is not None
+        and progress_cache_lock is not None
+        and dest_host
+        and dest_user
+    ):
+        add_cached_message_id(
+            progress_cache_data,
+            progress_cache_lock,
+            dest_host,
+            dest_user,
+            folder_name,
+            msg_id,
+        )
+        maybe_save_dest_index_cache(progress_cache_path, progress_cache_data, progress_cache_lock)

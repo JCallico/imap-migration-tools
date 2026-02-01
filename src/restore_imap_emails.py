@@ -468,31 +468,17 @@ def process_restore_batch(
             # Always use server-side duplicate check (no destination pre-indexing).
             uploaded = upload_email(dest, target_folder, raw_content, date_str, message_id, display_subject, flags)
 
-            # Record progress frequently so future runs can skip quickly.
-            if message_id and existing_dest_msg_ids is not None and existing_dest_msg_ids_lock is not None:
-                with existing_dest_msg_ids_lock:
-                    existing_dest_msg_ids.add(message_id)
-            if (
-                message_id
-                and progress_cache_path
-                and progress_cache_data is not None
-                and progress_cache_lock is not None
-                and dest_host
-                and dest_user
-            ):
-                restore_cache.add_cached_message_id(
-                    progress_cache_data,
-                    progress_cache_lock,
-                    dest_host,
-                    dest_user,
-                    target_folder,
-                    message_id,
-                )
-                restore_cache.maybe_save_dest_index_cache(
-                    progress_cache_path,
-                    progress_cache_data,
-                    progress_cache_lock,
-                )
+            restore_cache.record_progress(
+                message_id=message_id,
+                folder_name=target_folder,
+                existing_dest_msg_ids=existing_dest_msg_ids,
+                existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
+                progress_cache_path=progress_cache_path,
+                progress_cache_data=progress_cache_data,
+                progress_cache_lock=progress_cache_lock,
+                dest_host=dest_host,
+                dest_user=dest_user,
+            )
 
             if not uploaded:
                 safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {display_subject}")
