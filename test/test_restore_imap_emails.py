@@ -19,6 +19,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import imap_common
+import restore_cache
 import restore_imap_emails
 from conftest import make_single_mock_connection
 
@@ -373,6 +374,39 @@ Body content.
         # Run restore
         restore_imap_emails.main()
 
+    def test_restore_single_folder_full_restore_flag(self, single_mock_server, monkeypatch, tmp_path):
+        """Smoke test: --full-restore flag is accepted."""
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+
+        eml_content = b"""From: sender@test.com
+To: recipient@test.com
+Subject: Test Email
+Message-ID: <test123@test.com>
+Date: Mon, 15 Jan 2024 10:30:00 +0000
+
+Body content.
+"""
+        (inbox / "1_Test_Email.eml").write_bytes(eml_content)
+
+        src_data = {"INBOX": []}
+        _server, port = single_mock_server(src_data)
+
+        env = {
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "user",
+            "DEST_IMAP_PASSWORD": "pass",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["restore_imap_emails.py", "--src-path", str(tmp_path), "--full-restore", "INBOX"],
+        )
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        restore_imap_emails.main()
+
     def test_restore_with_labels_manifest(self, tmp_path):
         """Test that labels manifest is loaded correctly."""
         # Create manifest
@@ -418,6 +452,7 @@ class TestEmailExistsInFolder:
     def test_email_exists_exception(self, monkeypatch):
         """Test handling exception."""
         mock_conn = MagicMock()
+
         monkeypatch.setattr(
             "imap_common.message_exists_in_folder",
             lambda *args: (_ for _ in ()).throw(Exception("Error")),
@@ -425,6 +460,46 @@ class TestEmailExistsInFolder:
 
         result = restore_imap_emails.email_exists_in_folder(mock_conn, "<test@test.com>")
         assert result is False
+
+
+class TestRestoreProgressCache:
+    def test_progress_cache_add_get_persist(self, tmp_path):
+        import threading
+
+        cache_path = restore_cache.get_dest_index_cache_path(str(tmp_path), "imap.example.com", "user@example.com")
+        cache_data = restore_cache.load_dest_index_cache(cache_path)
+        lock = threading.Lock()
+
+        assert (
+            restore_cache.get_cached_message_ids(cache_data, lock, "imap.example.com", "user@example.com", "INBOX")
+            == set()
+        )
+
+        assert (
+            restore_cache.add_cached_message_id(
+                cache_data, lock, "imap.example.com", "user@example.com", "INBOX", "<a@test>"
+            )
+            is True
+        )
+        assert (
+            restore_cache.add_cached_message_id(
+                cache_data, lock, "imap.example.com", "user@example.com", "INBOX", "<a@test>"
+            )
+            is False
+        )
+        assert (
+            restore_cache.add_cached_message_id(
+                cache_data, lock, "imap.example.com", "user@example.com", "INBOX", "<b@test>"
+            )
+            is True
+        )
+
+        restore_cache.maybe_save_dest_index_cache(cache_path, cache_data, lock, force=True)
+
+        cache_data2 = restore_cache.load_dest_index_cache(cache_path)
+        ids = restore_cache.get_cached_message_ids(cache_data2, lock, "imap.example.com", "user@example.com", "INBOX")
+        assert "<a@test>" in ids
+        assert "<b@test>" in ids
 
 
 class TestGetLabelsFromManifest:

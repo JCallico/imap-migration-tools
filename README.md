@@ -543,6 +543,9 @@ This creates a `flags_manifest.json` with the status of each email.
 ### 9. Restore Backup to IMAP Server
 Restore emails from a local backup to any IMAP server.
 
+By default, restore runs in **incremental mode**: it uploads only emails that are not already present on the destination (based on `Message-ID`).
+Use `--full-restore` to force the legacy behavior (process all emails and re-sync labels/flags for already-present messages).
+
 ```bash
 # Restore all folders from backup
 python3 restore_imap_emails.py \
@@ -550,6 +553,14 @@ python3 restore_imap_emails.py \
   --dest-host "imap.gmail.com" \
   --dest-user "you@gmail.com" \
   --dest-pass "your-app-password"
+
+# Force full restore (legacy behavior)
+python3 restore_imap_emails.py \
+  --src-path "./my_backup" \
+  --dest-host "imap.gmail.com" \
+  --dest-user "you@gmail.com" \
+  --dest-pass "your-app-password" \
+  --full-restore
 
 # Restore with flags (read/starred status)
 python3 restore_imap_emails.py \

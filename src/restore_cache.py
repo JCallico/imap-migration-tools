@@ -1,0 +1,176 @@
+"""Destination Message-ID indexing with a progress cache.
+
+This module supports fast incremental restore by keeping a per-folder cache of:
+- UIDVALIDITY (to invalidate cache on mailbox reset)
+- last_uid seen (UIDNEXT-1)
+- set of Message-IDs seen so far
+
+On subsequent runs, it fetches only UIDs newer than last_uid.
+
+Cache file lives next to the manifest file (labels/flags manifest) in the backup root.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import threading
+import time
+
+RESTORE_CACHE_VERSION = 1
+
+# Throttle disk writes so we can update frequently without rewriting a large JSON file
+# on every single message.
+_MIN_SECONDS_BETWEEN_SAVES = 2.0
+_MIN_PENDING_UPDATES_BEFORE_SAVE = 50
+
+
+def _safe_cache_component(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value or "")
+
+
+def get_dest_index_cache_path(cache_root: str, dest_host: str, dest_user: str) -> str:
+    safe_host = _safe_cache_component(dest_host)
+    safe_user = _safe_cache_component(dest_user)
+    return os.path.join(cache_root, f"restore_cache_{safe_host}_{safe_user}.json")
+
+
+def load_dest_index_cache(cache_path: str) -> dict:
+    try:
+        with open(cache_path, encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {"version": RESTORE_CACHE_VERSION, "folders": {}, "_meta": {}}
+        if data.get("version") != RESTORE_CACHE_VERSION:
+            return {"version": RESTORE_CACHE_VERSION, "folders": {}, "_meta": {}}
+        if not isinstance(data.get("folders"), dict):
+            data["folders"] = {}
+        if not isinstance(data.get("_meta"), dict):
+            data["_meta"] = {}
+        return data
+    except FileNotFoundError:
+        return {"version": RESTORE_CACHE_VERSION, "folders": {}, "_meta": {}}
+    except Exception:
+        return {"version": RESTORE_CACHE_VERSION, "folders": {}, "_meta": {}}
+
+
+def save_dest_index_cache(cache_path: str, cache_data: dict) -> None:
+    try:
+        tmp_path = f"{cache_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, ensure_ascii=False)
+        os.replace(tmp_path, cache_path)
+    except Exception:
+        # Cache is best-effort; do not fail restore.
+        pass
+
+
+def _ensure_dest(cache_data: dict, dest_host: str, dest_user: str) -> None:
+    cache_dest = cache_data.get("dest")
+    if not isinstance(cache_dest, dict) or cache_dest.get("host") != dest_host or cache_dest.get("user") != dest_user:
+        cache_data.clear()
+        cache_data.update(
+            {
+                "version": RESTORE_CACHE_VERSION,
+                "dest": {"host": dest_host, "user": dest_user},
+                "folders": {},
+                "_meta": {},
+            }
+        )
+
+
+def get_cached_message_ids(
+    cache_data: dict,
+    cache_lock: threading.Lock,
+    dest_host: str,
+    dest_user: str,
+    folder_name: str,
+) -> set[str]:
+    """Return Message-IDs we've already seen/processed for this destination+folder."""
+    with cache_lock:
+        _ensure_dest(cache_data, dest_host, dest_user)
+        folders = cache_data.setdefault("folders", {})
+        entry = folders.get(folder_name)
+        if not isinstance(entry, dict):
+            return set()
+        ids = entry.get("message_ids")
+        if not isinstance(ids, list):
+            return set()
+        return {str(x) for x in ids if x}
+
+
+def add_cached_message_id(
+    cache_data: dict,
+    cache_lock: threading.Lock,
+    dest_host: str,
+    dest_user: str,
+    folder_name: str,
+    message_id: str,
+) -> bool:
+    """Add a Message-ID to the cache. Returns True if it was newly added."""
+    if not message_id:
+        return False
+    msg_id = str(message_id).strip()
+    if not msg_id:
+        return False
+
+    with cache_lock:
+        _ensure_dest(cache_data, dest_host, dest_user)
+        folders = cache_data.setdefault("folders", {})
+        entry = folders.setdefault(folder_name, {})
+        if not isinstance(entry, dict):
+            folders[folder_name] = {}
+            entry = folders[folder_name]
+
+        ids = entry.get("message_ids")
+        if not isinstance(ids, list):
+            ids = []
+            entry["message_ids"] = ids
+
+        if msg_id in ids:
+            return False
+
+        ids.append(msg_id)
+
+        meta = cache_data.setdefault("_meta", {})
+        if not isinstance(meta, dict):
+            meta = {}
+            cache_data["_meta"] = meta
+        meta["pending_updates"] = int(meta.get("pending_updates") or 0) + 1
+        return True
+
+
+def maybe_save_dest_index_cache(
+    cache_path: str,
+    cache_data: dict,
+    cache_lock: threading.Lock,
+    *,
+    force: bool = False,
+) -> bool:
+    """Persist cache to disk if enough updates/time has accumulated."""
+    now = time.time()
+    with cache_lock:
+        meta = cache_data.setdefault("_meta", {})
+        if not isinstance(meta, dict):
+            meta = {}
+            cache_data["_meta"] = meta
+
+        pending = int(meta.get("pending_updates") or 0)
+        last_saved = float(meta.get("last_saved_ts") or 0.0)
+
+        should_save = (
+            force or pending >= _MIN_PENDING_UPDATES_BEFORE_SAVE or (now - last_saved) >= _MIN_SECONDS_BETWEEN_SAVES
+        )
+        if not should_save:
+            return False
+
+        # Update meta before writing so the on-disk file reflects the flush decision.
+        meta["pending_updates"] = 0
+        meta["last_saved_ts"] = now
+
+        # Write without holding the lock for the entire json.dump.
+        snapshot = json.loads(json.dumps(cache_data))
+
+    save_dest_index_cache(cache_path, snapshot)
+    return True

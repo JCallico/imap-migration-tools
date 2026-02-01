@@ -56,9 +56,11 @@ import time
 from email import policy
 from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
+from typing import Optional
 
 import imap_common
 import imap_oauth2
+import restore_cache
 
 # Defaults
 MAX_WORKERS = 4  # Lower default for restore to avoid rate limits
@@ -74,6 +76,25 @@ def safe_print(message):
     short_name = t_name.replace("ThreadPoolExecutor-", "T-").replace("MainThread", "MAIN")
     with print_lock:
         print(f"[{short_name}] {message}")
+
+
+def get_manifest_dir(local_path: str) -> str:
+    """Return the directory where the manifest file lives.
+
+    Cache is stored in the same directory as the manifest.
+    """
+    cur = os.path.abspath(local_path)
+    while True:
+        labels_path = os.path.join(cur, "labels_manifest.json")
+        flags_path = os.path.join(cur, "flags_manifest.json")
+        if os.path.exists(labels_path) or os.path.exists(flags_path):
+            return cur
+
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            # Reached filesystem root without finding a manifest.
+            return os.path.abspath(local_path)
+        cur = parent
 
 
 def get_thread_connection(dest_conf):
@@ -305,6 +326,23 @@ def upload_email(dest, folder_name, raw_content, date_str, message_id, subject, 
         return False
 
 
+def append_email(dest, folder_name, raw_content, date_str, flags=None):
+    """Append an email to a folder without performing any duplicate check."""
+    try:
+        # Ensure folder exists
+        if folder_name.upper() != imap_common.FOLDER_INBOX:
+            try:
+                dest.create(f'"{folder_name}"')
+            except Exception:
+                pass
+
+        resp, _ = dest.append(f'"{folder_name}"', flags, date_str, raw_content)
+        return resp == "OK"
+    except Exception as e:
+        safe_print(f"Error appending to {folder_name}: {e}")
+        return False
+
+
 def get_labels_from_manifest(manifest, message_id):
     """
     Get the list of labels for a message from the manifest.
@@ -333,7 +371,22 @@ def label_to_folder(label):
         return label
 
 
-def process_restore_batch(eml_files, folder_name, dest_conf, manifest, apply_labels, apply_flags):
+def process_restore_batch(
+    eml_files,
+    folder_name,
+    dest_conf,
+    manifest,
+    apply_labels,
+    apply_flags,
+    full_restore: bool = False,
+    existing_dest_msg_ids_by_folder: Optional[dict[str, set[str]]] = None,
+    existing_dest_msg_ids_lock: Optional[threading.Lock] = None,
+    progress_cache_data: Optional[dict] = None,
+    progress_cache_lock: Optional[threading.Lock] = None,
+    progress_cache_path: Optional[str] = None,
+    dest_host: Optional[str] = None,
+    dest_user: Optional[str] = None,
+):
     """
     Process a batch of .eml files for restoration.
 
@@ -397,13 +450,73 @@ def process_restore_batch(eml_files, folder_name, dest_conf, manifest, apply_lab
                 target_folder = folder_name
                 remaining_labels = labels
 
-            # Upload to target folder (or check if exists)
+            existing_dest_msg_ids: Optional[set[str]] = None
+            if existing_dest_msg_ids_by_folder is not None:
+                if existing_dest_msg_ids_lock is None:
+                    existing_dest_msg_ids_lock = threading.Lock()
+
+                with existing_dest_msg_ids_lock:
+                    existing_dest_msg_ids = existing_dest_msg_ids_by_folder.get(target_folder)
+
+                # Lazy-load per-folder progress cache (no destination scan).
+                if existing_dest_msg_ids is None:
+                    built: set[str] = set()
+                    if progress_cache_data is not None and progress_cache_lock is not None and dest_host and dest_user:
+                        built = restore_cache.get_cached_message_ids(
+                            progress_cache_data,
+                            progress_cache_lock,
+                            dest_host,
+                            dest_user,
+                            target_folder,
+                        )
+                    with existing_dest_msg_ids_lock:
+                        existing_dest_msg_ids_by_folder.setdefault(target_folder, built)
+                        existing_dest_msg_ids = existing_dest_msg_ids_by_folder[target_folder]
+
+            # Incremental default: if we already know it exists, skip entirely.
+            if (
+                not full_restore
+                and message_id
+                and existing_dest_msg_ids is not None
+                and message_id in existing_dest_msg_ids
+            ):
+                safe_print(f"[{target_folder}] SKIP (already present) | {size_str:<8} | {display_subject}")
+                continue
+
+            # Upload to target folder
+            # Always use server-side duplicate check (no destination pre-indexing).
             uploaded = upload_email(dest, target_folder, raw_content, date_str, message_id, display_subject, flags)
+
+            # Record progress frequently so future runs can skip quickly.
+            if message_id and existing_dest_msg_ids is not None and existing_dest_msg_ids_lock is not None:
+                with existing_dest_msg_ids_lock:
+                    existing_dest_msg_ids.add(message_id)
+            if (
+                message_id
+                and progress_cache_path
+                and progress_cache_data is not None
+                and progress_cache_lock is not None
+                and dest_host
+                and dest_user
+            ):
+                restore_cache.add_cached_message_id(
+                    progress_cache_data,
+                    progress_cache_lock,
+                    dest_host,
+                    dest_user,
+                    target_folder,
+                    message_id,
+                )
+                restore_cache.maybe_save_dest_index_cache(
+                    progress_cache_path,
+                    progress_cache_data,
+                    progress_cache_lock,
+                )
 
             if not uploaded:
                 safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {display_subject}")
-                # Even if skipped, sync flags on existing email if requested
-                if apply_flags and flags and message_id:
+                # Full restore preserves legacy behavior: sync flags on existing email if requested
+                if full_restore and apply_flags and flags and message_id:
                     sync_flags_on_existing(dest, target_folder, message_id, flags, size)
             else:
                 safe_print(f"[{target_folder}] UPLOADED      | {size_str:<8} | {display_subject}")
@@ -412,9 +525,10 @@ def process_restore_batch(eml_files, folder_name, dest_conf, manifest, apply_lab
                     for flag in flags.split():
                         safe_print(f"  -> Applied flag: {flag}")
 
-            # Apply remaining Gmail labels (always, whether uploaded or skipped)
-            # This ensures labels are synced even for existing emails
-            if apply_labels and remaining_labels:
+            # Apply remaining Gmail labels:
+            # - Full restore: apply/sync labels even for existing emails
+            # - Incremental (default): apply labels only for newly uploaded emails
+            if apply_labels and remaining_labels and (uploaded or full_restore):
                 for label in remaining_labels:
                     label_folder = label_to_folder(label)
 
@@ -443,8 +557,8 @@ def process_restore_batch(eml_files, folder_name, dest_conf, manifest, apply_lab
                         if not email_exists_in_folder(dest, message_id):
                             dest.append(f'"{label_folder}"', flags, date_str, raw_content)
                             safe_print(f"  -> Applied label: {label}")
-                        # If email exists in this label folder, sync flags
-                        elif apply_flags and flags:
+                        # If email exists in this label folder, sync flags (full restore only)
+                        elif full_restore and apply_flags and flags:
                             sync_flags_on_existing(dest, label_folder, message_id, flags, size)
                     except Exception as e:
                         safe_print(f"  -> Error applying label {label}: {e}")
@@ -511,12 +625,10 @@ def delete_orphan_emails_from_dest(imap_conn, folder_name, local_msg_ids):
                         # Extract Message-ID
                         header_data = item[1]
                         msg_id = None
-                        if isinstance(header_data, bytes):
-                            header_str = header_data.decode("utf-8", errors="ignore")
-                            for line in header_str.split("\n"):
-                                if line.lower().startswith("message-id:"):
-                                    msg_id = line.split(":", 1)[1].strip()
-                                    break
+                        if isinstance(header_data, (bytes, bytearray)):
+                            msg_id, _subject = imap_common.parse_message_id_and_subject_from_bytes(bytes(header_data))
+                            if msg_id:
+                                msg_id = str(msg_id).strip()
 
                         # If not in local backup, mark for deletion
                         if msg_id and msg_id not in local_msg_ids:
@@ -543,7 +655,17 @@ def delete_orphan_emails_from_dest(imap_conn, folder_name, local_msg_ids):
     return deleted_count
 
 
-def restore_folder(folder_name, local_folder_path, dest_conf, manifest, apply_labels, apply_flags, dest_delete=False):
+def restore_folder(
+    folder_name,
+    local_folder_path,
+    dest_conf,
+    manifest,
+    apply_labels,
+    apply_flags,
+    dest_delete=False,
+    full_restore: bool = False,
+    cache_root: Optional[str] = None,
+):
     """
     Restore all emails from a local folder to the destination IMAP server.
     """
@@ -561,6 +683,28 @@ def restore_folder(folder_name, local_folder_path, dest_conf, manifest, apply_la
         return
 
     safe_print(f"Found {len(eml_files)} emails to restore.")
+
+    cache_root = get_manifest_dir(cache_root or local_folder_path)
+    cache_path = restore_cache.get_dest_index_cache_path(cache_root, dest_conf["host"], dest_conf["user"])
+    cache_data: dict = restore_cache.load_dest_index_cache(cache_path)
+    cache_lock = threading.Lock()
+
+    safe_print(f"Using progress cache: {cache_path}")
+
+    # Incremental mode uses cached Message-IDs to skip already-processed emails.
+    existing_dest_msg_ids_by_folder: Optional[dict[str, set[str]]] = {folder_name: set()}
+    existing_dest_msg_ids_lock: Optional[threading.Lock] = threading.Lock()
+    try:
+        existing_dest_msg_ids_by_folder[folder_name] = restore_cache.get_cached_message_ids(
+            cache_data,
+            cache_lock,
+            dest_conf["host"],
+            dest_conf["user"],
+            folder_name,
+        )
+        safe_print(f"Cache has {len(existing_dest_msg_ids_by_folder[folder_name])} Message-IDs for this folder.")
+    except Exception:
+        pass
 
     # If dest_delete enabled, get local Message-IDs for comparison
     local_msg_ids = None
@@ -584,6 +728,14 @@ def restore_folder(folder_name, local_folder_path, dest_conf, manifest, apply_la
                     manifest,
                     apply_labels,
                     apply_flags,
+                    full_restore,
+                    existing_dest_msg_ids_by_folder,
+                    existing_dest_msg_ids_lock,
+                    cache_data,
+                    cache_lock,
+                    cache_path,
+                    dest_conf.get("host"),
+                    dest_conf.get("user"),
                 )
             )
 
@@ -601,8 +753,11 @@ def restore_folder(folder_name, local_folder_path, dest_conf, manifest, apply_la
             delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
             dest.logout()
 
+    # Force-flush progress cache at end.
+    restore_cache.maybe_save_dest_index_cache(cache_path, cache_data, cache_lock, force=True)
 
-def restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags):
+
+def restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags, full_restore: bool = False):
     """
     Special restoration mode for Gmail: Upload emails to their first label folder
     and then apply additional labels from the manifest.
@@ -633,6 +788,20 @@ def restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags):
 
     batches = [eml_files[i : i + BATCH_SIZE] for i in range(0, len(eml_files), BATCH_SIZE)]
 
+    cache_dir = get_manifest_dir(local_path)
+    cache_path = restore_cache.get_dest_index_cache_path(cache_dir, dest_conf["host"], dest_conf["user"])
+    progress_cache_data: dict = restore_cache.load_dest_index_cache(cache_path)
+    progress_cache_lock = threading.Lock()
+
+    safe_print(f"Using progress cache: {cache_path}")
+    safe_print(
+        "Cache will be populated as restore runs (no up-front destination indexing). "
+        "First run may still do per-message duplicate checks; subsequent runs will skip quickly."
+    )
+
+    existing_dest_msg_ids_by_folder: Optional[dict[str, set[str]]] = {}  # lazily loaded per folder
+    existing_dest_msg_ids_lock: Optional[threading.Lock] = threading.Lock()
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = []
         for batch in batches:
@@ -648,6 +817,14 @@ def restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags):
                     manifest,
                     True,  # apply_labels
                     apply_flags,  # apply_flags
+                    full_restore,
+                    existing_dest_msg_ids_by_folder,
+                    existing_dest_msg_ids_lock,
+                    progress_cache_data,
+                    progress_cache_lock,
+                    cache_path,
+                    dest_conf.get("host"),
+                    dest_conf.get("user"),
                 )
             )
 
@@ -664,6 +841,9 @@ def restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags):
 
     elapsed = time.time() - start_time
     safe_print(f"\nRestore completed in {elapsed:.1f}s")
+
+    # Force-flush progress cache at end.
+    restore_cache.maybe_save_dest_index_cache(cache_path, progress_cache_data, progress_cache_lock, force=True)
 
 
 def get_backup_folders(local_path):
@@ -796,6 +976,14 @@ def main():
         help="Gmail restore mode: Upload to INBOX and apply labels + flags from manifest",
     )
 
+    env_full_restore = os.getenv("FULL_RESTORE", "false").lower() == "true"
+    parser.add_argument(
+        "--full-restore",
+        action="store_true",
+        default=env_full_restore,
+        help="Force full restore (legacy): process all emails and sync labels/flags for already-present messages.",
+    )
+
     # Sync mode: delete from dest emails not in local backup
     env_dest_delete = os.getenv("DEST_DELETE", "false").lower() == "true"
     parser.add_argument(
@@ -889,6 +1077,9 @@ def main():
         print("Apply Flags     : Yes (read/starred/answered/draft)")
     if args.dest_delete:
         print("Dest Delete     : Yes (remove orphans from destination)")
+    print(
+        f"Restore Mode    : {'Full (all emails)' if args.full_restore else 'Incremental (new emails only, use --full-restore to restore all)'}"
+    )
     print("-----------------------------\n")
 
     try:
@@ -901,14 +1092,24 @@ def main():
 
         if args.gmail_mode:
             # Special Gmail mode
-            restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags)
+            restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags, full_restore=args.full_restore)
         elif args.folder:
             # Restore specific folder
             folder_path = os.path.join(local_path, args.folder.replace("/", os.sep))
             if not os.path.exists(folder_path):
                 print(f"Error: Folder not found: {folder_path}")
                 sys.exit(1)
-            restore_folder(args.folder, folder_path, dest_conf, manifest, apply_labels, apply_flags, args.dest_delete)
+            restore_folder(
+                args.folder,
+                folder_path,
+                dest_conf,
+                manifest,
+                apply_labels,
+                apply_flags,
+                args.dest_delete,
+                full_restore=args.full_restore,
+                cache_root=local_path,
+            )
         else:
             # Restore all folders
             folders = get_backup_folders(local_path)
@@ -929,6 +1130,8 @@ def main():
                     apply_labels,
                     apply_flags,
                     args.dest_delete,
+                    full_restore=args.full_restore,
+                    cache_root=local_path,
                 )
 
         print("\nRestore completed successfully.")
