@@ -237,7 +237,7 @@ def parse_eml_file(file_path):
             raw_content = f.read()
 
         parser = BytesParser(policy=policy.default)
-        msg = parser.parsebytes(raw_content)
+        msg = parser.parsebytes(raw_content, headersonly=True)
 
         message_id = msg.get("Message-ID", "").strip()
         subject = msg.get("Subject", "(No Subject)")
@@ -623,12 +623,7 @@ def delete_orphan_emails_from_dest(imap_conn, folder_name, local_msg_ids):
                         uid = uid_match.group(1)
 
                         # Extract Message-ID
-                        header_data = item[1]
-                        msg_id = None
-                        if isinstance(header_data, (bytes, bytearray)):
-                            msg_id, _subject = imap_common.parse_message_id_and_subject_from_bytes(bytes(header_data))
-                            if msg_id:
-                                msg_id = str(msg_id).strip()
+                        msg_id = imap_common.extract_message_id(item[1])
 
                         # If not in local backup, mark for deletion
                         if msg_id and msg_id not in local_msg_ids:

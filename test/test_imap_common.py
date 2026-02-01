@@ -332,3 +332,43 @@ class TestGetMsgDetails:
         assert msg_id is None
         assert size is None
         assert subject is None
+
+
+class TestExtractMessageId:
+    """Tests for extract_message_id function."""
+
+    def test_standard_header(self):
+        """Test extracting standard Message-ID."""
+        header = b"Message-ID: <test@example.com>\r\nSubject: Test"
+        result = imap_common.extract_message_id(header)
+        assert result == "<test@example.com>"
+
+    def test_lowercase_header(self):
+        """Test extracting Message-ID with lowercase header name."""
+        header = b"message-id: <lower@example.com>\r\nSubject: Test"
+        result = imap_common.extract_message_id(header)
+        assert result == "<lower@example.com>"
+
+    def test_folded_header(self):
+        """Test extracting folded Message-ID."""
+        # BytesParser unfolds values (replacing newline+indent with space)
+        header = b"Message-ID: <part1\r\n part2@example.com>\r\nSubject: Test"
+        result = imap_common.extract_message_id(header)
+        assert result == "<part1 part2@example.com>"
+
+    def test_string_input(self):
+        """Test with string input."""
+        header = "Message-ID: <str@example.com>\nSubject: Test"
+        result = imap_common.extract_message_id(header)
+        assert result == "<str@example.com>"
+
+    def test_no_message_id(self):
+        """Test header without Message-ID."""
+        header = b"Subject: Test\r\nFrom: sender"
+        result = imap_common.extract_message_id(header)
+        assert result is None
+
+    def test_empty_input(self):
+        """Test empty input."""
+        assert imap_common.extract_message_id(None) is None
+        assert imap_common.extract_message_id(b"") is None
