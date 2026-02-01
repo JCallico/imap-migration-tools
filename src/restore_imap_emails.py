@@ -655,8 +655,10 @@ def restore_folder(
             folder_name,
         )
         safe_print(f"Cache has {len(existing_dest_msg_ids_by_folder[folder_name])} Message-IDs for this folder.")
-    except Exception:
-        pass
+    except Exception as e:
+        # Fall back to an empty cache for this folder if reading cached Message-IDs fails.
+        safe_print(f"Warning: Failed to load cached Message-IDs for folder '{folder_name}': {e}")
+        existing_dest_msg_ids_by_folder[folder_name] = set()
 
     # If dest_delete enabled, get local Message-IDs for comparison
     local_msg_ids = None
