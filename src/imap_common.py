@@ -89,7 +89,8 @@ def append_email(
     perform duplicate checks or folder selection separately.
 
     Args:
-        flags: Passed through to `imaplib.IMAP4.append` unchanged.
+        flags: Optional IMAP flags. If provided, they are normalized to a
+            parenthesized list before being passed to `imaplib.IMAP4.append`.
         ensure_folder: If True, attempts to create the folder first (best-effort).
     """
     try:
