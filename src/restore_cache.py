@@ -161,10 +161,7 @@ def maybe_save_dest_index_cache(
 
         should_save = force or (
             pending > 0
-            and (
-                pending >= _MIN_PENDING_UPDATES_BEFORE_SAVE
-                or (now - last_saved) >= _MIN_SECONDS_BETWEEN_SAVES
-            )
+            and (pending >= _MIN_PENDING_UPDATES_BEFORE_SAVE or (now - last_saved) >= _MIN_SECONDS_BETWEEN_SAVES)
         )
         if not should_save:
             return False
