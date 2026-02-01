@@ -316,3 +316,25 @@ def detect_trash_folder(imap_conn):
             return candidate
 
     return None
+
+
+def extract_message_id(header_data):
+    """
+    Extracts the Message-ID from header bytes or string using BytesParser.
+    Returns the stripped Message-ID string or None if not found.
+    """
+    if not header_data:
+        return None
+
+    try:
+        parser = BytesParser()
+        if isinstance(header_data, str):
+            header_data = header_data.encode("utf-8", errors="ignore")
+
+        msg = parser.parsebytes(header_data)
+        mid = msg.get("Message-ID")
+        if mid:
+            return mid.strip()
+    except Exception:
+        pass
+    return None

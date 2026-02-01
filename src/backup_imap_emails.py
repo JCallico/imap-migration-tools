@@ -270,16 +270,9 @@ def get_message_info_in_folder(imap_conn, folder_name, progress_callback=None):
                                 flags.append(flag)
 
                         # Second element contains the header
-                        header_data = item[1]
-                        if isinstance(header_data, bytes):
-                            header_str = header_data.decode("utf-8", errors="ignore")
-                            # Extract Message-ID from header
-                            for line in header_str.split("\n"):
-                                if line.lower().startswith("message-id:"):
-                                    msg_id = line.split(":", 1)[1].strip()
-                                    if msg_id:
-                                        message_info[msg_id] = {"flags": flags}
-                                    break
+                        msg_id = imap_common.extract_message_id(item[1])
+                        if msg_id:
+                            message_info[msg_id] = {"flags": flags}
             except Exception as e:
                 safe_print(f"Error fetching batch in {folder_name}: {e}")
                 # Try to keep connection alive

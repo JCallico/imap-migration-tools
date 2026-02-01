@@ -114,7 +114,6 @@ import os
 import re
 import sys
 import threading
-from email.parser import BytesParser
 
 import imap_common
 import imap_oauth2
@@ -242,17 +241,6 @@ def build_gmail_label_index(src_conn):
     return label_index
 
 
-def parse_message_id_from_bytes(raw_message):
-    if not raw_message:
-        return None
-    try:
-        parser = BytesParser()
-        email_obj = parser.parsebytes(raw_message)
-        return email_obj.get("Message-ID")
-    except Exception:
-        return None
-
-
 def get_message_ids_in_folder(imap_conn, folder_name):
     """
     Get a set of Message-IDs for all emails in a folder.
@@ -281,15 +269,9 @@ def get_message_ids_in_folder(imap_conn, folder_name):
 
                 for item in items:
                     if isinstance(item, tuple) and len(item) >= 2:
-                        header_data = item[1]
-                        if isinstance(header_data, bytes):
-                            header_str = header_data.decode("utf-8", errors="ignore")
-                            for line in header_str.split("\n"):
-                                if line.lower().startswith("message-id:"):
-                                    msg_id = line.split(":", 1)[1].strip()
-                                    if msg_id:
-                                        message_ids.add(msg_id)
-                                    break
+                        msg_id = imap_common.extract_message_id(item[1])
+                        if msg_id:
+                            message_ids.add(msg_id)
             except Exception:
                 continue
     except Exception as e:
@@ -338,14 +320,7 @@ def delete_orphan_emails(imap_conn, folder_name, source_msg_ids):
                         uid = uid_match.group(1)
 
                         # Extract Message-ID
-                        header_data = item[1]
-                        msg_id = None
-                        if isinstance(header_data, bytes):
-                            header_str = header_data.decode("utf-8", errors="ignore")
-                            for line in header_str.split("\n"):
-                                if line.lower().startswith("message-id:"):
-                                    msg_id = line.split(":", 1)[1].strip()
-                                    break
+                        msg_id = imap_common.extract_message_id(item[1])
 
                         # If not in source, mark for deletion
                         if msg_id and msg_id not in source_msg_ids:
@@ -478,7 +453,7 @@ def process_batch(
 
             # Prefer Message-ID from body if missing from header parse
             if not msg_id:
-                msg_id = parse_message_id_from_bytes(msg_content)
+                msg_id = imap_common.extract_message_id(msg_content)
 
             # Determine target folder and labels for Gmail mode
             apply_labels = gmail_mode
