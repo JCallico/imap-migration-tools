@@ -159,8 +159,12 @@ def maybe_save_dest_index_cache(
         pending = int(meta.get("pending_updates") or 0)
         last_saved = float(meta.get("last_saved_ts") or 0.0)
 
-        should_save = (
-            force or pending >= _MIN_PENDING_UPDATES_BEFORE_SAVE or (now - last_saved) >= _MIN_SECONDS_BETWEEN_SAVES
+        should_save = force or (
+            pending > 0
+            and (
+                pending >= _MIN_PENDING_UPDATES_BEFORE_SAVE
+                or (now - last_saved) >= _MIN_SECONDS_BETWEEN_SAVES
+            )
         )
         if not should_save:
             return False
