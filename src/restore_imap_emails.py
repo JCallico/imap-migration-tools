@@ -1154,11 +1154,12 @@ def main():
         if not dest:
             print("Error: Could not connect to destination server.")
             sys.exit(1)
-        dest.logout()
 
         if args.gmail_mode:
+            dest.logout()
             # Special Gmail mode
             restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags, full_restore=args.full_restore)
+            dest = None  # Connection handled by restore_gmail_with_labels
         elif args.folder:
             # Restore specific folder
             folder_path = os.path.join(local_path, args.folder.replace("/", os.sep))
@@ -1176,6 +1177,7 @@ def main():
                 full_restore=args.full_restore,
                 cache_root=local_path,
             )
+            dest.logout()
         else:
             # Restore all folders
             folders = get_backup_folders(local_path)
@@ -1189,8 +1191,11 @@ def main():
                 if folder_name in ("labels_manifest.json", "flags_manifest.json"):
                     continue
 
-                # Proactively refresh OAuth2 token between folders
-                ensure_connection(None, dest_conf)
+                # Proactively refresh OAuth2 token and ensure connection is healthy between folders
+                dest = ensure_connection(dest, dest_conf)
+                if not dest:
+                    print("Fatal: Could not reconnect to destination IMAP server. Aborting.")
+                    sys.exit(1)
 
                 restore_folder(
                     folder_name,
@@ -1203,6 +1208,8 @@ def main():
                     full_restore=args.full_restore,
                     cache_root=local_path,
                 )
+
+            dest.logout()
 
         print("\nRestore completed successfully.")
 

@@ -176,6 +176,7 @@ def ensure_connection(conn, host, user, password=None, oauth2_token=None):
             conn.noop()
             return conn
     except Exception:
+        # Connection is broken (network error, timeout, etc.) - fall through to reconnect
         pass
     return get_imap_connection(host, user, password, oauth2_token)
 
@@ -192,6 +193,7 @@ def ensure_connection_from_conf(conn, conf):
             conn.noop()
             return conn
     except Exception:
+        # Connection is broken (network error, timeout, etc.) - fall through to reconnect
         pass
     return get_imap_connection_from_conf(conf)
 
