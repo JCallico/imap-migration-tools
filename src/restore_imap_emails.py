@@ -88,20 +88,16 @@ def safe_print(message):
         print(f"[{short_name}] {message}")
 
 
+def ensure_connection(conn, conf):
+    """Refresh OAuth2 token if needed and ensure connection is healthy."""
+    if conf.get("oauth2"):
+        imap_oauth2.refresh_oauth2_token(conf, conf.get("oauth2_token"))
+    return imap_common.ensure_connection_from_conf(conn, conf)
+
+
 def get_thread_connection(dest_conf):
     """Get or create a thread-local IMAP connection."""
-    if not hasattr(thread_local, "dest") or thread_local.dest is None:
-        thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
-    try:
-        if thread_local.dest:
-            thread_local.dest.noop()
-    except Exception:
-        thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
-        # If reconnection failed (possibly expired token), try refreshing
-        if thread_local.dest is None and dest_conf.get("oauth2"):
-            old_token = dest_conf["oauth2_token"]
-            imap_oauth2.refresh_oauth2_token(dest_conf, old_token)
-            thread_local.dest = imap_common.get_imap_connection_from_conf(dest_conf)
+    thread_local.dest = ensure_connection(getattr(thread_local, "dest", None), dest_conf)
     return thread_local.dest
 
 
@@ -819,7 +815,7 @@ def restore_folder(
     # Delete orphan emails from destination if enabled
     if dest_delete and local_msg_ids is not None:
         safe_print("Syncing destination: removing emails not in local backup...")
-        dest = imap_common.get_imap_connection_from_conf(dest_conf)
+        dest = ensure_connection(None, dest_conf)
         if dest:
             delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
             dest.logout()
@@ -1158,11 +1154,12 @@ def main():
         if not dest:
             print("Error: Could not connect to destination server.")
             sys.exit(1)
-        dest.logout()
 
         if args.gmail_mode:
+            dest.logout()
             # Special Gmail mode
             restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags, full_restore=args.full_restore)
+            dest = None  # Connection handled by restore_gmail_with_labels
         elif args.folder:
             # Restore specific folder
             folder_path = os.path.join(local_path, args.folder.replace("/", os.sep))
@@ -1180,6 +1177,7 @@ def main():
                 full_restore=args.full_restore,
                 cache_root=local_path,
             )
+            dest.logout()
         else:
             # Restore all folders
             folders = get_backup_folders(local_path)
@@ -1192,6 +1190,13 @@ def main():
                 # Skip manifest files
                 if folder_name in ("labels_manifest.json", "flags_manifest.json"):
                     continue
+
+                # Proactively refresh OAuth2 token and ensure connection is healthy between folders
+                dest = ensure_connection(dest, dest_conf)
+                if not dest:
+                    print("Fatal: Could not reconnect to destination IMAP server. Aborting.")
+                    sys.exit(1)
+
                 restore_folder(
                     folder_name,
                     folder_path,
@@ -1203,6 +1208,8 @@ def main():
                     full_restore=args.full_restore,
                     cache_root=local_path,
                 )
+
+            dest.logout()
 
         print("\nRestore completed successfully.")
 
