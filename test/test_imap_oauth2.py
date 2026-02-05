@@ -28,9 +28,11 @@ def clear_oauth2_caches():
     """Clear module-level OAuth2 caches between tests."""
     imap_oauth2._msal_app_cache.clear()
     imap_oauth2._google_creds_cache.clear()
+    imap_oauth2._tenant_cache.clear()
     yield
     imap_oauth2._msal_app_cache.clear()
     imap_oauth2._google_creds_cache.clear()
+    imap_oauth2._tenant_cache.clear()
 
 
 class TestDetectOauth2Provider:

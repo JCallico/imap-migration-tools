@@ -23,6 +23,7 @@ import urllib.parse
 # Module-level caches for OAuth2 token refresh
 _msal_app_cache = {}  # (client_id, tenant_id) -> PublicClientApplication
 _google_creds_cache = {}  # (client_id, client_secret) -> credentials
+_tenant_cache = {}  # domain -> tenant_id
 _token_refresh_lock = threading.Lock()
 
 
@@ -92,12 +93,17 @@ def discover_microsoft_tenant(email):
     """
     Auto-discovers the Microsoft tenant ID from an email address domain.
     Uses the OpenID Connect discovery endpoint (no authentication required).
+    Results are cached per domain to avoid repeated network requests.
     Returns the tenant ID string or None if discovery fails.
     """
-    domain = email.split("@")[-1].strip()
+    domain = email.split("@")[-1].strip().lower()
     if not domain:
         print("Error: Could not discover Microsoft tenant: missing email domain")
         return None
+
+    # Return cached tenant if available
+    if domain in _tenant_cache:
+        return _tenant_cache[domain]
 
     domain_quoted = urllib.parse.quote(domain, safe=".-")
     path = f"/{domain_quoted}/.well-known/openid-configuration"
@@ -111,7 +117,9 @@ def discover_microsoft_tenant(email):
     issuer = data.get("issuer", "")
     match = re.search(r"/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", issuer)
     if match:
-        return match.group(1)
+        tenant_id = match.group(1)
+        _tenant_cache[domain] = tenant_id
+        return tenant_id
 
     print(f"Error: Could not extract tenant ID from issuer: {issuer}")
     return None
