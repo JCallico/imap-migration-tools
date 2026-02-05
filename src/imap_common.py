@@ -337,6 +337,8 @@ def parse_message_id_and_subject_from_bytes(raw_message):
 def message_exists_in_folder(dest_conn, msg_id):
     """
     Checks if a message with the given Message-ID exists in the CURRENTLY SELECTED folder of dest_conn.
+    Only considers non-deleted messages (UNDELETED) so that messages pending expunge
+    don't block uploads of fresh copies.
     Returns True if found, False otherwise.
     """
     if not msg_id:
@@ -344,7 +346,7 @@ def message_exists_in_folder(dest_conn, msg_id):
 
     clean_id = msg_id.replace('"', '\\"')
     try:
-        typ, data = dest_conn.search(None, f'(HEADER Message-ID "{clean_id}")')
+        typ, data = dest_conn.search(None, f'UNDELETED (HEADER Message-ID "{clean_id}")')
         if typ != "OK":
             return False
 
