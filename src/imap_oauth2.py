@@ -60,6 +60,21 @@ def is_token_expired_error(error):
     return "accesstokenexpired" in error_str or "session invalidated" in error_str
 
 
+def is_auth_error(error):
+    """
+    Check if an exception indicates an authentication failure that may be recoverable
+    by reconnecting (token expiration, session loss, etc.).
+
+    Args:
+        error: The exception to check
+
+    Returns:
+        True if the error indicates an auth failure, False otherwise
+    """
+    error_str = str(error).lower()
+    return is_token_expired_error(error) or "not authenticated" in error_str or "authentication failed" in error_str
+
+
 def detect_oauth2_provider(host):
     """
     Detects the OAuth2 provider from the IMAP host.

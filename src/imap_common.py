@@ -367,7 +367,7 @@ def get_message_ids_in_folder(imap_conn):
             return {}
     except Exception as e:
         # Re-raise token expiration errors so callers can handle reconnection
-        if imap_oauth2.is_token_expired_error(e):
+        if imap_oauth2.is_auth_error(e):
             raise
         return {}
 
@@ -410,7 +410,7 @@ def get_uid_to_message_id_map(imap_conn, uids):
                         uid_to_msgid[uid] = mid
         except Exception as e:
             # Re-raise token expiration errors so callers can handle reconnection
-            if imap_oauth2.is_token_expired_error(e):
+            if imap_oauth2.is_auth_error(e):
                 raise
             continue
 

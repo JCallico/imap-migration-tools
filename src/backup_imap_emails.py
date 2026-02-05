@@ -88,6 +88,70 @@ def get_thread_connection(src_conf):
     return thread_local.src
 
 
+def process_single_uid(src, uid, folder_name, local_folder_path):
+    """
+    Fetch and save a single email by UID.
+
+    Args:
+        src: IMAP connection
+        uid: Message UID to fetch
+        folder_name: Current folder name (for logging)
+        local_folder_path: Local directory to save email
+
+    Returns:
+        Tuple of (success: bool, connection):
+        - (True, src): UID processed successfully (or skipped)
+        - (False, src): Auth error occurred, caller should retry after reconnect
+    """
+    uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
+
+    try:
+        resp, data = src.uid("fetch", uid, "(RFC822)")
+        if resp != "OK" or not data or data[0] is None:
+            safe_print(f"[{folder_name}] ERROR Fetch Body | UID {uid_str}")
+            return (True, src)  # Don't retry, move on
+
+        raw_email = None
+        for item in data:
+            if isinstance(item, tuple):
+                raw_email = item[1]
+                break
+
+        # Derive Subject for filename from the already-fetched message bytes.
+        _, subject = imap_common.parse_message_id_and_subject_from_bytes(raw_email)
+        if not subject:
+            clean_subject = "No Subject"
+        else:
+            clean_subject = imap_common.sanitize_filename(subject)
+            clean_subject = clean_subject[:100]
+
+        filename = f"{uid_str}_{clean_subject}.eml"
+        full_path = os.path.join(local_folder_path, filename)
+
+        if os.path.exists(full_path):
+            return (True, src)  # Already exists
+
+        if raw_email:
+            try:
+                with open(full_path, "wb") as f:
+                    f.write(raw_email)
+                safe_print(f"[{folder_name}] SAVED  | {filename[:60]}...")
+            except OSError as e:
+                safe_print(f"[{folder_name}] ERROR Write | {uid_str}: {e}")
+        else:
+            safe_print(f"[{folder_name}] EMPTY Content | UID {uid_str}")
+
+        return (True, src)
+
+    except Exception as e:
+        if imap_oauth2.is_auth_error(e):
+            safe_print(f"[{folder_name}] Auth error for UID {uid_str}, will retry...")
+            return (False, src)  # Signal retry needed
+        else:
+            safe_print(f"[{folder_name}] ERROR Processing UID {uid}: {e}")
+            return (True, src)  # Don't retry other errors
+
+
 def process_batch(uids, folder_name, src_conf, local_folder_path):
     if isinstance(src_conf, tuple) and len(src_conf) == 3:
         src_conf = {"host": src_conf[0], "user": src_conf[1], "password": src_conf[2]}
@@ -105,56 +169,23 @@ def process_batch(uids, folder_name, src_conf, local_folder_path):
 
     for uid in uids:
         uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
+        max_retries = 2
 
-        # Proactively refresh token and ensure folder is selected
-        src, ok = imap_session.ensure_folder_session(src, src_conf, folder_name, readonly=True)
-        thread_local.src = src  # Keep thread-local storage in sync
-        if not ok:
-            safe_print(f"[{folder_name}] ERROR: Connection/folder lost for UID {uid_str}")
-            return
+        for attempt in range(max_retries):
+            src, ok = imap_session.ensure_folder_session(src, src_conf, folder_name, readonly=True)
+            thread_local.src = src
+            if not ok:
+                safe_print(f"[{folder_name}] ERROR: Connection/folder lost for UID {uid_str}")
+                return
 
-        try:
-            # Fetch Full Content (RFC822 gets the whole message including headers and attachments)
-            resp, data = src.uid("fetch", uid, "(RFC822)")
-            if resp != "OK" or not data or data[0] is None:
-                safe_print(f"[{folder_name}] ERROR Fetch Body | UID {uid_str}")
-                continue
+            success, src = process_single_uid(src, uid, folder_name, local_folder_path)
+            thread_local.src = src
 
-            raw_email = None
-            for item in data:
-                if isinstance(item, tuple):
-                    raw_email = item[1]
-                    break
-
-            # Derive Subject for filename from the already-fetched message bytes.
-            _, subject = imap_common.parse_message_id_and_subject_from_bytes(raw_email)
-            if not subject:
-                clean_subject = "No Subject"
-            else:
-                clean_subject = imap_common.sanitize_filename(subject)
-                # Limit subject len to avoid FS path length limits (max 255 usually)
-                clean_subject = clean_subject[:100]
-
-            filename = f"{uid_str}_{clean_subject}.eml"
-            full_path = os.path.join(local_folder_path, filename)
-
-            # Double check existence (in case incremental UID checks missed it or naming collision).
-            if os.path.exists(full_path):
-                continue
-
-            if raw_email:
-                try:
-                    with open(full_path, "wb") as f:
-                        f.write(raw_email)
-                    safe_print(f"[{folder_name}] SAVED  | {filename[:60]}...")
-                except OSError as e:
-                    # Valid filename might still fail if path too long
-                    safe_print(f"[{folder_name}] ERROR Write | {uid_str}: {e}")
-            else:
-                safe_print(f"[{folder_name}] EMPTY Content | UID {uid_str}")
-
-        except Exception as e:
-            safe_print(f"[{folder_name}] ERROR Processing UID {uid}: {e}")
+            if success:
+                break
+            if attempt < max_retries - 1:
+                src = None
+                thread_local.src = None
 
 
 def get_existing_uids(local_path):
