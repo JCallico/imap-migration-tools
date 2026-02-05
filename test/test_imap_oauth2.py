@@ -489,3 +489,101 @@ class TestRefreshOauth2Token:
         # The other two should see conf["oauth2_token"] changed and skip.
         assert call_count["value"] == 1
         assert conf["oauth2_token"] == "fresh_token"
+
+
+class TestIsTokenExpiredError:
+    """Tests for is_token_expired_error function."""
+
+    def test_detects_access_token_expired(self):
+        """Test detects 'accesstokenexpired' error."""
+        error = Exception("AUTHENTICATE failed: AccessTokenExpired")
+        assert imap_oauth2.is_token_expired_error(error) is True
+
+    def test_detects_session_invalidated(self):
+        """Test detects 'session invalidated' error."""
+        error = Exception("Session invalidated by server")
+        assert imap_oauth2.is_token_expired_error(error) is True
+
+    def test_case_insensitive_access_token_expired(self):
+        """Test case-insensitive matching for accesstokenexpired."""
+        error = Exception("ACCESSTOKENEXPIRED")
+        assert imap_oauth2.is_token_expired_error(error) is True
+
+    def test_case_insensitive_session_invalidated(self):
+        """Test case-insensitive matching for session invalidated."""
+        error = Exception("SESSION INVALIDATED")
+        assert imap_oauth2.is_token_expired_error(error) is True
+
+    def test_false_for_connection_error(self):
+        """Test returns False for connection errors."""
+        error = Exception("Connection refused")
+        assert imap_oauth2.is_token_expired_error(error) is False
+
+    def test_false_for_timeout_error(self):
+        """Test returns False for timeout errors."""
+        error = Exception("The read operation timed out")
+        assert imap_oauth2.is_token_expired_error(error) is False
+
+    def test_false_for_generic_error(self):
+        """Test returns False for generic errors."""
+        error = Exception("Something went wrong")
+        assert imap_oauth2.is_token_expired_error(error) is False
+
+    def test_false_for_not_authenticated(self):
+        """Test returns False for 'not authenticated' (handled by is_auth_error)."""
+        error = Exception("User not authenticated")
+        assert imap_oauth2.is_token_expired_error(error) is False
+
+
+class TestIsAuthError:
+    """Tests for is_auth_error function."""
+
+    def test_detects_access_token_expired(self):
+        """Test detects 'accesstokenexpired' error (via is_token_expired_error)."""
+        error = Exception("AUTHENTICATE failed: AccessTokenExpired")
+        assert imap_oauth2.is_auth_error(error) is True
+
+    def test_detects_session_invalidated(self):
+        """Test detects 'session invalidated' error (via is_token_expired_error)."""
+        error = Exception("Session invalidated by server")
+        assert imap_oauth2.is_auth_error(error) is True
+
+    def test_detects_not_authenticated(self):
+        """Test detects 'not authenticated' error."""
+        error = Exception("User not authenticated")
+        assert imap_oauth2.is_auth_error(error) is True
+
+    def test_detects_authentication_failed(self):
+        """Test detects 'authentication failed' error."""
+        error = Exception("Authentication failed for user@example.com")
+        assert imap_oauth2.is_auth_error(error) is True
+
+    def test_case_insensitive_not_authenticated(self):
+        """Test case-insensitive matching for not authenticated."""
+        error = Exception("NOT AUTHENTICATED")
+        assert imap_oauth2.is_auth_error(error) is True
+
+    def test_case_insensitive_authentication_failed(self):
+        """Test case-insensitive matching for authentication failed."""
+        error = Exception("AUTHENTICATION FAILED")
+        assert imap_oauth2.is_auth_error(error) is True
+
+    def test_false_for_connection_error(self):
+        """Test returns False for connection errors."""
+        error = Exception("Connection refused")
+        assert imap_oauth2.is_auth_error(error) is False
+
+    def test_false_for_timeout_error(self):
+        """Test returns False for timeout errors."""
+        error = Exception("The read operation timed out")
+        assert imap_oauth2.is_auth_error(error) is False
+
+    def test_false_for_generic_error(self):
+        """Test returns False for generic errors."""
+        error = Exception("Something went wrong")
+        assert imap_oauth2.is_auth_error(error) is False
+
+    def test_false_for_folder_not_found(self):
+        """Test returns False for folder errors."""
+        error = Exception("Folder not found: INBOX")
+        assert imap_oauth2.is_auth_error(error) is False
