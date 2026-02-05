@@ -942,6 +942,9 @@ def main():
                 sys.exit(0)
             folders = imap_common.list_selectable_folders(src)
             for name in folders:
+                if name in imap_common.EXCHANGE_SKIP_FOLDERS:
+                    print(f"Skipping Exchange system folder: {name}")
+                    continue
                 src = imap_session.ensure_connection(src, src_conf)
                 if not src:
                     print("Fatal: Could not reconnect to IMAP server. Aborting.")

@@ -1027,6 +1027,9 @@ def main():
                     if DELETE_SOURCE and trash_folder and name == trash_folder:
                         safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
                         continue
+                    if name in imap_common.EXCHANGE_SKIP_FOLDERS:
+                        safe_print(f"Skipping Exchange system folder: {name}")
+                        continue
 
                     src_main = imap_session.ensure_connection(src_main, src_conf)
                     if not src_main:

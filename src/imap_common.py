@@ -48,6 +48,13 @@ GMAIL_SYSTEM_FOLDERS = {
     GMAIL_IMPORTANT,
 }
 
+# Exchange/Outlook folders that typically can't be backed up via IMAP
+# These often contain proprietary data that Exchange returns as error messages
+EXCHANGE_SKIP_FOLDERS = {
+    "Suggested Contacts",
+    "Calendar",
+}
+
 # IMAP Folder Constants
 FOLDER_INBOX = "INBOX"
 
