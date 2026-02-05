@@ -117,6 +117,7 @@ import threading
 
 import imap_common
 import imap_oauth2
+import imap_session
 
 # Configuration defaults
 DELETE_FROM_SOURCE_DEFAULT = False
@@ -288,16 +289,9 @@ def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msg
     return deleted_count
 
 
-def ensure_connection(conn, conf):
-    """Refresh OAuth2 token if needed and ensure connection is healthy."""
-    if conf.get("oauth2"):
-        imap_oauth2.refresh_oauth2_token(conf, conf.get("oauth2_token"))
-    return imap_common.ensure_connection_from_conf(conn, conf)
-
-
 def get_thread_connections(src_conf, dest_conf):
-    thread_local.src = ensure_connection(getattr(thread_local, "src", None), src_conf)
-    thread_local.dest = ensure_connection(getattr(thread_local, "dest", None), dest_conf)
+    thread_local.src = imap_session.ensure_connection(getattr(thread_local, "src", None), src_conf)
+    thread_local.dest = imap_session.ensure_connection(getattr(thread_local, "dest", None), dest_conf)
     return thread_local.src, thread_local.dest
 
 
@@ -335,12 +329,35 @@ def process_batch(
             return
 
     deleted_count = 0
+
     for uid in uids:
+        uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
+
+        # Proactively refresh tokens and ensure folders are selected
+        src, src_ok = imap_session.ensure_folder_session(src, src_conf, folder_name, readonly=False)
+        thread_local.src = src
+        if not src_ok:
+            safe_print(f"[{folder_name}] ERROR: Source connection/folder lost for UID {uid_str}")
+            return
+
+        # For dest, only maintain folder selection in non-Gmail mode (Gmail mode changes folders dynamically)
+        if not gmail_mode:
+            dest, dest_ok = imap_session.ensure_folder_session(dest, dest_conf, folder_name, readonly=False)
+            thread_local.dest = dest
+            if not dest_ok:
+                safe_print(f"[{folder_name}] ERROR: Dest connection/folder lost for UID {uid_str}")
+                return
+        else:
+            dest = imap_session.ensure_connection(dest, dest_conf)
+            thread_local.dest = dest
+            if not dest:
+                safe_print(f"[{folder_name}] ERROR: Dest connection lost for UID {uid_str}")
+                return
+
         try:
             # Fetch full message (needed to copy and/or apply labels)
             resp, data = src.uid("fetch", uid, "(FLAGS INTERNALDATE BODY.PEEK[])")
             if resp != "OK":
-                uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
                 safe_print(f"[{folder_name}] ERROR Fetch | UID {uid_str}")
                 continue
 
@@ -462,7 +479,7 @@ def process_batch(
                 deleted_count += 1
 
         except Exception as e:
-            safe_print(f"[{folder_name}] ERROR Exec | UID {uid}: {e}")
+            safe_print(f"[{folder_name}] ERROR Exec | UID {uid_str}: {e}")
 
     if delete_from_source and deleted_count > 0:
         try:
@@ -961,11 +978,11 @@ def main():
                         safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
                         continue
 
-                    src_main = ensure_connection(src_main, src_conf)
+                    src_main = imap_session.ensure_connection(src_main, src_conf)
                     if not src_main:
                         safe_print("Fatal: Could not reconnect to source IMAP server. Aborting.")
                         sys.exit(1)
-                    dest_main = ensure_connection(dest_main, dest_conf)
+                    dest_main = imap_session.ensure_connection(dest_main, dest_conf)
                     if not dest_main:
                         safe_print("Fatal: Could not reconnect to destination IMAP server. Aborting.")
                         sys.exit(1)

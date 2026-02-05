@@ -165,6 +165,20 @@ def get_imap_connection(host, user, password=None, oauth2_token=None):
         return None
 
 
+def is_token_expired_error(error):
+    """
+    Check if an exception indicates OAuth2 token expiration.
+
+    Args:
+        error: The exception to check
+
+    Returns:
+        True if the error indicates token expiration, False otherwise
+    """
+    error_str = str(error).lower()
+    return "accesstokenexpired" in error_str or "session invalidated" in error_str
+
+
 def ensure_connection(conn, host, user, password=None, oauth2_token=None):
     """
     Verifies an IMAP connection is still alive, reconnecting if necessary.
@@ -363,7 +377,10 @@ def get_message_ids_in_folder(imap_conn):
         resp, data = imap_conn.uid("search", None, "ALL")
         if resp != "OK" or not data[0].strip():
             return {}
-    except Exception:
+    except Exception as e:
+        # Re-raise token expiration errors so callers can handle reconnection
+        if is_token_expired_error(e):
+            raise
         return {}
 
     uids = data[0].split()
@@ -403,7 +420,10 @@ def get_uid_to_message_id_map(imap_conn, uids):
                     mid = extract_message_id(item[1])
                     if mid:
                         uid_to_msgid[uid] = mid
-        except Exception:
+        except Exception as e:
+            # Re-raise token expiration errors so callers can handle reconnection
+            if is_token_expired_error(e):
+                raise
             continue
 
     return uid_to_msgid

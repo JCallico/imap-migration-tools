@@ -551,16 +551,16 @@ class TestGmailLabelsPreservation:
             "<msg2@test.com>": {"flags": []},
         }
 
-        def mock_get_message_ids(conn, folder, progress_cb=None):
-            return folder_data.get(folder, set())
-
-        def mock_get_message_info(conn, folder, progress_cb=None):
+        def mock_get_message_info_with_conf(conn, folder, src_conf, progress_cb=None):
             if folder == "[Gmail]/All Mail":
-                return all_mail_info
-            return {}
+                return (all_mail_info, conn)
+            return ({}, conn)
 
-        monkeypatch.setattr(backup_imap_emails, "get_message_ids_in_folder", mock_get_message_ids)
-        monkeypatch.setattr(backup_imap_emails, "get_message_info_in_folder", mock_get_message_info)
+        def mock_get_message_ids_with_conf(conn, folder, src_conf, progress_cb=None):
+            return (folder_data.get(folder, set()), conn)
+
+        monkeypatch.setattr(backup_imap_emails, "get_message_ids_in_folder_with_conf", mock_get_message_ids_with_conf)
+        monkeypatch.setattr(backup_imap_emails, "get_message_info_in_folder_with_conf", mock_get_message_info_with_conf)
 
         result = backup_imap_emails.build_labels_manifest(mock_conn, str(tmp_path))
 
