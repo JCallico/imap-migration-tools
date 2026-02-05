@@ -14,6 +14,8 @@ from email import policy
 from email.header import decode_header
 from email.parser import BytesParser
 
+import imap_oauth2
+
 # Standard IMAP flags
 FLAG_SEEN = "\\Seen"
 FLAG_ANSWERED = "\\Answered"
@@ -163,20 +165,6 @@ def get_imap_connection(host, user, password=None, oauth2_token=None):
     except Exception as e:
         print(f"Connection error to {host}: {e}")
         return None
-
-
-def is_token_expired_error(error):
-    """
-    Check if an exception indicates OAuth2 token expiration.
-
-    Args:
-        error: The exception to check
-
-    Returns:
-        True if the error indicates token expiration, False otherwise
-    """
-    error_str = str(error).lower()
-    return "accesstokenexpired" in error_str or "session invalidated" in error_str
 
 
 def ensure_connection(conn, host, user, password=None, oauth2_token=None):
@@ -379,7 +367,7 @@ def get_message_ids_in_folder(imap_conn):
             return {}
     except Exception as e:
         # Re-raise token expiration errors so callers can handle reconnection
-        if is_token_expired_error(e):
+        if imap_oauth2.is_token_expired_error(e):
             raise
         return {}
 
@@ -422,7 +410,7 @@ def get_uid_to_message_id_map(imap_conn, uids):
                         uid_to_msgid[uid] = mid
         except Exception as e:
             # Re-raise token expiration errors so callers can handle reconnection
-            if is_token_expired_error(e):
+            if imap_oauth2.is_token_expired_error(e):
                 raise
             continue
 

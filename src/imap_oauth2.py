@@ -46,6 +46,20 @@ def _fetch_json_https(host, path, timeout=10):
     return json.loads(body.decode("utf-8"))
 
 
+def is_token_expired_error(error):
+    """
+    Check if an exception indicates OAuth2 token expiration.
+
+    Args:
+        error: The exception to check
+
+    Returns:
+        True if the error indicates token expiration, False otherwise
+    """
+    error_str = str(error).lower()
+    return "accesstokenexpired" in error_str or "session invalidated" in error_str
+
+
 def detect_oauth2_provider(host):
     """
     Detects the OAuth2 provider from the IMAP host.
