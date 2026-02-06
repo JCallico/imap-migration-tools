@@ -387,8 +387,8 @@ def process_single_uid(
             if trash_folder and folder_name != trash_folder:
                 try:
                     src.uid("copy", uid, f'"{trash_folder}"')
-                except Exception:
-                    pass
+                except Exception as e:
+                    safe_print(f"[{folder_name}] WARNING: Failed to copy UID {uid_str} to trash: {e}")
             src.uid(imap_common.CMD_STORE, uid, imap_common.OP_ADD_FLAGS, imap_common.FLAG_DELETED_LITERAL)
             deleted = 1
 
