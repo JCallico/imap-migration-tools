@@ -5,6 +5,7 @@ Constants and functions specific to Gmail/Google Workspace IMAP implementation.
 """
 
 import imap_common
+import imap_oauth2
 
 # Gmail system folders
 GMAIL_ALL_MAIL = "[Gmail]/All Mail"
@@ -91,6 +92,9 @@ def build_gmail_label_index(src_conn, safe_print_func):
             src_conn.select(f'"{folder}"', readonly=True)
             msg_ids = set(imap_common.get_message_ids_in_folder(src_conn).values())
         except Exception as e:
+            # Re-raise auth errors so caller can handle reconnection
+            if imap_oauth2.is_auth_error(e):
+                raise
             safe_print_func(f"Error getting message IDs from {folder}: {e}")
             msg_ids = set()
         label = folder_to_label(folder)
