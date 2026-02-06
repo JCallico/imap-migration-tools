@@ -235,6 +235,13 @@ def get_message_info_in_folder_with_conf(imap_conn, folder_name, src_conf, progr
     """
     message_info = {}
 
+    # Ensure connection is healthy (refresh OAuth2 token if needed) before initial select
+    if src_conf:
+        imap_conn = imap_session.ensure_connection(imap_conn, src_conf)
+        if not imap_conn:
+            safe_print(f"Could not establish connection for folder {folder_name}")
+            return (message_info, None)
+
     try:
         imap_conn.select(f'"{folder_name}"', readonly=True)
     except Exception as e:
