@@ -61,6 +61,7 @@ from typing import Optional
 
 import imap_common
 import imap_oauth2
+import imap_session
 import restore_cache
 
 
@@ -88,16 +89,9 @@ def safe_print(message):
         print(f"[{short_name}] {message}")
 
 
-def ensure_connection(conn, conf):
-    """Refresh OAuth2 token if needed and ensure connection is healthy."""
-    if conf.get("oauth2"):
-        imap_oauth2.refresh_oauth2_token(conf, conf.get("oauth2_token"))
-    return imap_common.ensure_connection_from_conf(conn, conf)
-
-
 def get_thread_connection(dest_conf):
     """Get or create a thread-local IMAP connection."""
-    thread_local.dest = ensure_connection(getattr(thread_local, "dest", None), dest_conf)
+    thread_local.dest = imap_session.ensure_connection(getattr(thread_local, "dest", None), dest_conf)
     return thread_local.dest
 
 
@@ -395,10 +389,16 @@ def process_restore_batch(
     gmail_mode = folder_name == "__GMAIL_MODE__"
 
     for file_path, filename in eml_files:
+        # Proactively refresh token if needed
+        dest = get_thread_connection(dest_conf)
+        if not dest:
+            safe_print(f"ERROR: Connection lost for {filename}")
+            return
+
         try:
             message_id, date_str, raw_content, subject = parse_eml_file(file_path)
             if raw_content is None:
-                continue
+                continue  # No content, skip to next file
 
             size = len(raw_content)
             size_str = f"{size / 1024:.1f}KB"
@@ -472,7 +472,7 @@ def process_restore_batch(
                 and message_id in existing_dest_msg_ids
             ):
                 safe_print(f"[{target_folder}] SKIP (already present) | {size_str:<8} | {display_subject}")
-                continue
+                continue  # Skip to next file
 
             # Upload to target folder.
             # Keep server-side duplicate checks enabled to avoid creating duplicates for emails
@@ -815,7 +815,7 @@ def restore_folder(
     # Delete orphan emails from destination if enabled
     if dest_delete and local_msg_ids is not None:
         safe_print("Syncing destination: removing emails not in local backup...")
-        dest = ensure_connection(None, dest_conf)
+        dest = imap_session.ensure_connection(None, dest_conf)
         if dest:
             delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
             dest.logout()
@@ -1192,7 +1192,7 @@ def main():
                     continue
 
                 # Proactively refresh OAuth2 token and ensure connection is healthy between folders
-                dest = ensure_connection(dest, dest_conf)
+                dest = imap_session.ensure_connection(dest, dest_conf)
                 if not dest:
                     print("Fatal: Could not reconnect to destination IMAP server. Aborting.")
                     sys.exit(1)

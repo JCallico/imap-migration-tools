@@ -14,6 +14,8 @@ from email import policy
 from email.header import decode_header
 from email.parser import BytesParser
 
+import imap_oauth2
+
 # Standard IMAP flags
 FLAG_SEEN = "\\Seen"
 FLAG_ANSWERED = "\\Answered"
@@ -363,7 +365,10 @@ def get_message_ids_in_folder(imap_conn):
         resp, data = imap_conn.uid("search", None, "ALL")
         if resp != "OK" or not data[0].strip():
             return {}
-    except Exception:
+    except Exception as e:
+        # Re-raise token expiration errors so callers can handle reconnection
+        if imap_oauth2.is_auth_error(e):
+            raise
         return {}
 
     uids = data[0].split()
@@ -403,7 +408,10 @@ def get_uid_to_message_id_map(imap_conn, uids):
                     mid = extract_message_id(item[1])
                     if mid:
                         uid_to_msgid[uid] = mid
-        except Exception:
+        except Exception as e:
+            # Re-raise token expiration errors so callers can handle reconnection
+            if imap_oauth2.is_auth_error(e):
+                raise
             continue
 
     return uid_to_msgid

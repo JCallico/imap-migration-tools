@@ -58,6 +58,7 @@ import threading
 
 import imap_common
 import imap_oauth2
+import imap_session
 
 # Defaults
 MAX_WORKERS = 10
@@ -76,13 +77,6 @@ def safe_print(message):
         print(f"[{short_name}] {message}")
 
 
-def ensure_connection(conn, conf):
-    """Refresh OAuth2 token if needed and ensure connection is healthy."""
-    if conf.get("oauth2"):
-        imap_oauth2.refresh_oauth2_token(conf, conf.get("oauth2_token"))
-    return imap_common.ensure_connection_from_conf(conn, conf)
-
-
 def get_thread_connection(src_conf):
     # Backwards-compatible: tests and some internal call sites may still pass
     # (host, user, password) tuples. Normalize to the dict form used by
@@ -90,8 +84,72 @@ def get_thread_connection(src_conf):
     if isinstance(src_conf, tuple) and len(src_conf) == 3:
         src_conf = {"host": src_conf[0], "user": src_conf[1], "password": src_conf[2]}
 
-    thread_local.src = ensure_connection(getattr(thread_local, "src", None), src_conf)
+    thread_local.src = imap_session.ensure_connection(getattr(thread_local, "src", None), src_conf)
     return thread_local.src
+
+
+def process_single_uid(src, uid, folder_name, local_folder_path):
+    """
+    Fetch and save a single email by UID.
+
+    Args:
+        src: IMAP connection
+        uid: Message UID to fetch
+        folder_name: Current folder name (for logging)
+        local_folder_path: Local directory to save email
+
+    Returns:
+        Tuple of (success: bool, connection):
+        - (True, src): UID processed successfully (or skipped)
+        - (False, src): Auth error occurred, caller should retry after reconnect
+    """
+    uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
+
+    try:
+        resp, data = src.uid("fetch", uid, "(RFC822)")
+        if resp != "OK" or not data or data[0] is None:
+            safe_print(f"[{folder_name}] ERROR Fetch Body | UID {uid_str}")
+            return (True, src)  # Don't retry, move on
+
+        raw_email = None
+        for item in data:
+            if isinstance(item, tuple):
+                raw_email = item[1]
+                break
+
+        # Derive Subject for filename from the already-fetched message bytes.
+        _, subject = imap_common.parse_message_id_and_subject_from_bytes(raw_email)
+        if not subject:
+            clean_subject = "No Subject"
+        else:
+            clean_subject = imap_common.sanitize_filename(subject)
+            clean_subject = clean_subject[:100]
+
+        filename = f"{uid_str}_{clean_subject}.eml"
+        full_path = os.path.join(local_folder_path, filename)
+
+        if os.path.exists(full_path):
+            return (True, src)  # Already exists
+
+        if raw_email:
+            try:
+                with open(full_path, "wb") as f:
+                    f.write(raw_email)
+                safe_print(f"[{folder_name}] SAVED  | {filename[:60]}...")
+            except OSError as e:
+                safe_print(f"[{folder_name}] ERROR Write | {uid_str}: {e}")
+        else:
+            safe_print(f"[{folder_name}] EMPTY Content | UID {uid_str}")
+
+        return (True, src)
+
+    except Exception as e:
+        if imap_oauth2.is_auth_error(e):
+            safe_print(f"[{folder_name}] Auth error for UID {uid_str}, will retry...")
+            return (False, src)  # Signal retry needed
+        else:
+            safe_print(f"[{folder_name}] ERROR Processing UID {uid}: {e}")
+            return (True, src)  # Don't retry other errors
 
 
 def process_batch(uids, folder_name, src_conf, local_folder_path):
@@ -110,52 +168,24 @@ def process_batch(uids, folder_name, src_conf, local_folder_path):
         return
 
     for uid in uids:
-        try:
-            # Helper to handle byte UIDs
-            uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
+        uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
+        max_retries = 2
 
-            # Fetch Full Content
-            # RFC822 gets the whole message including headers and attachments
-            resp, data = src.uid("fetch", uid, "(RFC822)")
-            if resp != "OK" or not data or data[0] is None:
-                safe_print(f"[{folder_name}] ERROR Fetch Body | UID {uid_str}")
-                continue
+        for attempt in range(max_retries):
+            src, ok = imap_session.ensure_folder_session(src, src_conf, folder_name, readonly=True)
+            thread_local.src = src
+            if not ok:
+                safe_print(f"[{folder_name}] ERROR: Connection/folder lost for UID {uid_str}")
+                return
 
-            raw_email = None
-            for item in data:
-                if isinstance(item, tuple):
-                    raw_email = item[1]
-                    break
+            success, src = process_single_uid(src, uid, folder_name, local_folder_path)
+            thread_local.src = src
 
-            # Derive Subject for filename from the already-fetched message bytes.
-            _, subject = imap_common.parse_message_id_and_subject_from_bytes(raw_email)
-            if not subject:
-                clean_subject = "No Subject"
-            else:
-                clean_subject = imap_common.sanitize_filename(subject)
-                # Limit subject len to avoid FS path length limits (max 255 usually)
-                clean_subject = clean_subject[:100]
-
-            filename = f"{uid_str}_{clean_subject}.eml"
-            full_path = os.path.join(local_folder_path, filename)
-
-            # Double check existence (in case incremental UID checks missed it or naming collision).
-            if os.path.exists(full_path):
-                continue
-
-            if raw_email:
-                try:
-                    with open(full_path, "wb") as f:
-                        f.write(raw_email)
-                    safe_print(f"[{folder_name}] SAVED  | {filename[:60]}...")
-                except OSError as e:
-                    # Valid filename might still fail if path too long
-                    safe_print(f"[{folder_name}] ERROR Write | {uid_str}: {e}")
-            else:
-                safe_print(f"[{folder_name}] EMPTY Content | UID {uid_str}")
-
-        except Exception as e:
-            safe_print(f"[{folder_name}] ERROR Processing UID {uid}: {e}")
+            if success:
+                break
+            if attempt < max_retries - 1:
+                src = None
+                thread_local.src = None
 
 
 def get_existing_uids(local_path):
@@ -210,11 +240,21 @@ def is_gmail_label_folder(folder_name):
 PRESERVABLE_FLAGS = imap_common.PRESERVABLE_FLAGS
 
 
-def get_message_info_in_folder(imap_conn, folder_name, progress_callback=None):
+def get_message_info_in_folder_with_conf(imap_conn, folder_name, src_conf, progress_callback=None):
     """
-    Returns a dict of Message-IDs and their IMAP flags for all emails in a folder.
-    Returns: { "message-id": {"flags": ["\\Seen", "\\Flagged", ...]}, ... }
-    Optional progress_callback(current, total) for progress reporting.
+    Returns a dict of Message-IDs and their IMAP flags for all emails in a folder,
+    with OAuth2 session management.
+
+    Args:
+        imap_conn: IMAP connection
+        folder_name: Folder to scan
+        src_conf: Connection config dict for OAuth2 refresh
+        progress_callback: Optional callback(current, total) for progress reporting
+
+    Returns:
+        Tuple of (message_info, imap_conn) where message_info is:
+        { "message-id": {"flags": ["\\Seen", "\\Flagged", ...]}, ... }
+        The returned imap_conn may be different if reconnection occurred.
     """
     message_info = {}
 
@@ -222,16 +262,16 @@ def get_message_info_in_folder(imap_conn, folder_name, progress_callback=None):
         imap_conn.select(f'"{folder_name}"', readonly=True)
     except Exception as e:
         safe_print(f"Could not select folder {folder_name}: {e}")
-        return message_info
+        return (message_info, imap_conn)
 
     try:
         resp, data = imap_conn.uid("search", None, "ALL")
         if resp != "OK" or not data or not data[0]:
-            return message_info
+            return (message_info, imap_conn)
 
         uids = data[0].split()
         if not uids:
-            return message_info
+            return (message_info, imap_conn)
 
         total_uids = len(uids)
 
@@ -244,6 +284,13 @@ def get_message_info_in_folder(imap_conn, folder_name, progress_callback=None):
             # Report progress
             if progress_callback:
                 progress_callback(min(i + batch_size, total_uids), total_uids)
+
+            # Proactively refresh token and ensure folder is selected
+            if src_conf:
+                imap_conn, ok = imap_session.ensure_folder_session(imap_conn, src_conf, folder_name, readonly=True)
+                if not ok:
+                    safe_print(f"ERROR: Connection/folder lost in {folder_name}")
+                    break
 
             try:
                 # Fetch both Message-ID header and FLAGS
@@ -271,17 +318,42 @@ def get_message_info_in_folder(imap_conn, folder_name, progress_callback=None):
                             message_info[msg_id] = {"flags": flags}
             except Exception as e:
                 safe_print(f"Error fetching batch in {folder_name}: {e}")
-                # Try to keep connection alive
-                try:
-                    imap_conn.noop()
-                except Exception:
-                    pass
                 continue
 
     except Exception as e:
         safe_print(f"Error searching folder {folder_name}: {e}")
 
+    return (message_info, imap_conn)
+
+
+def get_message_info_in_folder(imap_conn, folder_name, progress_callback=None):
+    """
+    Returns a dict of Message-IDs and their IMAP flags for all emails in a folder.
+
+    Returns: { "message-id": {"flags": ["\\Seen", "\\Flagged", ...]}, ... }
+    Optional progress_callback(current, total) for progress reporting.
+    """
+    message_info, _ = get_message_info_in_folder_with_conf(imap_conn, folder_name, None, progress_callback)
     return message_info
+
+
+def get_message_ids_in_folder_with_conf(imap_conn, folder_name, src_conf, progress_callback=None):
+    """
+    Returns a set of Message-IDs for all emails in a given folder,
+    with OAuth2 session management.
+
+    Args:
+        imap_conn: IMAP connection
+        folder_name: Folder to scan
+        src_conf: Connection config dict for OAuth2 refresh
+        progress_callback: Optional callback(current, total) for progress reporting
+
+    Returns:
+        Tuple of (message_ids, imap_conn) where message_ids is a set of strings.
+        The returned imap_conn may be different if reconnection occurred.
+    """
+    info, imap_conn = get_message_info_in_folder_with_conf(imap_conn, folder_name, src_conf, progress_callback)
+    return (set(info.keys()), imap_conn)
 
 
 def get_message_ids_in_folder(imap_conn, folder_name, progress_callback=None):
@@ -294,7 +366,7 @@ def get_message_ids_in_folder(imap_conn, folder_name, progress_callback=None):
     return set(info.keys())
 
 
-def build_labels_manifest(imap_conn, local_path):
+def build_labels_manifest(imap_conn, local_path, src_conf=None):
     """
     Builds a manifest mapping Message-IDs to their Gmail labels and IMAP flags.
     Scans all folders (labels) in the account and records which Message-IDs
@@ -302,6 +374,7 @@ def build_labels_manifest(imap_conn, local_path):
 
     Returns a dict: { "message-id": {"labels": ["Label1", ...], "flags": ["\\Seen", ...]}, ... }
     Saves the manifest to labels_manifest.json in the backup directory.
+    Optional src_conf for automatic token refresh on expiration.
     """
     import time
 
@@ -329,7 +402,9 @@ def build_labels_manifest(imap_conn, local_path):
             flush=True,
         )
 
-    all_mail_info = get_message_info_in_folder(imap_conn, imap_common.GMAIL_ALL_MAIL, all_mail_progress_cb)
+    all_mail_info, imap_conn = get_message_info_in_folder_with_conf(
+        imap_conn, imap_common.GMAIL_ALL_MAIL, src_conf, all_mail_progress_cb
+    )
     print()  # New line after progress
 
     # Initialize manifest with flags from All Mail
@@ -369,7 +444,7 @@ def build_labels_manifest(imap_conn, local_path):
             )
 
         safe_print(f"[{folder_idx}/{total_folders}] Scanning: {folder_name}")
-        message_ids = get_message_ids_in_folder(imap_conn, folder_name, progress_cb)
+        message_ids, imap_conn = get_message_ids_in_folder_with_conf(imap_conn, folder_name, src_conf, progress_cb)
         print()  # New line after progress
 
         # Keep connection alive between folders
@@ -422,13 +497,14 @@ def build_labels_manifest(imap_conn, local_path):
     return manifest
 
 
-def build_flags_manifest(imap_conn, local_path, folders_to_scan=None):
+def build_flags_manifest(imap_conn, local_path, folders_to_scan=None, src_conf=None):
     """
     Builds a manifest mapping Message-IDs to their IMAP flags.
     For non-Gmail servers, scans specified folders (or all folders if not specified).
 
     Returns a dict: { "message-id": {"flags": ["\\Seen", ...]}, ... }
     Saves the manifest to flags_manifest.json in the backup directory.
+    Optional src_conf for automatic token refresh on expiration.
     """
     import time
 
@@ -467,7 +543,7 @@ def build_flags_manifest(imap_conn, local_path, folders_to_scan=None):
             )
 
         safe_print(f"[{folder_idx}/{total_folders}] Scanning: {folder_name}")
-        folder_info = get_message_info_in_folder(imap_conn, folder_name, progress_cb)
+        folder_info, imap_conn = get_message_info_in_folder_with_conf(imap_conn, folder_name, src_conf, progress_cb)
         print()  # New line after progress
 
         # Merge into manifest (keep first occurrence of flags)
@@ -829,7 +905,7 @@ def main():
         if args.preserve_labels or args.manifest_only or args.gmail_mode:
             print("Building Gmail labels manifest...")
             print("This scans all folders to map Message-IDs to labels and flags.\n")
-            build_labels_manifest(src, local_path)
+            build_labels_manifest(src, local_path, src_conf)
             print("")  # Blank line after manifest building
         # Build flags-only manifest for non-Gmail servers
         elif args.preserve_flags:
@@ -837,12 +913,15 @@ def main():
             print("This scans folders to capture read/starred/etc status.\n")
             # Get folders to scan
             folders_to_scan = [args.folder] if args.folder else None
-            build_flags_manifest(src, local_path, folders_to_scan)
+            build_flags_manifest(src, local_path, folders_to_scan, src_conf)
             print("")  # Blank line after manifest building
 
         # If manifest-only mode, we're done
         if args.manifest_only:
-            src.logout()
+            try:
+                src.logout()
+            except Exception:
+                pass  # Connection may already be closed
             manifest_path = os.path.join(local_path, MANIFEST_FILENAME)
             print("\nManifest-only mode complete.")
             print(f"Labels manifest saved to: {manifest_path}")
@@ -856,15 +935,23 @@ def main():
         elif args.folder:
             backup_folder(src, args.folder, local_path, src_conf, args.dest_delete)
         else:
+            # Reconnect after potentially long manifest building
+            src = imap_session.ensure_connection(src, src_conf)
+            if not src:
+                print("Warning: Could not reconnect to IMAP server for backup. Manifest was saved successfully.")
+                sys.exit(0)
             folders = imap_common.list_selectable_folders(src)
             for name in folders:
-                src = ensure_connection(src, src_conf)
+                src = imap_session.ensure_connection(src, src_conf)
                 if not src:
                     print("Fatal: Could not reconnect to IMAP server. Aborting.")
                     sys.exit(1)
                 backup_folder(src, name, local_path, src_conf, args.dest_delete)
 
-        src.logout()
+        try:
+            src.logout()
+        except Exception:
+            pass  # Connection may already be closed
         print("\nBackup completed successfully.")
 
         if args.preserve_labels or args.gmail_mode:
