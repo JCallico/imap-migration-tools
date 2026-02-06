@@ -57,6 +57,8 @@ import sys
 import threading
 
 import imap_common
+import provider_exchange
+import provider_gmail
 import imap_oauth2
 import imap_session
 
@@ -207,31 +209,6 @@ def get_existing_uids(local_path):
     except Exception:
         pass
     return existing
-
-
-def is_gmail_label_folder(folder_name):
-    """
-    Determines if a folder represents a Gmail label (user-created or system label
-    that should be preserved).
-    Excludes system folders like All Mail, Spam, Trash, Drafts.
-    """
-    # Exclude system folders that aren't really "labels"
-    if folder_name in imap_common.GMAIL_SYSTEM_FOLDERS:
-        return False
-
-    # imap_common.FOLDER_INBOX is a special case - it's a label in Gmail
-    if folder_name == imap_common.FOLDER_INBOX:
-        return True
-
-    # [Gmail]/Sent Mail and [Gmail]/Starred are labels worth preserving
-    if folder_name in (imap_common.GMAIL_SENT, imap_common.GMAIL_STARRED):
-        return True
-
-    # Any folder NOT under [Gmail]/ is a user label
-    if not folder_name.startswith("[Gmail]/"):
-        return True
-
-    return False
 
 
 # Standard IMAP flags that can be preserved during migration
@@ -403,7 +380,7 @@ def build_labels_manifest(imap_conn, local_path, src_conf=None):
         )
 
     all_mail_info, imap_conn = get_message_info_in_folder_with_conf(
-        imap_conn, imap_common.GMAIL_ALL_MAIL, src_conf, all_mail_progress_cb
+        imap_conn, provider_gmail.GMAIL_ALL_MAIL, src_conf, all_mail_progress_cb
     )
     print()  # New line after progress
 
@@ -425,7 +402,7 @@ def build_labels_manifest(imap_conn, local_path, src_conf=None):
         pass
 
     # Parse folder names and filter to label folders
-    label_folders = [f for f in all_folders if is_gmail_label_folder(f)]
+    label_folders = [f for f in all_folders if provider_gmail.is_label_folder(f)]
 
     total_folders = len(label_folders)
     safe_print(f"Found {total_folders} label folders to scan.\n")
@@ -931,7 +908,7 @@ def main():
 
         # Gmail mode: backup only [Gmail]/All Mail
         if args.gmail_mode:
-            backup_folder(src, imap_common.GMAIL_ALL_MAIL, local_path, src_conf, args.dest_delete)
+            backup_folder(src, provider_gmail.GMAIL_ALL_MAIL, local_path, src_conf, args.dest_delete)
         elif args.folder:
             backup_folder(src, args.folder, local_path, src_conf, args.dest_delete)
         else:
@@ -942,7 +919,7 @@ def main():
                 sys.exit(0)
             folders = imap_common.list_selectable_folders(src)
             for name in folders:
-                if name in imap_common.EXCHANGE_SKIP_FOLDERS:
+                if provider_exchange.is_special_folder(name):
                     print(f"Skipping Exchange system folder: {name}")
                     continue
                 src = imap_session.ensure_connection(src, src_conf)
