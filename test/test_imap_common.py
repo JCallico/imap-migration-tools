@@ -16,6 +16,8 @@ import os
 import sys
 from unittest.mock import Mock
 
+import pytest
+
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import imap_common
@@ -653,13 +655,21 @@ class TestGetMessageIdsInFolder:
         result = imap_common.get_message_ids_in_folder(mock_conn)
         assert result == {}
 
-    def test_search_exception(self):
-        """Test returns empty dict when search raises exception."""
+    def test_search_non_auth_exception_returns_empty(self):
+        """Test returns empty dict when search raises non-auth exception."""
         mock_conn = Mock()
         mock_conn.uid.side_effect = Exception("Connection error")
 
         result = imap_common.get_message_ids_in_folder(mock_conn)
         assert result == {}
+
+    def test_search_auth_error_reraises(self):
+        """Test re-raises auth errors so callers can handle reconnection."""
+        mock_conn = Mock()
+        mock_conn.uid.side_effect = Exception("User not authenticated")
+
+        with pytest.raises(Exception, match="not authenticated"):
+            imap_common.get_message_ids_in_folder(mock_conn)
 
     def test_single_message(self):
         """Test fetching single message ID."""
@@ -707,8 +717,8 @@ class TestGetMessageIdsInFolder:
         result = imap_common.get_message_ids_in_folder(mock_conn)
         assert result == {}
 
-    def test_fetch_exception_for_batch(self):
-        """Test continues when fetch raises exception for a batch."""
+    def test_fetch_non_auth_exception_continues(self):
+        """Test continues when fetch raises non-auth exception for a batch."""
         mock_conn = Mock()
         mock_conn.uid.side_effect = [
             ("OK", [b"1"]),
@@ -717,6 +727,17 @@ class TestGetMessageIdsInFolder:
 
         result = imap_common.get_message_ids_in_folder(mock_conn)
         assert result == {}
+
+    def test_fetch_auth_error_reraises(self):
+        """Test re-raises auth errors during fetch so callers can handle reconnection."""
+        mock_conn = Mock()
+        mock_conn.uid.side_effect = [
+            ("OK", [b"1"]),
+            Exception("AccessTokenExpired"),
+        ]
+
+        with pytest.raises(Exception, match="AccessTokenExpired"):
+            imap_common.get_message_ids_in_folder(mock_conn)
 
     def test_skips_empty_message_id(self):
         """Test that empty message IDs are not added to dict."""

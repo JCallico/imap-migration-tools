@@ -117,6 +117,7 @@ import threading
 
 import imap_common
 import imap_oauth2
+import imap_session
 
 # Configuration defaults
 DELETE_FROM_SOURCE_DEFAULT = False
@@ -288,17 +289,165 @@ def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msg
     return deleted_count
 
 
-def ensure_connection(conn, conf):
-    """Refresh OAuth2 token if needed and ensure connection is healthy."""
-    if conf.get("oauth2"):
-        imap_oauth2.refresh_oauth2_token(conf, conf.get("oauth2_token"))
-    return imap_common.ensure_connection_from_conf(conn, conf)
-
-
 def get_thread_connections(src_conf, dest_conf):
-    thread_local.src = ensure_connection(getattr(thread_local, "src", None), src_conf)
-    thread_local.dest = ensure_connection(getattr(thread_local, "dest", None), dest_conf)
+    thread_local.src = imap_session.ensure_connection(getattr(thread_local, "src", None), src_conf)
+    thread_local.dest = imap_session.ensure_connection(getattr(thread_local, "dest", None), dest_conf)
     return thread_local.src, thread_local.dest
+
+
+def process_single_uid(
+    src,
+    dest,
+    uid,
+    folder_name,
+    delete_from_source,
+    trash_folder,
+    preserve_flags,
+    gmail_mode,
+    label_index,
+    check_duplicate,
+):
+    """
+    Migrate a single email by UID.
+
+    Returns:
+        Tuple of (success, src, dest, deleted):
+        - success=True: UID processed (copied, skipped, or non-auth error)
+        - success=False: Auth error, caller should retry after reconnect
+        - deleted: 1 if message was marked for deletion, 0 otherwise
+    """
+    uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
+
+    try:
+        resp, data = src.uid("fetch", uid, "(FLAGS INTERNALDATE BODY.PEEK[])")
+        if resp != "OK":
+            safe_print(f"[{folder_name}] ERROR Fetch | UID {uid_str}")
+            return (True, src, dest, 0)
+
+        msg_content = None
+        flags = None
+        date_str = None
+
+        for item in data:
+            if isinstance(item, tuple):
+                msg_content = item[1]
+                meta = item[0].decode("utf-8", errors="ignore")
+                flags_match = re.search(r"FLAGS\s+\((.*?)\)", meta)
+                if flags_match:
+                    flags = filter_preservable_flags(flags_match.group(1))
+                date_match = re.search(r"INTERNALDATE\s+\"(.*?)\"", meta)
+                if date_match:
+                    date_str = f'"{date_match.group(1)}"'
+
+        if not msg_content:
+            return (True, src, dest, 0)
+
+        size = len(msg_content) if isinstance(msg_content, (bytes, bytearray)) else 0
+        size_str = f"{size / 1024:.1f}KB" if size else "0KB"
+        msg_id, subject = imap_common.parse_message_id_and_subject_from_bytes(msg_content)
+
+        if not msg_id:
+            msg_id = imap_common.parse_message_id_from_bytes(msg_content)
+
+        # Determine target folder and labels for Gmail mode
+        apply_labels = gmail_mode
+        labels = []
+        if apply_labels and msg_id and label_index is not None:
+            labels = sorted(label_index.get(msg_id, set()))
+
+        if apply_labels:
+            skip_folders = {imap_common.GMAIL_ALL_MAIL, imap_common.GMAIL_SPAM, imap_common.GMAIL_TRASH}
+            target_folder = None
+            remaining_labels = []
+
+            for label in labels:
+                label_folder = label_to_folder(label)
+                if label_folder in skip_folders:
+                    continue
+                if target_folder is None:
+                    target_folder = label_folder
+                else:
+                    remaining_labels.append(label)
+
+            if target_folder is None:
+                target_folder = imap_common.FOLDER_RESTORED_UNLABELED
+                remaining_labels = []
+        else:
+            target_folder = folder_name
+
+        imap_common.ensure_folder_exists(dest, target_folder)
+        dest.select(f'"{target_folder}"')
+
+        is_duplicate = bool(msg_id and check_duplicate and imap_common.message_exists_in_folder(dest, msg_id))
+
+        if is_duplicate:
+            safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {subject[:40]}")
+            if preserve_flags and flags and msg_id:
+                sync_flags_on_existing(dest, target_folder, msg_id, flags, size)
+        else:
+            valid_flags = f"({flags})" if (preserve_flags and flags) else None
+            imap_common.append_email(
+                dest,
+                target_folder,
+                msg_content,
+                date_str,
+                valid_flags,
+                ensure_folder=False,
+            )
+            safe_print(f"[{target_folder}] {'COPIED':<12} | {size_str:<8} | {subject[:40]}")
+            if preserve_flags and flags:
+                for flag in flags.split():
+                    safe_print(f"  -> Applied flag: {flag}")
+
+        # Apply remaining Gmail labels
+        if apply_labels and remaining_labels and msg_id:
+            for label in remaining_labels:
+                label_folder = label_to_folder(label)
+                if label_folder == target_folder:
+                    continue
+                if label_folder in (imap_common.GMAIL_ALL_MAIL, imap_common.GMAIL_SPAM, imap_common.GMAIL_TRASH):
+                    continue
+                try:
+                    imap_common.ensure_folder_exists(dest, label_folder)
+                    dest.select(f'"{label_folder}"')
+                    if not imap_common.message_exists_in_folder(dest, msg_id):
+                        valid_flags = f"({flags})" if (preserve_flags and flags) else None
+                        imap_common.append_email(
+                            dest,
+                            label_folder,
+                            msg_content,
+                            date_str,
+                            valid_flags,
+                            ensure_folder=False,
+                        )
+                        safe_print(f"  -> Applied label: {label}")
+                        if preserve_flags and flags:
+                            for flag in flags.split():
+                                safe_print(f"    -> Applied flag: {flag}")
+                    elif preserve_flags and flags:
+                        sync_flags_on_existing(dest, label_folder, msg_id, flags, size)
+                except Exception as e:
+                    safe_print(f"  -> Error applying label {label}: {e}")
+
+        deleted = 0
+        if delete_from_source:
+            if trash_folder and folder_name != trash_folder:
+                try:
+                    src.uid("copy", uid, f'"{trash_folder}"')
+                except Exception:
+                    pass
+            src.uid(imap_common.CMD_STORE, uid, imap_common.OP_ADD_FLAGS, imap_common.FLAG_DELETED_LITERAL)
+            deleted = 1
+
+        return (True, src, dest, deleted)
+
+    except Exception as e:
+        if imap_oauth2.is_auth_error(e):
+            safe_print(f"[{folder_name}] Auth error for UID {uid_str}, will retry...")
+            return (False, src, dest, 0)
+        else:
+            safe_print(f"[{folder_name}] ERROR Exec | UID {uid_str}: {e}")
+            return (True, src, dest, 0)
 
 
 def process_batch(
@@ -318,14 +467,12 @@ def process_batch(
         safe_print("Error: Could not establish connections in worker thread.")
         return
 
-    # Select source folder
     try:
         src.select(f'"{folder_name}"', readonly=False)
     except Exception as e:
         safe_print(f"Error selecting folder {folder_name} in worker: {e}")
         return
 
-    # In non-Gmail-mode, we keep a selected destination folder for efficiency
     if not gmail_mode:
         try:
             imap_common.ensure_folder_exists(dest, folder_name)
@@ -335,134 +482,54 @@ def process_batch(
             return
 
     deleted_count = 0
+
     for uid in uids:
-        try:
-            # Fetch full message (needed to copy and/or apply labels)
-            resp, data = src.uid("fetch", uid, "(FLAGS INTERNALDATE BODY.PEEK[])")
-            if resp != "OK":
-                uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
-                safe_print(f"[{folder_name}] ERROR Fetch | UID {uid_str}")
-                continue
+        uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
+        max_retries = 2
 
-            msg_content = None
-            flags = None
-            date_str = None
+        for attempt in range(max_retries):
+            src, src_ok = imap_session.ensure_folder_session(src, src_conf, folder_name, readonly=False)
+            thread_local.src = src
+            if not src_ok:
+                safe_print(f"[{folder_name}] ERROR: Source connection/folder lost for UID {uid_str}")
+                return
 
-            for item in data:
-                if isinstance(item, tuple):
-                    msg_content = item[1]
-                    meta = item[0].decode("utf-8", errors="ignore")
-                    flags_match = re.search(r"FLAGS\s+\((.*?)\)", meta)
-                    if flags_match:
-                        flags = filter_preservable_flags(flags_match.group(1))
-                    date_match = re.search(r"INTERNALDATE\s+\"(.*?)\"", meta)
-                    if date_match:
-                        date_str = f'"{date_match.group(1)}"'
-
-            if not msg_content:
-                continue
-
-            # Compute size and parse headers from the already-fetched message bytes.
-            size = len(msg_content) if isinstance(msg_content, (bytes, bytearray)) else 0
-            size_str = f"{size / 1024:.1f}KB" if size else "0KB"
-            msg_id, subject = imap_common.parse_message_id_and_subject_from_bytes(msg_content)
-
-            # Prefer Message-ID from body if missing from header parse
-            if not msg_id:
-                msg_id = imap_common.parse_message_id_from_bytes(msg_content)
-
-            # Determine target folder and labels for Gmail mode
-            apply_labels = gmail_mode
-            labels = []
-            if apply_labels and msg_id and label_index is not None:
-                labels = sorted(label_index.get(msg_id, set()))
-
-            if apply_labels:
-                skip_folders = {imap_common.GMAIL_ALL_MAIL, imap_common.GMAIL_SPAM, imap_common.GMAIL_TRASH}
-                target_folder = None
-                remaining_labels = []
-
-                for label in labels:
-                    label_folder = label_to_folder(label)
-                    if label_folder in skip_folders:
-                        continue
-                    if target_folder is None:
-                        target_folder = label_folder
-                    else:
-                        remaining_labels.append(label)
-
-                if target_folder is None:
-                    target_folder = imap_common.FOLDER_RESTORED_UNLABELED
-                    remaining_labels = []
+            if not gmail_mode:
+                dest, dest_ok = imap_session.ensure_folder_session(dest, dest_conf, folder_name, readonly=False)
+                thread_local.dest = dest
+                if not dest_ok:
+                    safe_print(f"[{folder_name}] ERROR: Dest connection/folder lost for UID {uid_str}")
+                    return
             else:
-                target_folder = folder_name
-                remaining_labels = []
+                dest = imap_session.ensure_connection(dest, dest_conf)
+                thread_local.dest = dest
+                if not dest:
+                    safe_print(f"[{folder_name}] ERROR: Dest connection lost for UID {uid_str}")
+                    return
 
-            imap_common.ensure_folder_exists(dest, target_folder)
-            dest.select(f'"{target_folder}"')
+            success, src, dest, deleted = process_single_uid(
+                src,
+                dest,
+                uid,
+                folder_name,
+                delete_from_source,
+                trash_folder,
+                preserve_flags,
+                gmail_mode,
+                label_index,
+                check_duplicate,
+            )
+            thread_local.src = src
+            thread_local.dest = dest
+            deleted_count += deleted
 
-            is_duplicate = bool(msg_id and check_duplicate and imap_common.message_exists_in_folder(dest, msg_id))
-
-            if is_duplicate:
-                safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {subject[:40]}")
-                if preserve_flags and flags and msg_id:
-                    sync_flags_on_existing(dest, target_folder, msg_id, flags, size)
-            else:
-                valid_flags = f"({flags})" if (preserve_flags and flags) else None
-                imap_common.append_email(
-                    dest,
-                    target_folder,
-                    msg_content,
-                    date_str,
-                    valid_flags,
-                    ensure_folder=False,
-                )
-                safe_print(f"[{target_folder}] {'COPIED':<12} | {size_str:<8} | {subject[:40]}")
-                if preserve_flags and flags:
-                    for flag in flags.split():
-                        safe_print(f"  -> Applied flag: {flag}")
-
-            # Apply remaining Gmail labels (always, whether copied or skipped)
-            if apply_labels and remaining_labels and msg_id:
-                for label in remaining_labels:
-                    label_folder = label_to_folder(label)
-                    if label_folder == target_folder:
-                        continue
-                    if label_folder in (imap_common.GMAIL_ALL_MAIL, imap_common.GMAIL_SPAM, imap_common.GMAIL_TRASH):
-                        continue
-                    try:
-                        imap_common.ensure_folder_exists(dest, label_folder)
-                        dest.select(f'"{label_folder}"')
-                        if not imap_common.message_exists_in_folder(dest, msg_id):
-                            valid_flags = f"({flags})" if (preserve_flags and flags) else None
-                            imap_common.append_email(
-                                dest,
-                                label_folder,
-                                msg_content,
-                                date_str,
-                                valid_flags,
-                                ensure_folder=False,
-                            )
-                            safe_print(f"  -> Applied label: {label}")
-                            if preserve_flags and flags:
-                                for flag in flags.split():
-                                    safe_print(f"    -> Applied flag: {flag}")
-                        elif preserve_flags and flags:
-                            sync_flags_on_existing(dest, label_folder, msg_id, flags, size)
-                    except Exception as e:
-                        safe_print(f"  -> Error applying label {label}: {e}")
-
-            if delete_from_source:
-                if trash_folder and folder_name != trash_folder:
-                    try:
-                        src.uid("copy", uid, f'"{trash_folder}"')
-                    except Exception:
-                        pass
-                src.uid(imap_common.CMD_STORE, uid, imap_common.OP_ADD_FLAGS, imap_common.FLAG_DELETED_LITERAL)
-                deleted_count += 1
-
-        except Exception as e:
-            safe_print(f"[{folder_name}] ERROR Exec | UID {uid}: {e}")
+            if success:
+                break
+            if attempt < max_retries - 1:
+                src = None
+                dest = None
+                thread_local.src = None
+                thread_local.dest = None
 
     if delete_from_source and deleted_count > 0:
         try:
@@ -961,11 +1028,11 @@ def main():
                         safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
                         continue
 
-                    src_main = ensure_connection(src_main, src_conf)
+                    src_main = imap_session.ensure_connection(src_main, src_conf)
                     if not src_main:
                         safe_print("Fatal: Could not reconnect to source IMAP server. Aborting.")
                         sys.exit(1)
-                    dest_main = ensure_connection(dest_main, dest_conf)
+                    dest_main = imap_session.ensure_connection(dest_main, dest_conf)
                     if not dest_main:
                         safe_print("Fatal: Could not reconnect to destination IMAP server. Aborting.")
                         sys.exit(1)
