@@ -348,7 +348,15 @@ def process_single_uid(
         is_duplicate = False
 
         # check cache first if available
-        if not full_migrate and msg_id and existing_dest_msg_ids is not None and msg_id in existing_dest_msg_ids:
+        cache_hit = False
+        if not full_migrate and msg_id and existing_dest_msg_ids is not None:
+            if existing_dest_msg_ids_lock is not None:
+                with existing_dest_msg_ids_lock:
+                    cache_hit = msg_id in existing_dest_msg_ids
+            else:
+                cache_hit = msg_id in existing_dest_msg_ids
+
+        if cache_hit:
             is_cached = True
             is_duplicate = True
             safe_print(f"[{target_folder}] SKIP (cached) | {size_str:<8} | {subject[:40]}")
