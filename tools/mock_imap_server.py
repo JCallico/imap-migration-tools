@@ -80,6 +80,36 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                         self.current_folders[folder] = []
                     self.send_response(tag, "OK CREATE completed")
 
+                elif cmd == "SEARCH":
+                    if not self.selected_folder:
+                        self.send_response(tag, RESPONSE_SELECT_FIRST)
+                        continue
+
+                    msgs = self.current_folders[self.selected_folder]
+                    sub_args = args
+
+                    header_msg_id = None
+                    try:
+                        m = re.search(r'HEADER\s+Message-ID\s+"([^"]+)"', sub_args, re.IGNORECASE)
+                        if m:
+                            header_msg_id = m.group(1)
+                    except Exception:
+                        header_msg_id = None
+
+                    seq_nums = []
+                    for idx, m in enumerate(msgs, start=1):
+                        if "UNDELETED" in sub_args and "\\Deleted" in m["flags"]:
+                            continue
+                        if header_msg_id:
+                            msg_text = m["content"].decode("utf-8", errors="ignore")
+                            if header_msg_id not in msg_text:
+                                continue
+                        seq_nums.append(str(idx))
+
+                    seq_str = " ".join(seq_nums)
+                    self.wfile.write(f"* SEARCH {seq_str}\r\n".encode())
+                    self.send_response(tag, RESPONSE_SEARCH_COMPLETED)
+
                 elif cmd == "EXPUNGE":
                     if self.selected_folder:
                         msgs = self.current_folders[self.selected_folder]

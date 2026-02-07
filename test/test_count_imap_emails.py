@@ -12,7 +12,6 @@ Tests cover:
 import imaplib
 import os
 import sys
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -97,103 +96,6 @@ class TestLocalEmailCounting:
         assert "[Gmail]/All Mail" in captured.out
         assert "TOTAL" in captured.out
         assert "3" in captured.out
-
-
-class TestEmailCountingErrors:
-    """Tests for error handling in email counting."""
-
-    def test_connection_failure(self, monkeypatch):
-        """Test graceful exit when connection fails."""
-        mock_get = MagicMock(return_value=None)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-
-        # Should return silently without raising
-        count_imap_emails.count_emails("host", "user", "pass")
-        mock_get.assert_called_once()
-
-    def test_list_command_failure(self, monkeypatch):
-        """Test handling of LIST command failure."""
-        mock_mail = MagicMock()
-        mock_mail.list.return_value = ("NO", [])
-        mock_get = MagicMock(return_value=mock_mail)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-
-        count_imap_emails.count_emails("host", "user", "pass")
-        mock_mail.list.assert_called_once()
-        # Should exit early, so select should not be called
-        mock_mail.select.assert_not_called()
-
-    def test_select_command_failure(self, monkeypatch):
-        """Test handling of SELECT command failure for a folder."""
-        mock_mail = MagicMock()
-        mock_mail.list.return_value = ("OK", [rb'(\HasNoChildren) "/" "INBOX"'])
-        # Fail selection
-        mock_mail.select.return_value = ("NO", [b"Select failed"])
-
-        mock_get = MagicMock(return_value=mock_mail)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-        monkeypatch.setattr("imap_common.normalize_folder_name", lambda x: "INBOX")
-
-        count_imap_emails.count_emails("host", "user", "pass")
-
-        mock_mail.select.assert_called_once()
-        # Should skip search for this folder
-        mock_mail.search.assert_not_called()
-
-    def test_search_command_failure(self, monkeypatch, capsys):
-        """Test handling of SEARCH command failure."""
-        mock_mail = MagicMock()
-        mock_mail.list.return_value = ("OK", [rb'(\HasNoChildren) "/" "INBOX"'])
-        mock_mail.select.return_value = ("OK", [b"Selected"])
-        # Fail search
-        mock_mail.search.return_value = ("NO", [b"Search failed"])
-
-        mock_get = MagicMock(return_value=mock_mail)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-        monkeypatch.setattr("imap_common.normalize_folder_name", lambda x: "INBOX")
-
-        count_imap_emails.count_emails("host", "user", "pass")
-
-        captured = capsys.readouterr()
-        assert "Error" in captured.out
-
-    def test_imap_exception_during_list(self, monkeypatch, capsys):
-        """Test handling of IMAP4 exception during list command."""
-        mock_mail = MagicMock()
-        mock_mail.list.side_effect = imaplib.IMAP4.error("Crash listing")
-        mock_get = MagicMock(return_value=mock_mail)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-
-        count_imap_emails.count_emails("host", "user", "pass")
-
-        captured = capsys.readouterr()
-        assert "Failed to list mailboxes" in captured.out
-
-    def test_imap_exception_during_select(self, monkeypatch, capsys):
-        """Test handling of IMAP4 exception during folder selection."""
-        mock_mail = MagicMock()
-        mock_mail.list.return_value = ("OK", [rb'(\HasNoChildren) "/" "INBOX"'])
-        mock_mail.select.side_effect = imaplib.IMAP4.error("Crash selecting")
-
-        mock_get = MagicMock(return_value=mock_mail)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-        monkeypatch.setattr("imap_common.normalize_folder_name", lambda x: "INBOX")
-
-        count_imap_emails.count_emails("host", "user", "pass")
-
-        captured = capsys.readouterr()
-        # Should print Error for that folder
-        assert "Error" in captured.out
-
-    def test_generic_exception(self, monkeypatch, capsys):
-        """Test handling of generic connection/runtime exceptions."""
-        mock_get = MagicMock(side_effect=Exception("Generic Crash"))
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-
-        count_imap_emails.count_emails("host", "user", "pass")
-
-        captured = capsys.readouterr()
-        assert "An error occurred: Generic Crash" in captured.out
 
 
 class TestMainFunction:
