@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import count_imap_emails
+import imap_common
 from conftest import make_single_mock_connection
 
 
@@ -95,6 +96,155 @@ class TestLocalEmailCounting:
         assert "[Gmail]/All Mail" in captured.out
         assert "TOTAL" in captured.out
         assert "3" in captured.out
+
+    def test_count_local_ignores_hidden_dirs(self, tmp_path, capsys):
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+        (inbox_path / "1_a.eml").write_bytes(b"Subject: A\r\n\r\nBody")
+        (inbox_path / "note.txt").write_text("ignore")
+
+        hidden_path = tmp_path / ".hidden"
+        hidden_path.mkdir()
+        (hidden_path / "1_hidden.eml").write_bytes(b"Subject: Hidden\r\n\r\nBody")
+
+        cache_path = tmp_path / "__pycache__"
+        cache_path.mkdir()
+        (cache_path / "1_cache.eml").write_bytes(b"Subject: Cache\r\n\r\nBody")
+
+        nested_path = tmp_path / "Projects" / "Sub"
+        nested_path.mkdir(parents=True)
+        (nested_path / "1_sub.eml").write_bytes(b"Subject: Sub\r\n\r\nBody")
+
+        count_imap_emails.count_local_emails(str(tmp_path))
+
+        captured = capsys.readouterr()
+        assert "INBOX" in captured.out
+        assert "Projects/Sub" in captured.out
+        assert ".hidden" not in captured.out
+        assert "__pycache__" not in captured.out
+
+    def test_get_local_email_count_unreadable_folder(self, tmp_path):
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+        (inbox_path / "1_a.eml").write_bytes(b"Subject: A\r\n\r\nBody")
+
+        os.chmod(inbox_path, 0)
+        try:
+            result = imap_common.get_local_email_count(str(tmp_path), "INBOX")
+            assert result is None
+        finally:
+            os.chmod(inbox_path, 0o700)
+
+
+class TestImapCommonHelpers:
+    """Tests for imap_common helpers via script tests."""
+
+    def test_list_selectable_folders_filters_noselect(self):
+        class FakeConn:
+            def list(self):
+                return (
+                    "OK",
+                    [
+                        b'(\\Noselect) "/" "Archive"',
+                        b'(\\HasNoChildren) "/" "INBOX"',
+                        '(\\HasNoChildren) "/" "Sent"',
+                    ],
+                )
+
+        result = imap_common.list_selectable_folders(FakeConn())
+        assert result == ["INBOX", "Sent"]
+
+    def test_list_selectable_folders_list_error(self):
+        class FakeConn:
+            def list(self):
+                return ("NO", [])
+
+        result = imap_common.list_selectable_folders(FakeConn())
+        assert result == []
+
+    def test_list_selectable_folders_exception(self):
+        class FakeConn:
+            def list(self):
+                raise Exception("list failed")
+
+        result = imap_common.list_selectable_folders(FakeConn())
+        assert result == []
+
+    def test_get_imap_connection_oauth2_uses_authenticate(self, monkeypatch):
+        class FakeIMAP:
+            def __init__(self, _host):
+                self.auth_called = False
+                self.login_called = False
+
+            def authenticate(self, _mechanism, auth_cb):
+                self.auth_called = True
+                auth_cb(None)
+
+            def login(self, _user, _password):
+                self.login_called = True
+
+        monkeypatch.setattr(imap_common.imaplib, "IMAP4_SSL", FakeIMAP)
+
+        conn = imap_common.get_imap_connection("host", "user", oauth2_token="token")
+
+        assert isinstance(conn, FakeIMAP)
+        assert conn.auth_called is True
+        assert conn.login_called is False
+
+    def test_get_imap_connection_basic_login(self, monkeypatch):
+        class FakeIMAP:
+            def __init__(self, _host):
+                self.auth_called = False
+                self.login_called = False
+
+            def authenticate(self, _mechanism, _auth_cb):
+                self.auth_called = True
+
+            def login(self, _user, _password):
+                self.login_called = True
+
+        monkeypatch.setattr(imap_common.imaplib, "IMAP4_SSL", FakeIMAP)
+
+        conn = imap_common.get_imap_connection("host", "user", password="pass")
+
+        assert isinstance(conn, FakeIMAP)
+        assert conn.login_called is True
+        assert conn.auth_called is False
+
+    def test_ensure_connection_returns_same_conn_when_healthy(self):
+        class GoodConn:
+            def __init__(self):
+                self.noop_calls = 0
+
+            def noop(self):
+                self.noop_calls += 1
+
+        conn = GoodConn()
+        result = imap_common.ensure_connection(conn, "host", "user", "pass")
+        assert result is conn
+        assert conn.noop_calls == 1
+
+    def test_ensure_connection_reconnects_on_noop_error(self, monkeypatch):
+        class BadConn:
+            def noop(self):
+                raise Exception("fail")
+
+        new_conn = object()
+        monkeypatch.setattr(imap_common, "get_imap_connection", lambda *args, **kwargs: new_conn)
+
+        result = imap_common.ensure_connection(BadConn(), "host", "user", "pass")
+        assert result is new_conn
+
+    def test_ensure_connection_from_conf_reconnects_on_noop_error(self, monkeypatch):
+        class BadConn:
+            def noop(self):
+                raise Exception("fail")
+
+        new_conn = object()
+        monkeypatch.setattr(imap_common, "get_imap_connection_from_conf", lambda _conf: new_conn)
+
+        result = imap_common.ensure_connection_from_conf(BadConn(), {"host": "h", "user": "u"})
+        assert result is new_conn
 
 
 class TestMainFunction:

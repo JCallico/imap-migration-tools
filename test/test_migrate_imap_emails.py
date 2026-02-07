@@ -19,6 +19,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
+import imap_common
 import migrate_imap_emails
 from conftest import make_mock_connection
 
@@ -569,6 +570,58 @@ class TestTrashHandling:
         assert len(src_server.folders["INBOX"]) == 0
         # Source Trash should have it (copied before delete)
         assert len(src_server.folders["Trash"]) == 1
+
+
+class TestCommonMessageParsing:
+    """Covers imap_common message parsing helpers used by migrate."""
+
+    def test_parse_message_id_from_empty_bytes(self):
+        assert imap_common.parse_message_id_from_bytes(b"") is None
+
+    def test_parse_message_id_and_subject_from_empty_bytes(self):
+        msg_id, subject = imap_common.parse_message_id_and_subject_from_bytes(b"")
+        assert msg_id is None
+        assert subject == "(No Subject)"
+
+    def test_get_uid_to_message_id_map_empty(self):
+        result = imap_common.get_uid_to_message_id_map(object(), [])
+        assert result == {}
+
+    def test_extract_message_id_invalid_type(self):
+        assert imap_common.extract_message_id(123) is None
+
+    def test_parse_message_id_from_invalid_type(self):
+        assert imap_common.parse_message_id_from_bytes(123) is None
+
+    def test_parse_message_id_from_bytes_success(self):
+        raw_message = b"Subject: X\r\nMessage-ID: <ok@test>\r\n\r\nBody"
+        assert imap_common.parse_message_id_from_bytes(raw_message) == "<ok@test>"
+
+    def test_parse_message_id_and_subject_from_invalid_type(self):
+        msg_id, subject = imap_common.parse_message_id_and_subject_from_bytes(123)
+        assert msg_id is None
+        assert subject == "(No Subject)"
+
+    def test_get_uid_to_message_id_map_missing_uid(self):
+        class FakeConn:
+            def uid(self, _cmd, _uids, _opts):
+                return (
+                    "OK",
+                    [
+                        (
+                            b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {40}",
+                            b"Message-ID: <x@test>\r\n",
+                        ),
+                        b")",
+                    ],
+                )
+
+        result = imap_common.get_uid_to_message_id_map(FakeConn(), [b"1"])
+        assert result == {}
+
+    def test_decode_mime_header_exception_path(self):
+        result = imap_common.decode_mime_header(["not", "a", "header"])
+        assert result == "['not', 'a', 'header']"
 
 
 class TestFilterPreservableFlags:

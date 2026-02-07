@@ -8,6 +8,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
+import imap_common
 import migrate_imap_emails
 import restore_cache
 from conftest import make_mock_connection
@@ -122,3 +123,17 @@ class TestMigrationCache:
         _run_migrate(monkeypatch, cache_dir, p3, p4, full_migrate=True)
 
         assert len(dest_server2.folders["INBOX"]) == 1
+
+    def test_load_progress_cache_warns_on_unusable_root(self, tmp_path):
+        cache_file = tmp_path / "cachefile"
+        cache_file.write_text("not a directory")
+
+        messages = []
+        _cache_path, _cache_data, _cache_lock = imap_common.load_progress_cache(
+            str(cache_file),
+            "host",
+            "user",
+            log_fn=messages.append,
+        )
+
+        assert any("unable to create cache directory" in msg for msg in messages)

@@ -147,6 +147,15 @@ Body content.
         assert message_id is None
         assert raw_content is None
 
+    def test_parse_eml_file_unknown_charset_subject(self, tmp_path):
+        """Test parsing with a subject that uses an unknown charset."""
+        file_path = tmp_path / "unknown_charset.eml"
+        file_path.write_text("Subject: =?X-UNKNOWN?B?SGVsbG8=?=\r\nMessage-ID: <unknown@test>\r\n\r\nBody")
+
+        message_id, _date_str, _raw_content, subject = restore_imap_emails.parse_eml_file(str(file_path))
+        assert message_id == "<unknown@test>"
+        assert "Hello" in subject
+
 
 class TestGetEmlFiles:
     """Tests for getting .eml files from a folder."""
@@ -412,6 +421,57 @@ class TestRestoreProgressCache:
         ids = restore_cache.get_cached_message_ids(cache_data2, lock, "imap.example.com", "user@example.com", "INBOX")
         assert "<a@test>" in ids
         assert "<b@test>" in ids
+
+
+class TestBackupFolderDiscovery:
+    """Tests for backup folder discovery helpers."""
+
+    def test_get_backup_folders_skips_unreadable(self, tmp_path):
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+        (inbox_path / "1.eml").write_bytes(b"Subject: Inbox\r\n\r\nBody")
+
+        unreadable_path = tmp_path / "Unreadable"
+        unreadable_path.mkdir()
+        (unreadable_path / "1.eml").write_bytes(b"Subject: Hidden\r\n\r\nBody")
+        os.chmod(unreadable_path, 0)
+
+        try:
+            folders = imap_common.get_backup_folders(str(tmp_path))
+        finally:
+            os.chmod(unreadable_path, 0o700)
+
+        folder_names = {name for name, _path in folders}
+        assert "INBOX" in folder_names
+        assert "Unreadable" not in folder_names
+
+    def test_extract_message_id_from_eml_missing_file(self, tmp_path):
+        missing_path = tmp_path / "missing.eml"
+        assert imap_common.extract_message_id_from_eml(str(missing_path)) is None
+
+    def test_extract_message_id_from_eml_success(self, tmp_path):
+        eml_path = tmp_path / "message.eml"
+        eml_path.write_text("Message-ID: <ok@test>\r\nSubject: Hi\r\n\r\nBody")
+
+        assert imap_common.extract_message_id_from_eml(str(eml_path)) == "<ok@test>"
+
+
+class TestTrashFolderDetection:
+    """Tests for trash folder detection with string LIST entries."""
+
+    def test_detect_trash_folder_with_string_entries(self):
+        class FakeConn:
+            def list(self):
+                return (
+                    "OK",
+                    [
+                        '(\\HasNoChildren) "/" "INBOX"',
+                        '(\\HasNoChildren \\Trash) "/" "Trash"',
+                    ],
+                )
+
+        result = imap_common.detect_trash_folder(FakeConn())
+        assert result == "Trash"
 
 
 class TestGetLabelsFromManifest:
