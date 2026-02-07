@@ -57,10 +57,10 @@ import sys
 import threading
 
 import imap_common
-import provider_exchange
-import provider_gmail
 import imap_oauth2
 import imap_session
+import provider_exchange
+import provider_gmail
 
 # Defaults
 MAX_WORKERS = 10
