@@ -152,6 +152,12 @@ def load_progress_cache(
     log_fn=None,
 ) -> tuple[str, dict, threading.Lock]:
     """Load or initialize a progress cache file for a destination."""
+    try:
+        os.makedirs(cache_root, exist_ok=True)
+    except Exception as exc:
+        if log_fn is not None:
+            log_fn(f"Warning: unable to create cache directory '{cache_root}': {exc}")
+
     cache_path = restore_cache.get_dest_index_cache_path(cache_root, dest_host, dest_user)
     cache_data = restore_cache.load_dest_index_cache(cache_path)
     cache_lock = threading.Lock()
