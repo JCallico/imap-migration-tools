@@ -107,7 +107,10 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                         seq_nums.append(str(idx))
 
                     seq_str = " ".join(seq_nums)
-                    self.wfile.write(f"* SEARCH {seq_str}\r\n".encode())
+                    if seq_str:
+                        self.wfile.write(f"* SEARCH {seq_str}\r\n".encode())
+                    else:
+                        self.wfile.write(b"* SEARCH\r\n")
                     self.send_response(tag, RESPONSE_SEARCH_COMPLETED)
 
                 elif cmd == "EXPUNGE":
@@ -155,7 +158,10 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                             valid_uids.append(str(m["uid"]))
 
                         uids_str = " ".join(valid_uids)
-                        self.wfile.write(f"* SEARCH {uids_str}\r\n".encode())
+                        if uids_str:
+                            self.wfile.write(f"* SEARCH {uids_str}\r\n".encode())
+                        else:
+                            self.wfile.write(b"* SEARCH\r\n")
                         self.send_response(tag, RESPONSE_SEARCH_COMPLETED)
 
                     elif sub_cmd == "STORE":
