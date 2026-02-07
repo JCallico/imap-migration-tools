@@ -112,9 +112,7 @@ def get_backup_folders(local_path: str) -> list[tuple[str, str]]:
                 if os.path.isdir(item_path):
                     # Check if this directory contains .eml files
                     has_eml = any(
-                        f.endswith(".eml")
-                        for f in os.listdir(item_path)
-                        if os.path.isfile(os.path.join(item_path, f))
+                        f.endswith(".eml") for f in os.listdir(item_path) if os.path.isfile(os.path.join(item_path, f))
                     )
                     folder_name = f"{prefix}{item}" if prefix else item
 

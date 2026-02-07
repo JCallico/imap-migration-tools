@@ -60,7 +60,6 @@ Examples:
 import argparse
 import os
 import sys
-from typing import Optional
 
 import imap_common
 import imap_oauth2

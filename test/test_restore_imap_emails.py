@@ -350,9 +350,7 @@ Body content.
         """End-to-end: Gmail mode with no labels uses fallback folder."""
         gmail_all_mail = tmp_path / "[Gmail]" / "All Mail"
         gmail_all_mail.mkdir(parents=True)
-        (gmail_all_mail / "1_Test.eml").write_text(
-            "Subject: X\nMessage-ID: <no-labels@test>\n\nBody"
-        )
+        (gmail_all_mail / "1_Test.eml").write_text("Subject: X\nMessage-ID: <no-labels@test>\n\nBody")
 
         dest_data = {"INBOX": []}
         server, port = single_mock_server(dest_data)
@@ -543,9 +541,7 @@ class TestRestoreE2EHelpers:
 
     def test_sync_flags_on_existing(self, single_mock_server):
         dest_data = {
-            "INBOX": [
-                {"uid": 1, "flags": set(), "content": b"Subject: Flag\r\nMessage-ID: <flag@test>\r\n\r\nBody"}
-            ]
+            "INBOX": [{"uid": 1, "flags": set(), "content": b"Subject: Flag\r\nMessage-ID: <flag@test>\r\n\r\nBody"}]
         }
         _server, port = single_mock_server(dest_data)
 

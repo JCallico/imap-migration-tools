@@ -250,6 +250,7 @@ class TestGetExistingUids:
         result = backup_imap_emails.get_existing_uids(str(tmp_path))
         assert result == {"1"}
 
+
 class TestGmailLabelsPreservation:
     """Tests for Gmail labels manifest functionality."""
 

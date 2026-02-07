@@ -9,7 +9,6 @@ Tests cover:
 - Configuration validation
 """
 
-import imaplib
 import os
 import sys
 

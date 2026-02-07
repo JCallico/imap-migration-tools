@@ -1,7 +1,9 @@
 """End-to-end tests for migrate_imap_emails.py cache behavior."""
+
 import json
 import os
 import sys
+
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
@@ -25,14 +27,22 @@ def _run_migrate(monkeypatch, cache_dir, src_port, dest_port, full_migrate=False
 
     argv = [
         "migrate_imap_emails.py",
-        "--src-host", "localhost",
-        "--src-user", "src",
-        "--src-pass", "p",
-        "--dest-host", "localhost",
-        "--dest-user", "dest",
-        "--dest-pass", "p",
-        "--migrate-cache", str(cache_dir),
-        "--workers", "1",
+        "--src-host",
+        "localhost",
+        "--src-user",
+        "src",
+        "--src-pass",
+        "p",
+        "--dest-host",
+        "localhost",
+        "--dest-user",
+        "dest",
+        "--dest-pass",
+        "p",
+        "--migrate-cache",
+        str(cache_dir),
+        "--workers",
+        "1",
     ]
     if full_migrate:
         argv.append("--full-migrate")
@@ -47,6 +57,7 @@ def _run_migrate(monkeypatch, cache_dir, src_port, dest_port, full_migrate=False
     migrate_imap_emails.main()
 
 
+@pytest.mark.usefixtures("mock_server_factory")
 class TestMigrationCache:
     """End-to-end tests for incremental migration using local cache."""
 
