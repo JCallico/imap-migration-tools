@@ -431,7 +431,10 @@ class TestBackupFolderDiscovery:
         inbox_path.mkdir()
         (inbox_path / "1.eml").write_bytes(b"Subject: Inbox\r\n\r\nBody")
 
-        unreadable_path = tmp_path / "Unreadable"
+        parent_path = tmp_path / "Parent"
+        parent_path.mkdir()
+
+        unreadable_path = parent_path / "Unreadable"
         unreadable_path.mkdir()
         (unreadable_path / "1.eml").write_bytes(b"Subject: Hidden\r\n\r\nBody")
         os.chmod(unreadable_path, 0)
