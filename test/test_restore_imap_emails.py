@@ -175,46 +175,6 @@ class TestGetEmlFiles:
         assert result == []
 
 
-class TestGetBackupFolders:
-    """Tests for scanning backup folder structure."""
-
-    def test_get_backup_folders(self, tmp_path):
-        """Test scanning backup folders."""
-        # Create folder structure
-        inbox = tmp_path / "INBOX"
-        inbox.mkdir()
-        (inbox / "email1.eml").write_text("content")
-
-        sent = tmp_path / "Sent"
-        sent.mkdir()
-        (sent / "email2.eml").write_text("content")
-
-        result = restore_imap_emails.get_backup_folders(str(tmp_path))
-
-        assert len(result) == 2
-        folder_names = [f[0] for f in result]
-        assert "INBOX" in folder_names
-        assert "Sent" in folder_names
-
-    def test_get_backup_folders_nested(self, tmp_path):
-        """Test scanning nested folder structure."""
-        gmail = tmp_path / "[Gmail]"
-        gmail.mkdir()
-        all_mail = gmail / "All Mail"
-        all_mail.mkdir()
-        (all_mail / "email.eml").write_text("content")
-
-        result = restore_imap_emails.get_backup_folders(str(tmp_path))
-
-        assert len(result) == 1
-        assert result[0][0] == "[Gmail]/All Mail"
-
-    def test_get_backup_folders_empty(self, tmp_path):
-        """Test scanning empty backup folder."""
-        result = restore_imap_emails.get_backup_folders(str(tmp_path))
-        assert result == []
-
-
 class TestConfigValidation:
     """Tests for configuration validation."""
 
@@ -390,6 +350,41 @@ Body content.
 
         # Run restore
         restore_imap_emails.main()
+
+    def test_restore_all_folders_scans_backup(self, single_mock_server, monkeypatch, tmp_path):
+        """End-to-end: restore all folders from a backup tree."""
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+        (inbox / "1_Test_Email.eml").write_text("Subject: Inbox\nMessage-ID: <inbox@test>\n\nBody")
+
+        archive = tmp_path / "Archive"
+        archive.mkdir()
+        subfolder = archive / "Sub"
+        subfolder.mkdir()
+        (subfolder / "2_Test_Email.eml").write_text("Subject: Archive\nMessage-ID: <archive@test>\n\nBody")
+
+        empty_folder = tmp_path / "Empty"
+        empty_folder.mkdir()
+
+        dest_data = {"INBOX": []}
+        server, port = single_mock_server(dest_data)
+
+        env = {
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "user",
+            "DEST_IMAP_PASSWORD": "pass",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(sys, "argv", ["restore_imap_emails.py", "--src-path", str(tmp_path)])
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        restore_imap_emails.main()
+
+        assert "INBOX" in server.folders
+        assert "Archive/Sub" in server.folders
+        assert len(server.folders["INBOX"]) == 1
+        assert len(server.folders["Archive/Sub"]) == 1
+        assert "Empty" not in server.folders
 
     def test_restore_single_folder_full_restore_flag(self, single_mock_server, monkeypatch, tmp_path):
         """Smoke test: --full-restore flag is accepted."""

@@ -69,14 +69,7 @@ MANIFEST_FILENAME = "labels_manifest.json"
 
 # Thread-local storage
 thread_local = threading.local()
-print_lock = threading.Lock()
-
-
-def safe_print(message):
-    t_name = threading.current_thread().name
-    short_name = t_name.replace("ThreadPoolExecutor-", "T-").replace("MainThread", "MAIN")
-    with print_lock:
-        print(f"[{short_name}] {message}")
+safe_print = imap_common.safe_print
 
 
 def get_thread_connection(src_conf):

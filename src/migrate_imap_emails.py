@@ -16,6 +16,10 @@ Features:
     applies additional Gmail labels by copying the message into label folders.
     - In Gmail mode, label preservation is enabled automatically.
     - Note: --dest-delete is not supported in --gmail-mode.
+- Cached Incremental Migration (--migrate-cache):
+    - Uses a local JSON cache to track migrated Message-IDs.
+    - Dramatically speeds up re-runs by skipping already processed emails without server checks.
+    - Use --full-migrate to ignore cache skipping (force check) while still updating cache.
 
 Configuration (Environment Variables):
   Source Account:
@@ -106,6 +110,17 @@ Usage Example:
         --dest-host "imap.gmail.com" \
         --dest-user "dest@gmail.com" \
         --dest-pass "DEST_APP_PASSWORD"
+
+    # Cached Incremental Migration (Recommended for large accounts):
+    # Uses a local cache to track progress and skip already migrated emails.
+    python3 migrate_imap_emails.py \
+        --migrate-cache "./migration_cache" \
+        --src-host "imap.example.com" \
+        --src-user "source@example.com" \
+        --src-pass "SOURCE_PASSWORD" \
+        --dest-host "imap.example.com" \
+        --dest-user "dest@example.com" \
+        --dest-pass "DEST_PASSWORD"
 """
 
 import argparse
@@ -114,12 +129,14 @@ import os
 import re
 import sys
 import threading
+from typing import Optional
 
 import imap_common
 import imap_oauth2
 import imap_session
 import provider_exchange
 import provider_gmail
+import restore_cache
 
 # Configuration defaults
 DELETE_FROM_SOURCE_DEFAULT = False
@@ -128,15 +145,7 @@ BATCH_SIZE = 10  # Initial default, updated in main
 
 # Thread-local storage for IMAP connections
 thread_local = threading.local()
-print_lock = threading.Lock()
-
-
-def safe_print(message):
-    t_name = threading.current_thread().name
-    # Shorten thread name for cleaner logs e.g. ThreadPoolExecutor-0_0 -> T-0_0
-    short_name = t_name.replace("ThreadPoolExecutor-", "T-").replace("MainThread", "MAIN")
-    with print_lock:
-        print(f"[{short_name}] {message}")
+safe_print = imap_common.safe_print
 
 
 def filter_preservable_flags(flags_str):
@@ -255,6 +264,14 @@ def process_single_uid(
     gmail_mode,
     label_index,
     check_duplicate,
+    full_migrate: bool = False,
+    existing_dest_msg_ids: Optional[set[str]] = None,
+    existing_dest_msg_ids_lock: Optional[threading.Lock] = None,
+    progress_cache_path: Optional[str] = None,
+    progress_cache_data: Optional[dict] = None,
+    progress_cache_lock: Optional[threading.Lock] = None,
+    dest_host: Optional[str] = None,
+    dest_user: Optional[str] = None,
 ):
     """
     Migrate a single email by UID.
@@ -327,10 +344,19 @@ def process_single_uid(
         imap_common.ensure_folder_exists(dest, target_folder)
         dest.select(f'"{target_folder}"')
 
-        is_duplicate = bool(msg_id and check_duplicate and imap_common.message_exists_in_folder(dest, msg_id))
+        is_cached = False
+        is_duplicate = False
+
+        # check cache first if available
+        if not full_migrate and msg_id and existing_dest_msg_ids is not None and msg_id in existing_dest_msg_ids:
+            is_cached = True
+            is_duplicate = True
+            safe_print(f"[{target_folder}] SKIP (cached) | {size_str:<8} | {subject[:40]}")
+        elif bool(msg_id and check_duplicate and imap_common.message_exists_in_folder(dest, msg_id)):
+            is_duplicate = True
+            safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {subject[:40]}")
 
         if is_duplicate:
-            safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {subject[:40]}")
             if preserve_flags and flags and msg_id:
                 sync_flags_on_existing(dest, target_folder, msg_id, flags, size)
         else:
@@ -347,6 +373,21 @@ def process_single_uid(
             if preserve_flags and flags:
                 for flag in flags.split():
                     safe_print(f"  -> Applied flag: {flag}")
+
+        # Update cache if processed effectively (copied or duplicate)
+        if msg_id:
+            restore_cache.record_progress(
+                message_id=msg_id,
+                folder_name=folder_name,
+                existing_dest_msg_ids=existing_dest_msg_ids,
+                existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
+                progress_cache_path=progress_cache_path,
+                progress_cache_data=progress_cache_data,
+                progress_cache_lock=progress_cache_lock,
+                dest_host=dest_host,
+                dest_user=dest_user,
+                log_fn=safe_print,
+            )
 
         # Apply remaining Gmail labels
         if apply_labels and remaining_labels and msg_id:
@@ -414,6 +455,12 @@ def process_batch(
     gmail_mode=False,
     label_index=None,
     check_duplicate=True,
+    full_migrate=False,
+    existing_dest_msg_ids: Optional[set[str]] = None,
+    existing_dest_msg_ids_lock: Optional[threading.Lock] = None,
+    progress_cache_path: Optional[str] = None,
+    progress_cache_data: Optional[dict] = None,
+    progress_cache_lock: Optional[threading.Lock] = None,
 ):
     src, dest = get_thread_connections(src_conf, dest_conf)
     if not src or not dest:
@@ -433,6 +480,10 @@ def process_batch(
         except Exception as e:
             safe_print(f"Error selecting folder {folder_name} in worker: {e}")
             return
+
+    # Extract info for cache update if needed
+    dest_host = dest_conf.get("host")
+    dest_user = dest_conf.get("user")
 
     deleted_count = 0
 
@@ -471,6 +522,14 @@ def process_batch(
                 gmail_mode,
                 label_index,
                 check_duplicate,
+                full_migrate,
+                existing_dest_msg_ids=existing_dest_msg_ids,
+                existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
+                progress_cache_path=progress_cache_path,
+                progress_cache_data=progress_cache_data,
+                progress_cache_lock=progress_cache_lock,
+                dest_host=dest_host,
+                dest_user=dest_user,
             )
             thread_local.src = src
             thread_local.dest = dest
@@ -504,8 +563,48 @@ def migrate_folder(
     preserve_flags=False,
     gmail_mode=False,
     label_index=None,
+    progress_cache_path: Optional[str] = None,
+    full_migrate=False,
+    progress_cache_file: Optional[str] = None,
+    progress_cache_data: Optional[dict] = None,
+    progress_cache_lock: Optional[threading.Lock] = None,
 ):
     safe_print(f"--- Preparing Folder: {folder_name} ---")
+
+    # Load cache if provided
+    existing_dest_msg_ids = None
+    existing_dest_msg_ids_lock = None
+    dest_host = dest_conf.get("host")
+    dest_user = dest_conf.get("user")
+    cache_file = progress_cache_file
+
+    if progress_cache_path:
+        if progress_cache_data is None or progress_cache_lock is None or cache_file is None:
+            try:
+                cache_file, progress_cache_data, progress_cache_lock = imap_common.load_progress_cache(
+                    progress_cache_path,
+                    dest_host,
+                    dest_user,
+                    log_fn=safe_print,
+                )
+            except Exception as e:
+                safe_print(f"Warning: Failed to load cache: {e}")
+
+        if imap_common.is_progress_cache_ready(progress_cache_data, progress_cache_lock):
+            try:
+                existing_dest_msg_ids = restore_cache.get_cached_message_ids(
+                    progress_cache_data,
+                    progress_cache_lock,
+                    dest_host,
+                    dest_user,
+                    folder_name,
+                )
+                existing_dest_msg_ids_lock = threading.Lock()
+                safe_print(f"Cache has {len(existing_dest_msg_ids)} Message-IDs for this folder.")
+            except Exception as e:
+                safe_print(f"Warning: Failed to read cache for folder '{folder_name}': {e}")
+                existing_dest_msg_ids = set()
+                existing_dest_msg_ids_lock = threading.Lock()
 
     # Maintain folder structure (skip in Gmail mode; worker will create/select target label folders)
     if not gmail_mode:
@@ -547,7 +646,9 @@ def migrate_folder(
         safe_print(f"Pre-fetching destination Message-IDs for {folder_name}...")
         dest_uid_to_msgid = imap_common.get_message_ids_in_folder(dest)
         dest_msg_ids = set(dest_uid_to_msgid.values())
-        safe_print(f"Found {len(dest_msg_ids)} existing messages in destination.")
+        if existing_dest_msg_ids and not full_migrate:
+            dest_msg_ids.update(existing_dest_msg_ids)
+        safe_print(f"Found {len(dest_msg_ids)} existing messages in destination (server + cache).")
 
     # Pre-fetch source Message-IDs and filter out duplicates before processing
     # Skip pre-filtering when preserve_flags is True (need to sync flags on duplicates)
@@ -603,6 +704,12 @@ def migrate_folder(
                     gmail_mode,
                     label_index,
                     check_duplicate,
+                    full_migrate,
+                    existing_dest_msg_ids,
+                    existing_dest_msg_ids_lock,
+                    cache_file,
+                    progress_cache_data,
+                    progress_cache_lock,
                 )
             )
 
@@ -641,6 +748,10 @@ def migrate_folder(
     if dest_delete and src_msg_ids is not None and not gmail_mode:
         safe_print("Syncing destination: removing emails not in source...")
         delete_orphan_emails(dest, folder_name, src_msg_ids, dest_uid_to_msgid)
+
+    # Force-flush progress cache at end of folder migration.
+    if cache_file and imap_common.is_progress_cache_ready(progress_cache_data, progress_cache_lock):
+        restore_cache.maybe_save_dest_index_cache(cache_file, progress_cache_data, progress_cache_lock, force=True)
 
 
 def main():
@@ -781,6 +892,16 @@ def main():
         help="Gmail migration mode",
     )
 
+    parser.add_argument(
+        "--migrate-cache",
+        help="Path to directory for migration progress cache (enables incremental migration)",
+    )
+    parser.add_argument(
+        "--full-migrate",
+        action="store_true",
+        help="Force full migration (ignore cache for skipping), but still update cache if --migrate-cache provided",
+    )
+
     args = parser.parse_args()
 
     # Assign to variables
@@ -794,6 +915,8 @@ def main():
     DEST_DELETE = args.dest_delete
 
     gmail_mode = bool(args.gmail_mode)
+    migrate_cache = args.migrate_cache
+    full_migrate = args.full_migrate
     preserve_flags = bool(args.preserve_flags) or gmail_mode
     preserve_labels = bool(args.preserve_labels) or gmail_mode
 
@@ -896,6 +1019,20 @@ def main():
         else None,
     }
 
+    progress_cache_file = None
+    progress_cache_data = None
+    progress_cache_lock = None
+    if migrate_cache:
+        try:
+            progress_cache_file, progress_cache_data, progress_cache_lock = imap_common.load_progress_cache(
+                migrate_cache,
+                DEST_HOST,
+                DEST_USER,
+                log_fn=safe_print,
+            )
+        except Exception as e:
+            safe_print(f"Warning: Failed to load progress cache: {e}")
+
     try:
         # Initial connection to list folders
         safe_print("Connecting to Source to list folders...")
@@ -949,6 +1086,11 @@ def main():
                 preserve_flags,
                 gmail_mode,
                 label_index,
+                progress_cache_path=migrate_cache,
+                full_migrate=full_migrate,
+                progress_cache_file=progress_cache_file,
+                progress_cache_data=progress_cache_data,
+                progress_cache_lock=progress_cache_lock,
             )
         else:
             # Migration for all folders
@@ -972,6 +1114,11 @@ def main():
                         preserve_flags,
                         True,
                         label_index,
+                        progress_cache_path=migrate_cache,
+                        full_migrate=full_migrate,
+                        progress_cache_file=progress_cache_file,
+                        progress_cache_data=progress_cache_data,
+                        progress_cache_lock=progress_cache_lock,
                     )
 
             if not gmail_mode:
@@ -1005,6 +1152,11 @@ def main():
                         preserve_flags,
                         False,
                         None,
+                        progress_cache_path=migrate_cache,
+                        full_migrate=full_migrate,
+                        progress_cache_file=progress_cache_file,
+                        progress_cache_data=progress_cache_data,
+                        progress_cache_lock=progress_cache_lock,
                     )
 
         src_main.logout()
