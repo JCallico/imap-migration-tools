@@ -3,24 +3,22 @@ Tests for imap_oauth2.py
 
 Tests cover:
 - OAuth2 provider detection
-- Microsoft tenant discovery
-- Microsoft token acquisition and caching
-- Google token acquisition and caching
 - Provider dispatch
-- Token refresh (caching and silent refresh)
 - Thread-safe token refresh
+- Token expiration and auth error detection
 """
 
-import json
 import os
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import imap_oauth2
+import oauth2_google
+import oauth2_microsoft
 
 
 @pytest.fixture(autouse=True)
@@ -67,159 +65,12 @@ class TestDetectOauth2Provider:
         assert imap_oauth2.detect_oauth2_provider("imap.mail.yahoo.com") is None
 
 
-class TestDiscoverMicrosoftTenant:
-    """Tests for discover_microsoft_tenant function."""
-
-    def test_successful_discovery(self):
-        """Test successful tenant ID extraction from OpenID config."""
-        tenant_id = "12345678-abcd-ef01-2345-67890abcdef0"
-        data = {
-            "issuer": f"https://sts.windows.net/{tenant_id}/",
-            "authorization_endpoint": f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/authorize",
-        }
-
-        with patch.object(imap_oauth2, "_fetch_json_https", return_value=data):
-            result = imap_oauth2.discover_microsoft_tenant("user@contoso.com")
-
-        assert result == tenant_id
-
-    def test_domain_extraction(self):
-        """Test that domain is correctly extracted from email."""
-        data = {"issuer": "https://sts.windows.net/abcdef01-2345-6789-abcd-ef0123456789/"}
-
-        with patch.object(imap_oauth2, "_fetch_json_https", return_value=data) as mock_fetch:
-            imap_oauth2.discover_microsoft_tenant("user@example.org")
-            host, path = mock_fetch.call_args[0][0], mock_fetch.call_args[0][1]
-            assert host == "login.microsoftonline.com"
-            assert "example.org" in path
-
-    def test_network_error(self, capsys):
-        """Test returns None on network error."""
-        with patch.object(imap_oauth2, "_fetch_json_https", side_effect=OSError("Connection refused")):
-            result = imap_oauth2.discover_microsoft_tenant("user@invalid.example")
-
-        assert result is None
-        captured = capsys.readouterr()
-        assert "Could not discover" in captured.out
-
-    def test_invalid_json(self, capsys):
-        """Test returns None on invalid JSON response."""
-        with patch.object(
-            imap_oauth2,
-            "_fetch_json_https",
-            side_effect=json.JSONDecodeError("Expecting value", "not json", 0),
-        ):
-            result = imap_oauth2.discover_microsoft_tenant("user@test.com")
-
-        assert result is None
-
-    def test_no_tenant_in_issuer(self, capsys):
-        """Test returns None when issuer has no tenant GUID."""
-        data = {"issuer": "https://sts.windows.net/not-a-guid/"}
-
-        with patch.object(imap_oauth2, "_fetch_json_https", return_value=data):
-            result = imap_oauth2.discover_microsoft_tenant("user@test.com")
-
-        assert result is None
-        captured = capsys.readouterr()
-        assert "Could not extract tenant ID" in captured.out
-
-
-class TestAcquireMicrosoftOauth2Token:
-    """Tests for acquire_microsoft_oauth2_token function."""
-
-    def test_successful_token(self):
-        """Test successful token acquisition with auto-discovery."""
-        with patch.object(imap_oauth2, "discover_microsoft_tenant", return_value="tenant-123"):
-            mock_msal = MagicMock()
-            mock_app = MagicMock()
-            mock_app.get_accounts.return_value = []
-            mock_app.initiate_device_flow.return_value = {"user_code": "ABC123", "message": "Go to..."}
-            mock_app.acquire_token_by_device_flow.return_value = {"access_token": "test_token"}
-            mock_msal.PublicClientApplication.return_value = mock_app
-
-            with patch.dict("sys.modules", {"msal": mock_msal}):
-                result = imap_oauth2.acquire_microsoft_oauth2_token("client-id", "user@test.com")
-
-            assert result == "test_token"
-
-    def test_tenant_discovery_failure(self, capsys):
-        """Test returns None when tenant discovery fails."""
-        with patch.object(imap_oauth2, "discover_microsoft_tenant", return_value=None):
-            result = imap_oauth2.acquire_microsoft_oauth2_token("client-id", "user@test.com")
-
-        assert result is None
-
-    def test_cached_token(self):
-        """Test returns cached token when available."""
-        with patch.object(imap_oauth2, "discover_microsoft_tenant", return_value="tenant-123"):
-            mock_msal = MagicMock()
-            mock_app = MagicMock()
-            mock_account = {"username": "user@test.com"}
-            mock_app.get_accounts.return_value = [mock_account]
-            mock_app.acquire_token_silent.return_value = {"access_token": "cached_token"}
-            mock_msal.PublicClientApplication.return_value = mock_app
-
-            with patch.dict("sys.modules", {"msal": mock_msal}):
-                result = imap_oauth2.acquire_microsoft_oauth2_token("client-id", "user@test.com")
-
-            assert result == "cached_token"
-
-
-class TestAcquireGoogleOauth2Token:
-    """Tests for acquire_google_oauth2_token function."""
-
-    def test_successful_token(self):
-        """Test successful Google token acquisition."""
-        mock_credentials = MagicMock()
-        mock_credentials.token = "google_test_token"
-
-        mock_flow = MagicMock()
-        mock_flow.run_local_server.return_value = mock_credentials
-
-        mock_installed_app_flow = MagicMock()
-        mock_installed_app_flow.from_client_config.return_value = mock_flow
-
-        mock_module = MagicMock()
-        mock_module.InstalledAppFlow = mock_installed_app_flow
-
-        with patch.dict("sys.modules", {"google_auth_oauthlib": MagicMock(), "google_auth_oauthlib.flow": mock_module}):
-            result = imap_oauth2.acquire_google_oauth2_token("client-id", "client-secret")
-
-        assert result == "google_test_token"
-
-    def test_missing_library(self):
-        """Test exits when google-auth-oauthlib is not installed."""
-        with patch.dict("sys.modules", {"google_auth_oauthlib": None, "google_auth_oauthlib.flow": None}):
-            with pytest.raises(SystemExit):
-                imap_oauth2.acquire_google_oauth2_token("client-id", "client-secret")
-
-    def test_no_token_returned(self):
-        """Test returns None when credentials have no token."""
-        mock_credentials = MagicMock()
-        mock_credentials.token = None
-
-        mock_flow = MagicMock()
-        mock_flow.run_local_server.return_value = mock_credentials
-
-        mock_installed_app_flow = MagicMock()
-        mock_installed_app_flow.from_client_config.return_value = mock_flow
-
-        mock_module = MagicMock()
-        mock_module.InstalledAppFlow = mock_installed_app_flow
-
-        with patch.dict("sys.modules", {"google_auth_oauthlib": MagicMock(), "google_auth_oauthlib.flow": mock_module}):
-            result = imap_oauth2.acquire_google_oauth2_token("client-id", "client-secret")
-
-        assert result is None
-
-
 class TestAcquireOauth2TokenForProvider:
     """Tests for acquire_oauth2_token_for_provider dispatch function."""
 
     def test_dispatch_to_microsoft(self):
         """Test dispatches to Microsoft when provider is 'microsoft'."""
-        with patch.object(imap_oauth2, "acquire_microsoft_oauth2_token", return_value="ms_token") as mock_ms:
+        with patch.object(oauth2_microsoft, "acquire_token", return_value="ms_token") as mock_ms:
             result = imap_oauth2.acquire_oauth2_token_for_provider("microsoft", "cid", "user@test.com")
 
         assert result == "ms_token"
@@ -227,7 +78,7 @@ class TestAcquireOauth2TokenForProvider:
 
     def test_dispatch_to_google(self):
         """Test dispatches to Google when provider is 'google'."""
-        with patch.object(imap_oauth2, "acquire_google_oauth2_token", return_value="g_token") as mock_g:
+        with patch.object(oauth2_google, "acquire_token", return_value="g_token") as mock_g:
             result = imap_oauth2.acquire_oauth2_token_for_provider("google", "cid", "user@gmail.com", "secret")
 
         assert result == "g_token"
@@ -248,122 +99,6 @@ class TestAcquireOauth2TokenForProvider:
         assert result is None
         captured = capsys.readouterr()
         assert "Unknown OAuth2 provider" in captured.out
-
-
-class TestMicrosoftTokenRefresh:
-    """Tests for Microsoft OAuth2 token caching and refresh."""
-
-    def test_msal_app_cached_on_first_call(self):
-        """Test MSAL app is cached after first call."""
-        with patch.object(imap_oauth2, "discover_microsoft_tenant", return_value="tenant-123"):
-            mock_msal = MagicMock()
-            mock_app = MagicMock()
-            mock_app.get_accounts.return_value = []
-            mock_app.initiate_device_flow.return_value = {"user_code": "ABC", "message": "Go to..."}
-            mock_app.acquire_token_by_device_flow.return_value = {"access_token": "token1"}
-            mock_msal.PublicClientApplication.return_value = mock_app
-
-            with patch.dict("sys.modules", {"msal": mock_msal}):
-                imap_oauth2.acquire_microsoft_oauth2_token("client-id", "user@test.com")
-
-            assert ("client-id", "tenant-123") in imap_oauth2._msal_app_cache
-
-    def test_cached_app_reused_on_second_call(self):
-        """Test second call reuses cached MSAL app instead of creating new one."""
-        with patch.object(imap_oauth2, "discover_microsoft_tenant", return_value="tenant-123"):
-            mock_msal = MagicMock()
-            mock_app = MagicMock()
-            mock_app.get_accounts.return_value = []
-            mock_app.initiate_device_flow.return_value = {"user_code": "ABC", "message": "Go to..."}
-            mock_app.acquire_token_by_device_flow.return_value = {"access_token": "token1"}
-            mock_msal.PublicClientApplication.return_value = mock_app
-
-            with patch.dict("sys.modules", {"msal": mock_msal}):
-                imap_oauth2.acquire_microsoft_oauth2_token("client-id", "user@test.com")
-
-                # Second call — simulate cached token available (refresh token worked)
-                mock_account = {"username": "user@test.com"}
-                mock_app.get_accounts.return_value = [mock_account]
-                mock_app.acquire_token_silent.return_value = {"access_token": "refreshed_token"}
-
-                result = imap_oauth2.acquire_microsoft_oauth2_token("client-id", "user@test.com")
-
-            assert result == "refreshed_token"
-            # PublicClientApplication should only have been called once (first call)
-            assert mock_msal.PublicClientApplication.call_count == 1
-
-
-class TestGoogleTokenRefresh:
-    """Tests for Google OAuth2 token caching and refresh."""
-
-    def test_credentials_cached_on_first_call(self):
-        """Test Google credentials are cached after first call."""
-        mock_credentials = MagicMock()
-        mock_credentials.token = "google_token"
-
-        mock_flow = MagicMock()
-        mock_flow.run_local_server.return_value = mock_credentials
-
-        mock_installed_app_flow = MagicMock()
-        mock_installed_app_flow.from_client_config.return_value = mock_flow
-
-        mock_module = MagicMock()
-        mock_module.InstalledAppFlow = mock_installed_app_flow
-
-        with patch.dict("sys.modules", {"google_auth_oauthlib": MagicMock(), "google_auth_oauthlib.flow": mock_module}):
-            imap_oauth2.acquire_google_oauth2_token("client-id", "client-secret")
-
-        assert ("client-id", "client-secret") in imap_oauth2._google_creds_cache
-
-    def test_cached_credentials_refreshed_on_second_call(self):
-        """Test second call refreshes cached credentials without opening browser."""
-        # Pre-populate cache with credentials that have a refresh token
-        mock_creds = MagicMock()
-        mock_creds.refresh_token = "refresh_tok"
-        mock_creds.token = "refreshed_google_token"
-        imap_oauth2._google_creds_cache[("client-id", "client-secret")] = mock_creds
-
-        mock_request_module = MagicMock()
-        with patch.dict(
-            "sys.modules",
-            {
-                "google": MagicMock(),
-                "google.auth": MagicMock(),
-                "google.auth.transport": MagicMock(),
-                "google.auth.transport.requests": mock_request_module,
-            },
-        ):
-            result = imap_oauth2.acquire_google_oauth2_token("client-id", "client-secret")
-
-        assert result == "refreshed_google_token"
-        # Verify refresh was called
-        mock_creds.refresh.assert_called_once()
-
-    def test_falls_back_to_browser_if_refresh_fails(self):
-        """Test falls back to full auth flow if cached token refresh fails."""
-        # Pre-populate cache with credentials whose refresh fails
-        mock_creds = MagicMock()
-        mock_creds.refresh_token = "refresh_tok"
-        mock_creds.refresh.side_effect = Exception("Refresh failed")
-        imap_oauth2._google_creds_cache[("client-id", "client-secret")] = mock_creds
-
-        # Set up the full auth flow
-        mock_credentials = MagicMock()
-        mock_credentials.token = "new_browser_token"
-
-        mock_flow = MagicMock()
-        mock_flow.run_local_server.return_value = mock_credentials
-
-        mock_installed_app_flow = MagicMock()
-        mock_installed_app_flow.from_client_config.return_value = mock_flow
-
-        mock_module = MagicMock()
-        mock_module.InstalledAppFlow = mock_installed_app_flow
-
-        with patch.dict("sys.modules", {"google_auth_oauthlib": MagicMock(), "google_auth_oauthlib.flow": mock_module}):
-            result = imap_oauth2.acquire_google_oauth2_token("client-id", "client-secret")
-
-        assert result == "new_browser_token"
 
 
 class TestRefreshOauth2Token:

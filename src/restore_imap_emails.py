@@ -62,6 +62,7 @@ from typing import Optional
 import imap_common
 import imap_oauth2
 import imap_session
+import provider_gmail
 import restore_cache
 
 
@@ -522,9 +523,9 @@ def process_restore_batch(
 
                     # Skip system folders we can't upload to
                     if label_folder in (
-                        imap_common.GMAIL_ALL_MAIL,
-                        imap_common.GMAIL_SPAM,
-                        imap_common.GMAIL_TRASH,
+                        provider_gmail.GMAIL_ALL_MAIL,
+                        provider_gmail.GMAIL_SPAM,
+                        provider_gmail.GMAIL_TRASH,
                     ):
                         continue
 

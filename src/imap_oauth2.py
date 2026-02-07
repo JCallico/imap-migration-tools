@@ -2,49 +2,23 @@
 IMAP OAuth2 Authentication
 
 OAuth2 token acquisition and refresh for Microsoft and Google IMAP providers.
-Supports device code flow (Microsoft) and installed app flow (Google),
-with in-memory caching for silent token refresh.
+Dispatches to provider-specific modules (oauth2_microsoft, oauth2_google).
 
-Notes:
-- Microsoft OAuth2 requires the `msal` package and uses device code flow.
-- Google OAuth2 requires the `google-auth-oauthlib` package and uses an installed-app flow
-    (opens a browser and listens on a local HTTP redirect).
-- Provider is auto-detected from the IMAP host string.
+Provider is auto-detected from the IMAP host string.
 """
 
-import http.client
-import json
-import re
-import ssl
-import sys
 import threading
-import urllib.parse
 
-# Module-level caches for OAuth2 token refresh
-_msal_app_cache = {}  # (client_id, tenant_id) -> PublicClientApplication
-_google_creds_cache = {}  # (client_id, client_secret) -> credentials
-_tenant_cache = {}  # domain -> tenant_id
+import oauth2_google
+import oauth2_microsoft
+
+# Re-export caches for test access
+_msal_app_cache = oauth2_microsoft._msal_app_cache
+_google_creds_cache = oauth2_google._creds_cache
+_tenant_cache = oauth2_microsoft._tenant_cache
+
+# Thread-safe token refresh
 _token_refresh_lock = threading.Lock()
-
-
-def _fetch_json_https(host, path, timeout=10):
-    if not host or any(ch in host for ch in "\r\n"):
-        raise ValueError("Invalid host")
-    if not path.startswith("/"):
-        path = f"/{path}"
-
-    context = ssl.create_default_context()
-    conn = http.client.HTTPSConnection(host, timeout=timeout, context=context)
-    try:
-        conn.request("GET", path, headers={"Accept": "application/json"})
-        response = conn.getresponse()
-        body = response.read()
-    finally:
-        conn.close()
-
-    if response.status != 200:
-        raise RuntimeError(f"Unexpected HTTP status {response.status}")
-    return json.loads(body.decode("utf-8"))
 
 
 def is_token_expired_error(error):
@@ -92,146 +66,25 @@ def detect_oauth2_provider(host):
 def discover_microsoft_tenant(email):
     """
     Auto-discovers the Microsoft tenant ID from an email address domain.
-    Uses the OpenID Connect discovery endpoint (no authentication required).
-    Results are cached per domain to avoid repeated network requests.
-    Returns the tenant ID string or None if discovery fails.
+    Delegates to oauth2_microsoft module.
     """
-    domain = email.split("@")[-1].strip().lower()
-    if not domain:
-        print("Error: Could not discover Microsoft tenant: missing email domain")
-        return None
-
-    # Return cached tenant if available
-    if domain in _tenant_cache:
-        return _tenant_cache[domain]
-
-    domain_quoted = urllib.parse.quote(domain, safe=".-")
-    path = f"/{domain_quoted}/.well-known/openid-configuration"
-
-    try:
-        data = _fetch_json_https("login.microsoftonline.com", path, timeout=10)
-    except (OSError, http.client.HTTPException, json.JSONDecodeError, RuntimeError, ValueError) as e:
-        print(f"Error: Could not discover Microsoft tenant for domain '{domain}': {e}")
-        return None
-
-    issuer = data.get("issuer", "")
-    match = re.search(r"/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", issuer)
-    if match:
-        tenant_id = match.group(1)
-        _tenant_cache[domain] = tenant_id
-        return tenant_id
-
-    print(f"Error: Could not extract tenant ID from issuer: {issuer}")
-    return None
+    return oauth2_microsoft.discover_tenant(email)
 
 
 def acquire_microsoft_oauth2_token(client_id, email):
     """
     Acquires a Microsoft OAuth2 access token using the MSAL device code flow.
-    Auto-discovers tenant ID from the email domain.
-    Requires the 'msal' package: pip install msal
-
-    On subsequent calls, silently refreshes the token using the cached MSAL app
-    (which holds the refresh token in its in-memory cache).
+    Delegates to oauth2_microsoft module.
     """
-    tenant_id = discover_microsoft_tenant(email)
-    if not tenant_id:
-        return None
-
-    try:
-        import msal
-    except ImportError:
-        print("Error: 'msal' package is required for Microsoft OAuth2. Install it with: pip install msal")
-        sys.exit(1)
-
-    authority = f"https://login.microsoftonline.com/{tenant_id}"
-    scopes = ["https://outlook.office365.com/IMAP.AccessAsUser.All"]
-
-    # Reuse cached MSAL app so acquire_token_silent can access refresh tokens
-    cache_key = (client_id, tenant_id)
-    if cache_key in _msal_app_cache:
-        app = _msal_app_cache[cache_key]
-    else:
-        print(f"Discovered Microsoft tenant: {tenant_id}")
-        app = msal.PublicClientApplication(client_id, authority=authority)
-        _msal_app_cache[cache_key] = app
-
-    # Try cached/refreshed token first (handles refresh tokens automatically)
-    accounts = app.get_accounts()
-    if accounts:
-        result = app.acquire_token_silent(scopes, account=accounts[0])
-        if result and "access_token" in result:
-            return result["access_token"]
-
-    # Fall back to device code flow (first call or if refresh fails)
-    flow = app.initiate_device_flow(scopes=scopes)
-    if "user_code" not in flow:
-        print(f"Error: Could not initiate device flow: {flow.get('error_description', 'Unknown error')}")
-        return None
-
-    print(flow["message"])
-    result = app.acquire_token_by_device_flow(flow)
-
-    if "access_token" in result:
-        return result["access_token"]
-
-    print(f"Error: Could not acquire token: {result.get('error_description', 'Unknown error')}")
-    return None
+    return oauth2_microsoft.acquire_token(client_id, email)
 
 
 def acquire_google_oauth2_token(client_id, client_secret):
     """
     Acquires a Google OAuth2 access token using the installed app flow.
-    Opens a browser for user consent and runs a local HTTP server for the redirect.
-    Requires the 'google-auth-oauthlib' package: pip install google-auth-oauthlib
-
-    On subsequent calls, silently refreshes the token using the cached credentials
-    object (which holds the refresh token). No browser interaction needed for refresh.
+    Delegates to oauth2_google module.
     """
-    # Try refreshing cached credentials first (no browser needed)
-    cache_key = (client_id, client_secret)
-    if cache_key in _google_creds_cache:
-        creds = _google_creds_cache[cache_key]
-        if creds and creds.refresh_token:
-            try:
-                import google.auth.transport.requests
-
-                creds.refresh(google.auth.transport.requests.Request())
-                if creds.token:
-                    return creds.token
-            except Exception:
-                pass  # Fall through to full auth flow
-
-    try:
-        from google_auth_oauthlib.flow import InstalledAppFlow
-    except ImportError:
-        print("Error: 'google-auth-oauthlib' package is required for Google OAuth2.")
-        print("Install it with: pip install google-auth-oauthlib")
-        sys.exit(1)
-
-    client_config = {
-        "installed": {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": ["http://localhost"],
-        }
-    }
-
-    flow = InstalledAppFlow.from_client_config(client_config, scopes=["https://mail.google.com/"])
-
-    print("Opening browser for Google authentication...")
-    print("If the browser does not open, check the terminal for a URL to visit.")
-
-    credentials = flow.run_local_server(port=0)
-
-    if credentials and credentials.token:
-        _google_creds_cache[cache_key] = credentials
-        return credentials.token
-
-    print("Error: Could not acquire Google OAuth2 token.")
-    return None
+    return oauth2_google.acquire_token(client_id, client_secret)
 
 
 def acquire_oauth2_token_for_provider(provider, client_id, email, client_secret=None):
@@ -245,7 +98,7 @@ def acquire_oauth2_token_for_provider(provider, client_id, email, client_secret=
         client_secret: Required for Google, not needed for Microsoft
     """
     if provider == "microsoft":
-        return acquire_microsoft_oauth2_token(client_id, email)
+        return oauth2_microsoft.acquire_token(client_id, email)
     elif provider == "google":
         if not client_secret:
             print(
@@ -254,7 +107,7 @@ def acquire_oauth2_token_for_provider(provider, client_id, email, client_secret=
                 "or set OAUTH2_CLIENT_SECRET / SRC_OAUTH2_CLIENT_SECRET / DEST_OAUTH2_CLIENT_SECRET."
             )
             return None
-        return acquire_google_oauth2_token(client_id, client_secret)
+        return oauth2_google.acquire_token(client_id, client_secret)
     else:
         print(f"Error: Unknown OAuth2 provider: {provider}")
         return None

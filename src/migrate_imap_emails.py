@@ -118,6 +118,8 @@ import threading
 import imap_common
 import imap_oauth2
 import imap_session
+import provider_exchange
+import provider_gmail
 
 # Configuration defaults
 DELETE_FROM_SOURCE_DEFAULT = False
@@ -192,59 +194,6 @@ def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
 
     except Exception as e:
         safe_print(f"Error syncing flags for {message_id} in {folder_name}: {e}")
-
-
-def is_gmail_label_folder(folder_name):
-    """Determine whether a folder represents a Gmail label worth preserving."""
-    if folder_name in imap_common.GMAIL_SYSTEM_FOLDERS:
-        return False
-    if folder_name == imap_common.FOLDER_INBOX:
-        return True
-    if folder_name in (imap_common.GMAIL_SENT, imap_common.GMAIL_STARRED):
-        return True
-    if not folder_name.startswith("[Gmail]/"):
-        return True
-    return False
-
-
-def folder_to_label(folder_name):
-    """Convert an IMAP folder name to a Gmail label name (backup/restore compatible)."""
-    if folder_name == imap_common.FOLDER_INBOX:
-        return imap_common.FOLDER_INBOX
-    if folder_name.startswith("[Gmail]/"):
-        return folder_name.split("/", 1)[1]
-    return folder_name
-
-
-def label_to_folder(label):
-    """Convert a Gmail label name to an IMAP folder path (restore compatible)."""
-    if label == imap_common.FOLDER_INBOX:
-        return imap_common.FOLDER_INBOX
-    if label in ("Sent Mail", "Starred", "Drafts", "Important"):
-        return f"[Gmail]/{label}"
-    return label
-
-
-def build_gmail_label_index(src_conn):
-    """Build a mapping of Message-ID -> set(labels) by scanning label folders."""
-    folders = imap_common.list_selectable_folders(src_conn)
-    label_folders = [f for f in folders if is_gmail_label_folder(f)]
-
-    label_index = {}
-    total = len(label_folders)
-    for i, folder in enumerate(label_folders, start=1):
-        safe_print(f"[{i}/{total}] Scanning label folder for Message-IDs: {folder}")
-        try:
-            src_conn.select(f'"{folder}"', readonly=True)
-            msg_ids = set(imap_common.get_message_ids_in_folder(src_conn).values())
-        except Exception as e:
-            safe_print(f"Error getting message IDs from {folder}: {e}")
-            msg_ids = set()
-        label = folder_to_label(folder)
-        for msg_id in msg_ids:
-            label_index.setdefault(msg_id, set()).add(label)
-
-    return label_index
 
 
 def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msgid=None):
@@ -356,12 +305,12 @@ def process_single_uid(
             labels = sorted(label_index.get(msg_id, set()))
 
         if apply_labels:
-            skip_folders = {imap_common.GMAIL_ALL_MAIL, imap_common.GMAIL_SPAM, imap_common.GMAIL_TRASH}
+            skip_folders = {provider_gmail.GMAIL_ALL_MAIL, provider_gmail.GMAIL_SPAM, provider_gmail.GMAIL_TRASH}
             target_folder = None
             remaining_labels = []
 
             for label in labels:
-                label_folder = label_to_folder(label)
+                label_folder = provider_gmail.label_to_folder(label)
                 if label_folder in skip_folders:
                     continue
                 if target_folder is None:
@@ -402,10 +351,14 @@ def process_single_uid(
         # Apply remaining Gmail labels
         if apply_labels and remaining_labels and msg_id:
             for label in remaining_labels:
-                label_folder = label_to_folder(label)
+                label_folder = provider_gmail.label_to_folder(label)
                 if label_folder == target_folder:
                     continue
-                if label_folder in (imap_common.GMAIL_ALL_MAIL, imap_common.GMAIL_SPAM, imap_common.GMAIL_TRASH):
+                if label_folder in (
+                    provider_gmail.GMAIL_ALL_MAIL,
+                    provider_gmail.GMAIL_SPAM,
+                    provider_gmail.GMAIL_TRASH,
+                ):
                     continue
                 try:
                     imap_common.ensure_folder_exists(dest, label_folder)
@@ -434,8 +387,8 @@ def process_single_uid(
             if trash_folder and folder_name != trash_folder:
                 try:
                     src.uid("copy", uid, f'"{trash_folder}"')
-                except Exception:
-                    pass
+                except Exception as e:
+                    safe_print(f"[{folder_name}] WARNING: Failed to copy UID {uid_str} to trash: {e}")
             src.uid(imap_common.CMD_STORE, uid, imap_common.OP_ADD_FLAGS, imap_common.FLAG_DELETED_LITERAL)
             deleted = 1
 
@@ -971,7 +924,7 @@ def main():
         label_index = None
         if gmail_mode and preserve_labels:
             safe_print("Gmail mode enabled: building label index from source...")
-            label_index = build_gmail_label_index(src_main)
+            label_index = provider_gmail.build_gmail_label_index(src_main, safe_print)
             safe_print(f"Label index built for {len(label_index)} messages.")
 
         if TARGET_FOLDER:
@@ -1001,7 +954,7 @@ def main():
             # Migration for all folders
             if gmail_mode:
                 folders = imap_common.list_selectable_folders(src_main)
-                if imap_common.GMAIL_ALL_MAIL not in folders:
+                if provider_gmail.GMAIL_ALL_MAIL not in folders:
                     safe_print(
                         "Warning: --gmail-mode requested but source does not have [Gmail]/All Mail. Falling back to normal folder migration."
                     )
@@ -1010,7 +963,7 @@ def main():
                     migrate_folder(
                         src_main,
                         dest_main,
-                        imap_common.GMAIL_ALL_MAIL,
+                        provider_gmail.GMAIL_ALL_MAIL,
                         DELETE_SOURCE,
                         src_conf,
                         dest_conf,
@@ -1026,6 +979,9 @@ def main():
                 for name in folders:
                     if DELETE_SOURCE and trash_folder and name == trash_folder:
                         safe_print(f"Skipping migration of Trash folder '{name}' (preventing circular migration).")
+                        continue
+                    if provider_exchange.is_special_folder(name):
+                        safe_print(f"Skipping Exchange system folder: {name}")
                         continue
 
                     src_main = imap_session.ensure_connection(src_main, src_conf)

@@ -29,25 +29,6 @@ FLAG_DELETED_LITERAL = "(\\Deleted)"
 # \Deleted should not be preserved as it marks messages for removal
 PRESERVABLE_FLAGS = {FLAG_SEEN, FLAG_ANSWERED, FLAG_FLAGGED, FLAG_DRAFT}
 
-# Gmail constants
-GMAIL_ALL_MAIL = "[Gmail]/All Mail"
-GMAIL_TRASH = "[Gmail]/Trash"
-GMAIL_SPAM = "[Gmail]/Spam"
-GMAIL_DRAFTS = "[Gmail]/Drafts"
-GMAIL_BIN = "[Gmail]/Bin"
-GMAIL_IMPORTANT = "[Gmail]/Important"
-GMAIL_SENT = "[Gmail]/Sent Mail"
-GMAIL_STARRED = "[Gmail]/Starred"
-
-GMAIL_SYSTEM_FOLDERS = {
-    GMAIL_ALL_MAIL,
-    GMAIL_SPAM,
-    GMAIL_TRASH,
-    GMAIL_DRAFTS,
-    GMAIL_BIN,
-    GMAIL_IMPORTANT,
-}
-
 # IMAP Folder Constants
 FOLDER_INBOX = "INBOX"
 
@@ -337,6 +318,8 @@ def parse_message_id_and_subject_from_bytes(raw_message):
 def message_exists_in_folder(dest_conn, msg_id):
     """
     Checks if a message with the given Message-ID exists in the CURRENTLY SELECTED folder of dest_conn.
+    Only considers non-deleted messages (UNDELETED) so that messages pending expunge
+    don't block uploads of fresh copies.
     Returns True if found, False otherwise.
     """
     if not msg_id:
@@ -344,7 +327,7 @@ def message_exists_in_folder(dest_conn, msg_id):
 
     clean_id = msg_id.replace('"', '\\"')
     try:
-        typ, data = dest_conn.search(None, f'(HEADER Message-ID "{clean_id}")')
+        typ, data = dest_conn.search(None, f'UNDELETED (HEADER Message-ID "{clean_id}")')
         if typ != "OK":
             return False
 

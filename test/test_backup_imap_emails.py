@@ -18,7 +18,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import backup_imap_emails
-import imap_common
+import provider_gmail
 from conftest import make_single_mock_connection
 
 
@@ -372,25 +372,25 @@ class TestBackupErrorHandling:
 class TestGmailLabelsPreservation:
     """Tests for Gmail labels manifest functionality."""
 
-    def test_is_gmail_label_folder_user_labels(self):
+    def test_is_label_folder_user_labels(self):
         """Test that user labels are correctly identified."""
-        assert backup_imap_emails.is_gmail_label_folder("Work") is True
-        assert backup_imap_emails.is_gmail_label_folder("Personal") is True
-        assert backup_imap_emails.is_gmail_label_folder("Projects/2024") is True
-        assert backup_imap_emails.is_gmail_label_folder("INBOX") is True
+        assert provider_gmail.is_label_folder("Work") is True
+        assert provider_gmail.is_label_folder("Personal") is True
+        assert provider_gmail.is_label_folder("Projects/2024") is True
+        assert provider_gmail.is_label_folder("INBOX") is True
 
-    def test_is_gmail_label_folder_gmail_labels(self):
+    def test_is_label_folder_gmail_labels(self):
         """Test that Gmail system labels are correctly identified."""
-        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Sent Mail") is True
-        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Starred") is True
+        assert provider_gmail.is_label_folder("[Gmail]/Sent Mail") is True
+        assert provider_gmail.is_label_folder("[Gmail]/Starred") is True
 
-    def test_is_gmail_label_folder_system_folders(self):
+    def test_is_label_folder_system_folders(self):
         """Test that Gmail system folders are excluded."""
-        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/All Mail") is False
-        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Spam") is False
-        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Trash") is False
-        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Drafts") is False
-        assert backup_imap_emails.is_gmail_label_folder("[Gmail]/Bin") is False
+        assert provider_gmail.is_label_folder("[Gmail]/All Mail") is False
+        assert provider_gmail.is_label_folder("[Gmail]/Spam") is False
+        assert provider_gmail.is_label_folder("[Gmail]/Trash") is False
+        assert provider_gmail.is_label_folder("[Gmail]/Drafts") is False
+        assert provider_gmail.is_label_folder("[Gmail]/Bin") is False
 
     def test_load_labels_manifest_nonexistent(self, tmp_path):
         """Test loading manifest when file doesn't exist."""
@@ -666,7 +666,7 @@ class TestGmailLabelsPreservation:
             "[Gmail]/Bin",
             "[Gmail]/Important",
         }
-        assert imap_common.GMAIL_SYSTEM_FOLDERS == expected
+        assert provider_gmail.GMAIL_SYSTEM_FOLDERS == expected
 
     def test_gmail_mode_flag(self, single_mock_server, monkeypatch, tmp_path):
         """Test --gmail-mode flag backs up All Mail and creates manifest."""
