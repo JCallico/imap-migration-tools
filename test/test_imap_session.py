@@ -17,6 +17,79 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 import imap_session
 
 
+class TestBuildImapConf:
+    """Tests for build_imap_conf function."""
+
+    def test_password_auth_returns_correct_dict(self):
+        """Test builds correct config for password authentication."""
+        conf = imap_session.build_imap_conf("imap.example.com", "user@example.com", "pass123")
+
+        assert conf["host"] == "imap.example.com"
+        assert conf["user"] == "user@example.com"
+        assert conf["password"] == "pass123"
+        assert conf["oauth2_token"] is None
+        assert conf["oauth2"] is None
+
+    def test_oauth2_auth_acquires_token(self):
+        """Test acquires token and builds oauth2 config when client_id is provided."""
+        with patch.object(
+            imap_session.imap_oauth2, "acquire_token", return_value=("my_token", "microsoft")
+        ) as mock_acquire:
+            conf = imap_session.build_imap_conf(
+                "outlook.office365.com",
+                "user@example.com",
+                "pass",
+                client_id="cid",
+                client_secret="csecret",
+                label="source",
+            )
+
+        mock_acquire.assert_called_once_with("outlook.office365.com", "cid", "user@example.com", "csecret", "source")
+        assert conf["host"] == "outlook.office365.com"
+        assert conf["user"] == "user@example.com"
+        assert conf["password"] == "pass"
+        assert conf["oauth2_token"] == "my_token"
+        assert conf["oauth2"] == {
+            "provider": "microsoft",
+            "client_id": "cid",
+            "email": "user@example.com",
+            "client_secret": "csecret",
+        }
+
+    def test_no_client_id_skips_oauth2(self):
+        """Test that oauth2 is None when client_id is not provided."""
+        with patch.object(imap_session.imap_oauth2, "acquire_token") as mock_acquire:
+            conf = imap_session.build_imap_conf("imap.example.com", "user", "pass")
+
+        mock_acquire.assert_not_called()
+        assert conf["oauth2"] is None
+        assert conf["oauth2_token"] is None
+
+    def test_empty_client_id_skips_oauth2(self):
+        """Test that empty string client_id is treated as no OAuth2."""
+        with patch.object(imap_session.imap_oauth2, "acquire_token") as mock_acquire:
+            conf = imap_session.build_imap_conf("imap.example.com", "user", "pass", client_id="")
+
+        mock_acquire.assert_not_called()
+        assert conf["oauth2"] is None
+
+    def test_none_client_secret_passed_through(self):
+        """Test that client_secret=None is correctly passed to acquire_token and stored."""
+        with patch.object(imap_session.imap_oauth2, "acquire_token", return_value=("tok", "microsoft")):
+            conf = imap_session.build_imap_conf("outlook.office365.com", "user@example.com", "pass", client_id="cid")
+
+        assert conf["oauth2"]["client_secret"] is None
+
+    def test_label_forwarded_to_acquire_token(self):
+        """Test that label is passed through to acquire_token."""
+        with patch.object(imap_session.imap_oauth2, "acquire_token", return_value=("tok", "google")) as mock_acquire:
+            imap_session.build_imap_conf(
+                "imap.gmail.com", "user@gmail.com", "pass", client_id="cid", client_secret="sec", label="destination"
+            )
+
+        mock_acquire.assert_called_once_with("imap.gmail.com", "cid", "user@gmail.com", "sec", "destination")
+
+
 class TestEnsureConnection:
     """Tests for ensure_connection function."""
 

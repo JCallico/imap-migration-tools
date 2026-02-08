@@ -942,53 +942,21 @@ def main():
     MAX_WORKERS = args.workers
     BATCH_SIZE = args.batch
 
-    src_use_oauth2 = bool(args.src_client_id)
-    dest_use_oauth2 = bool(args.dest_client_id)
-
-    # Acquire OAuth2 tokens if configured
-    src_oauth2_token = None
-    src_oauth2_provider = None
-    if src_use_oauth2:
-        src_oauth2_provider = imap_oauth2.detect_oauth2_provider(SRC_HOST)
-        if not src_oauth2_provider:
-            print(f"Error: Could not detect OAuth2 provider from host '{SRC_HOST}'.")
-            sys.exit(1)
-        print(f"Acquiring OAuth2 token for source ({src_oauth2_provider})...")
-        src_oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
-            src_oauth2_provider, args.src_client_id, SRC_USER, args.src_client_secret
-        )
-        if not src_oauth2_token:
-            print("Error: Failed to acquire OAuth2 token for source.")
-            sys.exit(1)
-        print("Source OAuth2 token acquired successfully.\n")
-
-    dest_oauth2_token = None
-    dest_oauth2_provider = None
-    if dest_use_oauth2:
-        dest_oauth2_provider = imap_oauth2.detect_oauth2_provider(DEST_HOST)
-        if not dest_oauth2_provider:
-            print(f"Error: Could not detect OAuth2 provider from host '{DEST_HOST}'.")
-            sys.exit(1)
-        print(f"Acquiring OAuth2 token for destination ({dest_oauth2_provider})...")
-        dest_oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
-            dest_oauth2_provider, args.dest_client_id, DEST_USER, args.dest_client_secret
-        )
-        if not dest_oauth2_token:
-            print("Error: Failed to acquire OAuth2 token for destination.")
-            sys.exit(1)
-        print("Destination OAuth2 token acquired successfully.\n")
+    # Build connection configs (acquires OAuth2 tokens if configured)
+    src_conf = imap_session.build_imap_conf(
+        SRC_HOST, SRC_USER, SRC_PASS, args.src_client_id, args.src_client_secret, "source"
+    )
+    dest_conf = imap_session.build_imap_conf(
+        DEST_HOST, DEST_USER, DEST_PASS, args.dest_client_id, args.dest_client_secret, "destination"
+    )
 
     print("\n--- Configuration Summary ---")
     print(f"Source Host     : {SRC_HOST}")
     print(f"Source User     : {SRC_USER}")
-    print(
-        f"Source Auth     : {'OAuth2/' + src_oauth2_provider + ' (XOAUTH2)' if src_use_oauth2 else 'Basic (password)'}"
-    )
+    print(f"Source Auth     : {imap_oauth2.auth_description(src_conf['oauth2'] and src_conf['oauth2']['provider'])}")
     print(f"Destination Host: {DEST_HOST}")
     print(f"Destination User: {DEST_USER}")
-    print(
-        f"Destination Auth: {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}"
-    )
+    print(f"Destination Auth: {imap_oauth2.auth_description(dest_conf['oauth2'] and dest_conf['oauth2']['provider'])}")
     print(f"Delete fm Source: {DELETE_SOURCE}")
     print(f"Dest Delete     : {DEST_DELETE}")
     print(f"Preserve Flags  : {preserve_flags}")
@@ -996,36 +964,6 @@ def main():
     if TARGET_FOLDER:
         print(f"Target Folder   : {TARGET_FOLDER}")
     print("-----------------------------\n")
-
-    # Use dicts so token updates propagate to worker threads
-    src_conf = {
-        "host": SRC_HOST,
-        "user": SRC_USER,
-        "password": SRC_PASS,
-        "oauth2_token": src_oauth2_token,
-        "oauth2": {
-            "provider": src_oauth2_provider,
-            "client_id": args.src_client_id,
-            "email": SRC_USER,
-            "client_secret": args.src_client_secret,
-        }
-        if src_use_oauth2
-        else None,
-    }
-    dest_conf = {
-        "host": DEST_HOST,
-        "user": DEST_USER,
-        "password": DEST_PASS,
-        "oauth2_token": dest_oauth2_token,
-        "oauth2": {
-            "provider": dest_oauth2_provider,
-            "client_id": args.dest_client_id,
-            "email": DEST_USER,
-            "client_secret": args.dest_client_secret,
-        }
-        if dest_use_oauth2
-        else None,
-    }
 
     progress_cache_file = None
     progress_cache_data = None

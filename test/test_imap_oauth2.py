@@ -322,3 +322,97 @@ class TestIsAuthError:
         """Test returns False for folder errors."""
         error = Exception("Folder not found: INBOX")
         assert imap_oauth2.is_auth_error(error) is False
+
+
+class TestAcquireToken:
+    """Tests for the acquire_token convenience function."""
+
+    def test_returns_token_and_provider_for_microsoft(self, capsys):
+        """Test successful token acquisition for Microsoft host."""
+        with patch.object(imap_oauth2, "acquire_oauth2_token_for_provider", return_value="ms_token"):
+            token, provider = imap_oauth2.acquire_token("outlook.office365.com", "cid", "user@example.com")
+
+        assert token == "ms_token"
+        assert provider == "microsoft"
+        out = capsys.readouterr().out
+        assert "Acquiring OAuth2 token (microsoft)" in out
+        assert "OAuth2 token acquired successfully" in out
+
+    def test_returns_token_and_provider_for_google(self, capsys):
+        """Test successful token acquisition for Google host."""
+        with patch.object(imap_oauth2, "acquire_oauth2_token_for_provider", return_value="g_token"):
+            token, provider = imap_oauth2.acquire_token(
+                "imap.gmail.com", "cid", "user@gmail.com", client_secret="secret"
+            )
+
+        assert token == "g_token"
+        assert provider == "google"
+
+    def test_label_appears_in_messages(self, capsys):
+        """Test that label is included in status messages."""
+        with patch.object(imap_oauth2, "acquire_oauth2_token_for_provider", return_value="tok"):
+            imap_oauth2.acquire_token("outlook.office365.com", "cid", "user@example.com", label="source")
+
+        out = capsys.readouterr().out
+        assert "Acquiring OAuth2 token for source (microsoft)" in out
+        assert "Source OAuth2 token acquired successfully" in out
+
+    def test_exits_on_unrecognized_host(self):
+        """Test sys.exit(1) when provider cannot be detected from host."""
+        with pytest.raises(SystemExit) as exc_info:
+            imap_oauth2.acquire_token("imap.example.com", "cid", "user@example.com")
+        assert exc_info.value.code == 1
+
+    def test_exits_on_token_acquisition_failure(self):
+        """Test sys.exit(1) when token acquisition returns None."""
+        with patch.object(imap_oauth2, "acquire_oauth2_token_for_provider", return_value=None):
+            with pytest.raises(SystemExit) as exc_info:
+                imap_oauth2.acquire_token("outlook.office365.com", "cid", "user@example.com")
+        assert exc_info.value.code == 1
+
+    def test_exit_message_includes_label(self, capsys):
+        """Test that failure message includes the label when provided."""
+        with patch.object(imap_oauth2, "acquire_oauth2_token_for_provider", return_value=None):
+            with pytest.raises(SystemExit):
+                imap_oauth2.acquire_token("outlook.office365.com", "cid", "user@example.com", label="destination")
+
+        out = capsys.readouterr().out
+        assert "Failed to acquire OAuth2 token for destination" in out
+
+    def test_exit_message_without_label(self, capsys):
+        """Test that failure message works without a label."""
+        with patch.object(imap_oauth2, "acquire_oauth2_token_for_provider", return_value=None):
+            with pytest.raises(SystemExit):
+                imap_oauth2.acquire_token("imap.gmail.com", "cid", "user@gmail.com", client_secret="s")
+
+        out = capsys.readouterr().out
+        assert "Error: Failed to acquire OAuth2 token." in out
+
+    def test_passes_client_secret_to_provider(self):
+        """Test that client_secret is forwarded to acquire_oauth2_token_for_provider."""
+        with patch.object(imap_oauth2, "acquire_oauth2_token_for_provider", return_value="tok") as mock_acq:
+            imap_oauth2.acquire_token("imap.gmail.com", "cid", "user@gmail.com", client_secret="my_secret")
+
+        mock_acq.assert_called_once_with("google", "cid", "user@gmail.com", "my_secret")
+
+
+class TestAuthDescription:
+    """Tests for the auth_description function."""
+
+    def test_microsoft_provider(self):
+        """Test returns OAuth2 description for Microsoft provider."""
+        assert imap_oauth2.auth_description("microsoft") == "OAuth2/microsoft (XOAUTH2)"
+
+    def test_google_provider(self):
+        """Test returns OAuth2 description for Google provider."""
+        assert imap_oauth2.auth_description("google") == "OAuth2/google (XOAUTH2)"
+
+    def test_none_provider(self):
+        """Test returns Basic description when provider is None."""
+        assert imap_oauth2.auth_description(None) == "Basic (password)"
+
+    def test_falsy_provider(self):
+        """Test returns Basic description for any falsy value."""
+        assert imap_oauth2.auth_description("") == "Basic (password)"
+        assert imap_oauth2.auth_description(0) == "Basic (password)"
+        assert imap_oauth2.auth_description(False) == "Basic (password)"

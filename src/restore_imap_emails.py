@@ -1046,44 +1046,14 @@ def main():
 
     args = parser.parse_args()
 
-    dest_use_oauth2 = bool(args.dest_client_id)
-
     global MAX_WORKERS, BATCH_SIZE
     MAX_WORKERS = args.workers
     BATCH_SIZE = args.batch
 
-    # Acquire OAuth2 token if configured
-    dest_oauth2_token = None
-    dest_oauth2_provider = None
-    if dest_use_oauth2:
-        dest_oauth2_provider = imap_oauth2.detect_oauth2_provider(args.dest_host)
-        if not dest_oauth2_provider:
-            print(f"Error: Could not detect OAuth2 provider from host '{args.dest_host}'.")
-            sys.exit(1)
-        print(f"Acquiring OAuth2 token for destination ({dest_oauth2_provider})...")
-        dest_oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
-            dest_oauth2_provider, args.dest_client_id, args.dest_user, args.dest_client_secret
-        )
-        if not dest_oauth2_token:
-            print("Error: Failed to acquire OAuth2 token for destination.")
-            sys.exit(1)
-        print("Destination OAuth2 token acquired successfully.\n")
-
-    # Use a dict so token updates propagate to worker threads
-    dest_conf = {
-        "host": args.dest_host,
-        "user": args.dest_user,
-        "password": args.dest_pass,
-        "oauth2_token": dest_oauth2_token,
-        "oauth2": {
-            "provider": dest_oauth2_provider,
-            "client_id": args.dest_client_id,
-            "email": args.dest_user,
-            "client_secret": args.dest_client_secret,
-        }
-        if dest_use_oauth2
-        else None,
-    }
+    # Build connection config (acquires OAuth2 token if configured)
+    dest_conf = imap_session.build_imap_conf(
+        args.dest_host, args.dest_user, args.dest_pass, args.dest_client_id, args.dest_client_secret, "destination"
+    )
 
     # Expand path
     local_path = os.path.expanduser(args.src_path)
@@ -1124,9 +1094,7 @@ def main():
     print(f"Source Path     : {local_path}")
     print(f"Destination Host: {args.dest_host}")
     print(f"Destination User: {args.dest_user}")
-    print(
-        f"Destination Auth: {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}"
-    )
+    print(f"Destination Auth: {imap_oauth2.auth_description(dest_conf['oauth2'] and dest_conf['oauth2']['provider'])}")
     print(f"Workers         : {args.workers}")
     if args.gmail_mode:
         print("Mode            : Gmail Restore with Labels + Flags")
