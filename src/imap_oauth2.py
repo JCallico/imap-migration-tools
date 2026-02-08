@@ -7,6 +7,7 @@ Dispatches to provider-specific modules (oauth2_microsoft, oauth2_google).
 Provider is auto-detected from the IMAP host string.
 """
 
+import sys
 import threading
 
 import oauth2_google
@@ -111,6 +112,59 @@ def acquire_oauth2_token_for_provider(provider, client_id, email, client_secret=
     else:
         print(f"Error: Unknown OAuth2 provider: {provider}")
         return None
+
+
+def acquire_token(host, client_id, email, client_secret=None, label=None):
+    """
+    Detect the OAuth2 provider from the host and acquire a token.
+
+    Prints status messages and calls sys.exit(1) on failure.
+
+    Args:
+        host: IMAP host string (used to detect provider)
+        client_id: OAuth2 client ID
+        email: User's email address
+        client_secret: OAuth2 client secret (required for Google)
+        label: Optional context label for messages (e.g. "source", "destination")
+
+    Returns:
+        (token, provider) tuple on success.
+    """
+    provider = detect_oauth2_provider(host)
+    if not provider:
+        print(f"Error: Could not detect OAuth2 provider from host '{host}'.")
+        sys.exit(1)
+    if label:
+        print(f"Acquiring OAuth2 token for {label} ({provider})...")
+    else:
+        print(f"Acquiring OAuth2 token ({provider})...")
+    token = acquire_oauth2_token_for_provider(provider, client_id, email, client_secret)
+    if not token:
+        if label:
+            print(f"Error: Failed to acquire OAuth2 token for {label}.")
+        else:
+            print("Error: Failed to acquire OAuth2 token.")
+        sys.exit(1)
+    if label:
+        print(f"{label.capitalize()} OAuth2 token acquired successfully.\n")
+    else:
+        print("OAuth2 token acquired successfully.\n")
+    return token, provider
+
+
+def auth_description(provider):
+    """
+    Return a human-readable auth description for config summaries.
+
+    Args:
+        provider: OAuth2 provider string (e.g. "microsoft", "google") or None for password auth.
+
+    Returns:
+        "OAuth2/{provider} (XOAUTH2)" or "Basic (password)".
+    """
+    if provider:
+        return f"OAuth2/{provider} (XOAUTH2)"
+    return "Basic (password)"
 
 
 def refresh_oauth2_token(conf, old_token):

@@ -218,29 +218,18 @@ def main(argv: Optional[list[str]] = None) -> None:
     USERNAME = args.user
     PASSWORD = args.password
 
-    use_oauth2 = bool(args.client_id)
-
     # Acquire OAuth2 token if configured
     oauth2_token = None
     oauth2_provider = None
-    if use_oauth2:
-        oauth2_provider = imap_oauth2.detect_oauth2_provider(IMAP_SERVER)
-        if not oauth2_provider:
-            print(f"Error: Could not detect OAuth2 provider from host '{IMAP_SERVER}'.")
-            sys.exit(1)
-        print(f"Acquiring OAuth2 token ({oauth2_provider})...")
-        oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
-            oauth2_provider, args.client_id, USERNAME, args.client_secret
+    if args.client_id:
+        oauth2_token, oauth2_provider = imap_oauth2.acquire_token(
+            IMAP_SERVER, args.client_id, USERNAME, args.client_secret
         )
-        if not oauth2_token:
-            print("Error: Failed to acquire OAuth2 token.")
-            sys.exit(1)
-        print("OAuth2 token acquired successfully.\n")
 
     print("\n--- Configuration Summary ---")
     print(f"Host            : {IMAP_SERVER}")
     print(f"User            : {USERNAME}")
-    print(f"Auth Method     : {'OAuth2/' + oauth2_provider + ' (XOAUTH2)' if use_oauth2 else 'Basic (password)'}")
+    print(f"Auth Method     : {imap_oauth2.auth_description(oauth2_provider)}")
     print("-----------------------------\n")
 
     count_emails(IMAP_SERVER, USERNAME, PASSWORD, oauth2_token)
