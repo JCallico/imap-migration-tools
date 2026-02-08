@@ -768,6 +768,14 @@ def restore_folder(
 
     if not files_to_restore:
         safe_print("No new emails to restore.")
+        if dest_delete and local_msg_ids is not None:
+            safe_print("Syncing destination: removing emails not in local backup...")
+            dest = imap_session.ensure_connection(None, dest_conf)
+            if dest:
+                delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
+                dest.logout()
+
+        restore_cache.maybe_save_dest_index_cache(cache_path, cache_data, cache_lock, force=True)
         return
 
     safe_print(f"Starting parallel restore of {len(files_to_restore)} emails...")

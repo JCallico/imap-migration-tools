@@ -382,6 +382,44 @@ Body content.
         assert imap_common.FOLDER_RESTORED_UNLABELED in server.folders
         assert len(server.folders[imap_common.FOLDER_RESTORED_UNLABELED]) == 1
 
+    def test_restore_dest_delete_removes_orphans(self, single_mock_server, monkeypatch, tmp_path):
+        """End-to-end: --dest-delete removes messages not in local backup."""
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+        (inbox / "1_keep.eml").write_text("Subject: Keep\nMessage-ID: <keep@test>\n\nBody")
+
+        dest_data = {
+            "INBOX": [
+                b"Subject: Keep\r\nMessage-ID: <keep@test>\r\n\r\nBody",
+                b"Subject: Orphan\r\nMessage-ID: <orphan@test>\r\n\r\nBody",
+            ]
+        }
+        server, port = single_mock_server(dest_data)
+
+        env = {
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "user",
+            "DEST_IMAP_PASSWORD": "pass",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "restore_imap_emails.py",
+                "--src-path",
+                str(tmp_path),
+                "--dest-delete",
+                "INBOX",
+            ],
+        )
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        restore_imap_emails.main()
+
+        assert len(server.folders["INBOX"]) == 1
+        assert b"Message-ID: <keep@test>" in server.folders["INBOX"][0]["content"]
+
 
 class TestRestoreProgressCache:
     def test_progress_cache_add_get_persist(self, tmp_path):

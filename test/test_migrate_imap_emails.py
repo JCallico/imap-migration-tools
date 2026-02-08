@@ -357,6 +357,34 @@ class TestGmailModeLabels:
         assert "Work" in dest_server.folders
         assert len(dest_server.folders["Work"]) == 2
 
+    def test_gmail_mode_fallback_folder_for_unlabeled(self, mock_server_factory, monkeypatch):
+        msg = b"Subject: Unlabeled\r\nMessage-ID: <gm-unlabeled@test>\r\n\r\nBody"
+
+        src_data = {
+            "[Gmail]/All Mail": [msg],
+        }
+        dest_data = {"INBOX": []}
+
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+            "MAX_WORKERS": "1",
+            "GMAIL_MODE": "true",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+        assert imap_common.FOLDER_RESTORED_UNLABELED in dest_server.folders
+        assert len(dest_server.folders[imap_common.FOLDER_RESTORED_UNLABELED]) == 1
+
 
 class TestConfigValidation:
     """Tests for configuration validation."""
