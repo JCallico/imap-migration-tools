@@ -580,3 +580,58 @@ def detect_trash_folder(imap_conn):
             return candidate
 
     return None
+
+
+def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
+    """Sync preservable flags on an existing email in the given folder.
+
+    Finds the email by Message-ID and adds any missing flags.
+
+    Args:
+        imap_conn: IMAP connection
+        folder_name: Folder containing the email
+        message_id: Message-ID header value
+        flags: Space-separated flags string like "\\Seen \\Flagged"
+        size: Email size for verification
+    """
+    if not flags or not message_id:
+        return
+
+    try:
+        imap_conn.select(f'"{folder_name}"')
+
+        clean_id = message_id.strip("<>").replace('"', '\\"')
+        typ, data = imap_conn.search(None, f'HEADER Message-ID "{clean_id}"')
+        if typ != "OK" or not data or not data[0]:
+            return
+
+        msg_num = data[0].split()[0]
+
+        flag_list = flags.split()
+        if not flag_list:
+            return
+
+        typ, flag_data = imap_conn.fetch(msg_num, "(FLAGS)")
+        if typ != "OK" or not flag_data:
+            return
+
+        current_flags = set()
+        for item in flag_data:
+            if isinstance(item, tuple) and item[0]:
+                resp_str = item[0].decode("utf-8", errors="ignore")
+                match = re.search(r"FLAGS\s+\((.*?)\)", resp_str)
+                if match:
+                    current_flags.update(match.group(1).split())
+
+        current_flags_lower = {f.lower() for f in current_flags}
+        flags_to_add = [f for f in flag_list if f.lower() not in current_flags_lower]
+
+        if flags_to_add:
+            flags_str = " ".join(flags_to_add)
+            typ, _ = imap_conn.store(msg_num, "+FLAGS", f"({flags_str})")
+            if typ == "OK":
+                for flag in flags_to_add:
+                    safe_print(f"  -> Synced flag: {flag}")
+
+    except Exception as e:
+        safe_print(f"Error syncing flags for {message_id} in {folder_name}: {e}")

@@ -649,7 +649,7 @@ class TestRestoreE2EHelpers:
         conn = imaplib.IMAP4("localhost", port)
         conn.login("user", "pass")
 
-        restore_imap_emails.sync_flags_on_existing(conn, "INBOX", "<flag@test>", "\\Seen \\Flagged", 1000)
+        imap_common.sync_flags_on_existing(conn, "INBOX", "<flag@test>", "\\Seen \\Flagged", 1000)
 
         conn.select('"INBOX"')
         resp, data = conn.search(None, 'HEADER Message-ID "<flag@test>"')

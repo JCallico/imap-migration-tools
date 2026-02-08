@@ -160,51 +160,6 @@ def filter_preservable_flags(flags_str):
     return " ".join(flags) if flags else None
 
 
-def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
-    """Sync preservable flags on an existing email.
-
-    This mirrors the restore script behavior: if the destination email exists but
-    is missing flags, add them and log each synced flag.
-    """
-    if not flags or not message_id:
-        return
-
-    try:
-        imap_conn.select(f'"{folder_name}"')
-
-        clean_id = message_id.replace('"', '\\"')
-        typ, data = imap_conn.search(None, f'(HEADER Message-ID "{clean_id}")')
-        if typ != "OK" or not data or not data[0]:
-            return
-
-        # Use the first match (best-effort)
-        msg_num = data[0].split()[0]
-
-        typ, msg_data = imap_conn.fetch(msg_num, "(FLAGS)")
-        if typ != "OK" or not msg_data:
-            return
-
-        current_flags = set()
-        for item in msg_data:
-            if isinstance(item, tuple) and item[0]:
-                resp_str = item[0].decode("utf-8", errors="ignore")
-                match = re.search(r"FLAGS\s+\((.*?)\)", resp_str)
-                if match:
-                    current_flags.update(match.group(1).split())
-
-        desired_flags = set(flags.split())
-        missing = desired_flags - current_flags
-        for flag in missing:
-            try:
-                imap_conn.store(msg_num, "+FLAGS", flag)
-                safe_print(f"  -> Synced flag: {flag}")
-            except Exception:
-                pass
-
-    except Exception as e:
-        safe_print(f"Error syncing flags for {message_id} in {folder_name}: {e}")
-
-
 def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msgid=None):
     """
     Delete emails from destination folder that don't exist in source.
@@ -366,7 +321,7 @@ def process_single_uid(
 
         if is_duplicate:
             if preserve_flags and flags and msg_id:
-                sync_flags_on_existing(dest, target_folder, msg_id, flags, size)
+                imap_common.sync_flags_on_existing(dest, target_folder, msg_id, flags, size)
         else:
             valid_flags = f"({flags})" if (preserve_flags and flags) else None
             imap_common.append_email(
@@ -427,7 +382,7 @@ def process_single_uid(
                             for flag in flags.split():
                                 safe_print(f"    -> Applied flag: {flag}")
                     elif preserve_flags and flags:
-                        sync_flags_on_existing(dest, label_folder, msg_id, flags, size)
+                        imap_common.sync_flags_on_existing(dest, label_folder, msg_id, flags, size)
                 except Exception as e:
                     safe_print(f"  -> Error applying label {label}: {e}")
 

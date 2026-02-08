@@ -141,67 +141,6 @@ def get_flags_from_manifest(manifest, message_id):
     return None
 
 
-def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
-    """
-    Sync flags on an existing email in the given folder.
-    Finds the email by Message-ID and updates its flags.
-
-    Args:
-        imap_conn: IMAP connection
-        folder_name: Folder containing the email
-        message_id: Message-ID header value
-        flags: Space-separated flags string like "\\Seen \\Flagged"
-        size: Email size for verification
-    """
-    try:
-        # Select folder
-        imap_conn.select(f'"{folder_name}"')
-
-        # Search for the message by Message-ID
-        search_id = message_id.strip("<>")
-        resp, data = imap_conn.search(None, f'HEADER Message-ID "{search_id}"')
-
-        if resp != "OK" or not data[0]:
-            return
-
-        msg_nums = data[0].split()
-        if not msg_nums:
-            return
-
-        # Use the first matching message
-        msg_num = msg_nums[0]
-
-        # Parse flags into a list
-        flag_list = flags.split() if flags else []
-        if not flag_list:
-            return
-
-        # Get current flags
-        resp, flag_data = imap_conn.fetch(msg_num, "(FLAGS)")
-        if resp != "OK":
-            return
-
-        # Check which flags need to be added
-        current_flags_str = str(flag_data[0]) if flag_data and flag_data[0] else ""
-        flags_to_add = []
-
-        for flag in flag_list:
-            # Normalize flag for comparison (case-insensitive)
-            if flag.lower() not in current_flags_str.lower():
-                flags_to_add.append(flag)
-
-        if flags_to_add:
-            # Add missing flags
-            flags_str = " ".join(flags_to_add)
-            resp, _ = imap_conn.store(msg_num, "+FLAGS", f"({flags_str})")
-            if resp == "OK":
-                for flag in flags_to_add:
-                    safe_print(f"  -> Synced flag: {flag}")
-
-    except Exception as e:
-        safe_print(f"  -> Error syncing flags: {e}")
-
-
 def parse_eml_file(file_path):
     """
     Parse an .eml file and extract metadata.
@@ -481,7 +420,7 @@ def process_restore_batch(
                 safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {display_subject}")
                 # Full restore preserves legacy behavior: sync flags on existing email if requested
                 if full_restore and apply_flags and flags and message_id:
-                    sync_flags_on_existing(dest, target_folder, message_id, flags, size)
+                    imap_common.sync_flags_on_existing(dest, target_folder, message_id, flags, size)
             elif upload_result == UploadResult.SUCCESS:
                 safe_print(f"[{target_folder}] UPLOADED      | {size_str:<8} | {display_subject}")
                 # Show applied flags in same style as labels
@@ -571,7 +510,7 @@ def process_restore_batch(
                                 safe_print(f"  -> Failed to apply label {label} (will retry on next restore)")
                         # If email exists in this label folder, sync flags (full restore only)
                         elif full_restore and apply_flags and flags:
-                            sync_flags_on_existing(dest, label_folder, message_id, flags, size)
+                            imap_common.sync_flags_on_existing(dest, label_folder, message_id, flags, size)
                     except Exception as e:
                         safe_print(f"  -> Error applying label {label}: {e}")
 
