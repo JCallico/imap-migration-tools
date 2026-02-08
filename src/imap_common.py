@@ -685,7 +685,7 @@ def load_manifest(local_path, filename):
 
     Args:
         local_path: Directory containing the manifest file
-        filename: Manifest filename (e.g. LABELS_MANIFEST_FILENAME)
+        filename: Manifest filename (e.g. "labels_manifest.json")
 
     Returns:
         Parsed manifest dict, or empty dict if not found or invalid.
