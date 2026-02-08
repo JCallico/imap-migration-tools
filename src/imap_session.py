@@ -9,6 +9,46 @@ import imap_common
 import imap_oauth2
 
 
+def build_imap_conf(host, user, password, client_id=None, client_secret=None, label=None):
+    """
+    Build a standard IMAP connection config dict.
+
+    If client_id is provided, acquires an OAuth2 token (with error handling and
+    sys.exit(1) on failure). Otherwise, builds a password-auth config.
+
+    Args:
+        host: IMAP host
+        user: IMAP username / email
+        password: IMAP password (used for password auth or as fallback)
+        client_id: OAuth2 client ID (triggers OAuth2 flow if provided)
+        client_secret: OAuth2 client secret (required for Google)
+        label: Optional context label for status messages (e.g. "source", "destination")
+
+    Returns:
+        Dict with keys: host, user, password, oauth2_token, oauth2
+    """
+    oauth2_token = None
+    oauth2_provider = None
+    oauth2_info = None
+
+    if client_id:
+        oauth2_token, oauth2_provider = imap_oauth2.acquire_token(host, client_id, user, client_secret, label)
+        oauth2_info = {
+            "provider": oauth2_provider,
+            "client_id": client_id,
+            "email": user,
+            "client_secret": client_secret,
+        }
+
+    return {
+        "host": host,
+        "user": user,
+        "password": password,
+        "oauth2_token": oauth2_token,
+        "oauth2": oauth2_info,
+    }
+
+
 def ensure_connection(conn, conf):
     """
     Refresh OAuth2 token if needed and ensure connection is healthy.
