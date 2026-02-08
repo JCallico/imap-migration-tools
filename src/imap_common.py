@@ -10,11 +10,13 @@ import imaplib
 import os
 import re
 import sys
+import threading
 from email import policy
 from email.header import decode_header
 from email.parser import BytesParser
 
 import imap_oauth2
+import restore_cache
 
 # Standard IMAP flags
 FLAG_SEEN = "\\Seen"
@@ -41,6 +43,127 @@ CMD_STORE = "store"
 CMD_SEARCH = "search"
 CMD_FETCH = "fetch"
 OP_ADD_FLAGS = "+FLAGS"
+
+_print_lock = threading.Lock()
+
+
+def safe_print(message: str) -> None:
+    """Thread-safe print with short thread names for logs."""
+    t_name = threading.current_thread().name
+    short_name = t_name.replace("ThreadPoolExecutor-", "T-").replace("MainThread", "MAIN")
+    with _print_lock:
+        print(f"[{short_name}] {message}")
+
+
+def _is_ignored_local_dir(dirname: str) -> bool:
+    return dirname.startswith(".") or dirname == "__pycache__"
+
+
+def list_local_folders(local_root: str) -> list[str]:
+    """List all folders under a local backup root in IMAP-style names."""
+    folders: set[str] = set()
+
+    for dirpath, dirnames, _filenames in os.walk(local_root):
+        dirnames[:] = [d for d in dirnames if not _is_ignored_local_dir(d)]
+
+        if os.path.abspath(dirpath) == os.path.abspath(local_root):
+            continue
+
+        rel = os.path.relpath(dirpath, local_root)
+        if rel == ".":
+            continue
+
+        parts = [p for p in rel.split(os.sep) if p and not _is_ignored_local_dir(p)]
+        if not parts:
+            continue
+
+        folders.add("/".join(parts))
+
+    return sorted(folders)
+
+
+def get_local_email_count(local_root: str, folder_name: str) -> int | None:
+    """Return the count of .eml files in a local folder, or None if missing/unreadable."""
+    folder_path = os.path.join(local_root, *folder_name.split("/"))
+    if not os.path.isdir(folder_path):
+        return None
+
+    try:
+        count = 0
+        for filename in os.listdir(folder_path):
+            if not filename.endswith(".eml"):
+                continue
+            full_path = os.path.join(folder_path, filename)
+            if os.path.isfile(full_path):
+                count += 1
+        return count
+    except OSError:
+        return None
+
+
+def get_backup_folders(local_path: str) -> list[tuple[str, str]]:
+    """Scan the backup directory and return list of (folder_name, folder_path) tuples."""
+    folders: list[tuple[str, str]] = []
+
+    def scan_dir(path: str, prefix: str = "") -> None:
+        try:
+            for item in os.listdir(path):
+                item_path = os.path.join(path, item)
+                if os.path.isdir(item_path):
+                    # Check if this directory contains .eml files
+                    has_eml = any(
+                        f.endswith(".eml") for f in os.listdir(item_path) if os.path.isfile(os.path.join(item_path, f))
+                    )
+                    folder_name = f"{prefix}{item}" if prefix else item
+
+                    if has_eml:
+                        folders.append((folder_name, item_path))
+
+                    # Recurse into subdirectories
+                    scan_dir(item_path, f"{folder_name}/")
+        except Exception:
+            pass
+
+    scan_dir(local_path)
+    return folders
+
+
+def extract_message_id_from_eml(file_path: str, read_limit: int = 65536) -> str | None:
+    """Extract just the Message-ID from an .eml file efficiently."""
+    try:
+        with open(file_path, "rb") as f:
+            header_bytes = f.read(read_limit)
+
+        return extract_message_id(header_bytes)
+    except Exception:
+        return None
+
+
+def is_progress_cache_ready(cache_data: dict | None, cache_lock: threading.Lock | None) -> bool:
+    """Return True when cache data and lock are initialized."""
+    return cache_data is not None and cache_lock is not None
+
+
+def load_progress_cache(
+    cache_root: str,
+    dest_host: str,
+    dest_user: str,
+    *,
+    log_fn=None,
+) -> tuple[str, dict, threading.Lock]:
+    """Load or initialize a progress cache file for a destination."""
+    try:
+        os.makedirs(cache_root, exist_ok=True)
+    except Exception as exc:
+        if log_fn is not None:
+            log_fn(f"Warning: unable to create cache directory '{cache_root}': {exc}")
+
+    cache_path = restore_cache.get_dest_index_cache_path(cache_root, dest_host, dest_user)
+    cache_data = restore_cache.load_dest_index_cache(cache_path)
+    cache_lock = threading.Lock()
+    if log_fn is not None:
+        log_fn(f"Using progress cache: {cache_path}")
+    return cache_path, cache_data, cache_lock
 
 
 def ensure_folder_exists(imap_conn, folder_name: str) -> None:

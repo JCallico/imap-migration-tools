@@ -80,14 +80,7 @@ BATCH_SIZE = 10
 
 # Thread-local storage
 thread_local = threading.local()
-print_lock = threading.Lock()
-
-
-def safe_print(message):
-    t_name = threading.current_thread().name
-    short_name = t_name.replace("ThreadPoolExecutor-", "T-").replace("MainThread", "MAIN")
-    with print_lock:
-        print(f"[{short_name}] {message}")
+safe_print = imap_common.safe_print
 
 
 def get_thread_connection(dest_conf):
@@ -207,22 +200,6 @@ def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
 
     except Exception as e:
         safe_print(f"  -> Error syncing flags: {e}")
-
-
-def extract_message_id_from_eml(file_path):
-    """
-    Extract just the Message-ID from an .eml file efficiently.
-    Returns the Message-ID string or None on error.
-    """
-    try:
-        with open(file_path, "rb") as f:
-            # Read just the first 64KB to get headers
-            header_bytes = f.read(65536)
-
-        msg_id = imap_common.extract_message_id(header_bytes)
-        return msg_id
-    except Exception:
-        return None
 
 
 def parse_eml_file(file_path):
@@ -453,7 +430,11 @@ def process_restore_batch(
                 # Lazy-load per-folder progress cache (no destination scan).
                 if existing_dest_msg_ids is None:
                     built: set[str] = set()
-                    if progress_cache_data is not None and progress_cache_lock is not None and dest_host and dest_user:
+                    if (
+                        imap_common.is_progress_cache_ready(progress_cache_data, progress_cache_lock)
+                        and dest_host
+                        and dest_user
+                    ):
                         built = restore_cache.get_cached_message_ids(
                             progress_cache_data,
                             progress_cache_lock,
@@ -555,8 +536,10 @@ def process_restore_batch(
                                     if label_folder_msg_ids is None:
                                         built: set[str] = set()
                                         if (
-                                            progress_cache_data is not None
-                                            and progress_cache_lock is not None
+                                            imap_common.is_progress_cache_ready(
+                                                progress_cache_data,
+                                                progress_cache_lock,
+                                            )
                                             and dest_host
                                             and dest_user
                                         ):
@@ -689,6 +672,9 @@ def restore_folder(
     dest_delete=False,
     full_restore: bool = False,
     cache_root: Optional[str] = None,
+    progress_cache_file: Optional[str] = None,
+    progress_cache_data: Optional[dict] = None,
+    progress_cache_lock: Optional[threading.Lock] = None,
 ):
     """
     Restore all emails from a local folder to the destination IMAP server.
@@ -709,11 +695,16 @@ def restore_folder(
     safe_print(f"Found {len(eml_files)} emails to restore.")
 
     cache_root = cache_root or local_folder_path
-    cache_path = restore_cache.get_dest_index_cache_path(cache_root, dest_conf["host"], dest_conf["user"])
-    cache_data: dict = restore_cache.load_dest_index_cache(cache_path)
-    cache_lock = threading.Lock()
-
-    safe_print(f"Using progress cache: {cache_path}")
+    cache_path = progress_cache_file
+    cache_data = progress_cache_data
+    cache_lock = progress_cache_lock
+    if cache_path is None or cache_data is None or cache_lock is None:
+        cache_path, cache_data, cache_lock = imap_common.load_progress_cache(
+            cache_root,
+            dest_conf["host"],
+            dest_conf["user"],
+            log_fn=safe_print,
+        )
 
     # Incremental mode uses cached Message-IDs to skip already-processed emails.
     existing_dest_msg_ids_by_folder: Optional[dict[str, set[str]]] = {folder_name: set()}
@@ -768,7 +759,7 @@ def restore_folder(
             files_to_restore = []
             skipped = 0
             for file_path, filename in eml_files:
-                msg_id = extract_message_id_from_eml(file_path)
+                msg_id = imap_common.extract_message_id_from_eml(file_path)
                 if msg_id and msg_id in dest_msg_ids:
                     skipped += 1
                 else:
@@ -777,6 +768,14 @@ def restore_folder(
 
     if not files_to_restore:
         safe_print("No new emails to restore.")
+        if dest_delete and local_msg_ids is not None:
+            safe_print("Syncing destination: removing emails not in local backup...")
+            dest = imap_session.ensure_connection(None, dest_conf)
+            if dest:
+                delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
+                dest.logout()
+
+        restore_cache.maybe_save_dest_index_cache(cache_path, cache_data, cache_lock, force=True)
         return
 
     safe_print(f"Starting parallel restore of {len(files_to_restore)} emails...")
@@ -825,7 +824,16 @@ def restore_folder(
     restore_cache.maybe_save_dest_index_cache(cache_path, cache_data, cache_lock, force=True)
 
 
-def restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags, full_restore: bool = False):
+def restore_gmail_with_labels(
+    local_path,
+    dest_conf,
+    manifest,
+    apply_flags,
+    full_restore: bool = False,
+    progress_cache_file: Optional[str] = None,
+    progress_cache_data: Optional[dict] = None,
+    progress_cache_lock: Optional[threading.Lock] = None,
+):
     """
     Special restoration mode for Gmail: Upload emails to their first label folder
     and then apply additional labels from the manifest.
@@ -856,11 +864,14 @@ def restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags, full
 
     batches = [eml_files[i : i + BATCH_SIZE] for i in range(0, len(eml_files), BATCH_SIZE)]
 
-    cache_path = restore_cache.get_dest_index_cache_path(local_path, dest_conf["host"], dest_conf["user"])
-    progress_cache_data: dict = restore_cache.load_dest_index_cache(cache_path)
-    progress_cache_lock = threading.Lock()
-
-    safe_print(f"Using progress cache: {cache_path}")
+    cache_path = progress_cache_file
+    if cache_path is None or progress_cache_data is None or progress_cache_lock is None:
+        cache_path, progress_cache_data, progress_cache_lock = imap_common.load_progress_cache(
+            local_path,
+            dest_conf["host"],
+            dest_conf["user"],
+            log_fn=safe_print,
+        )
     safe_print(
         "Cache will be populated as restore runs (no up-front destination indexing). "
         "First run may still do per-message duplicate checks; subsequent runs will skip quickly."
@@ -911,36 +922,6 @@ def restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags, full
 
     # Force-flush progress cache at end.
     restore_cache.maybe_save_dest_index_cache(cache_path, progress_cache_data, progress_cache_lock, force=True)
-
-
-def get_backup_folders(local_path):
-    """
-    Scan the backup directory and return list of folder paths.
-    Returns list of (folder_name, local_path) tuples.
-    """
-    folders = []
-
-    def scan_dir(path, prefix=""):
-        try:
-            for item in os.listdir(path):
-                item_path = os.path.join(path, item)
-                if os.path.isdir(item_path):
-                    # Check if this directory contains .eml files
-                    has_eml = any(
-                        f.endswith(".eml") for f in os.listdir(item_path) if os.path.isfile(os.path.join(item_path, f))
-                    )
-                    folder_name = f"{prefix}{item}" if prefix else item
-
-                    if has_eml:
-                        folders.append((folder_name, item_path))
-
-                    # Recurse into subdirectories
-                    scan_dir(item_path, f"{folder_name}/")
-        except Exception:
-            pass
-
-    scan_dir(local_path)
-    return folders
 
 
 def main():
@@ -1126,6 +1107,19 @@ def main():
         if not manifest:
             print("Warning: No manifest found. Labels/flags will not be applied.")
 
+    progress_cache_file = None
+    progress_cache_data = None
+    progress_cache_lock = None
+    try:
+        progress_cache_file, progress_cache_data, progress_cache_lock = imap_common.load_progress_cache(
+            local_path,
+            args.dest_host,
+            args.dest_user,
+            log_fn=safe_print,
+        )
+    except Exception as e:
+        safe_print(f"Warning: Failed to load progress cache: {e}")
+
     print("\n--- Configuration Summary ---")
     print(f"Source Path     : {local_path}")
     print(f"Destination Host: {args.dest_host}")
@@ -1159,7 +1153,16 @@ def main():
         if args.gmail_mode:
             dest.logout()
             # Special Gmail mode
-            restore_gmail_with_labels(local_path, dest_conf, manifest, apply_flags, full_restore=args.full_restore)
+            restore_gmail_with_labels(
+                local_path,
+                dest_conf,
+                manifest,
+                apply_flags,
+                full_restore=args.full_restore,
+                progress_cache_file=progress_cache_file,
+                progress_cache_data=progress_cache_data,
+                progress_cache_lock=progress_cache_lock,
+            )
             dest = None  # Connection handled by restore_gmail_with_labels
         elif args.folder:
             # Restore specific folder
@@ -1177,11 +1180,14 @@ def main():
                 args.dest_delete,
                 full_restore=args.full_restore,
                 cache_root=local_path,
+                progress_cache_file=progress_cache_file,
+                progress_cache_data=progress_cache_data,
+                progress_cache_lock=progress_cache_lock,
             )
             dest.logout()
         else:
             # Restore all folders
-            folders = get_backup_folders(local_path)
+            folders = imap_common.get_backup_folders(local_path)
             if not folders:
                 print("No backup folders found.")
                 sys.exit(1)
@@ -1208,6 +1214,9 @@ def main():
                     args.dest_delete,
                     full_restore=args.full_restore,
                     cache_root=local_path,
+                    progress_cache_file=progress_cache_file,
+                    progress_cache_data=progress_cache_data,
+                    progress_cache_lock=progress_cache_lock,
                 )
 
             dest.logout()

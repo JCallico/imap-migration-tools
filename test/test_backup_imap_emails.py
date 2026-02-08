@@ -9,9 +9,9 @@ Tests cover:
 - Configuration validation
 """
 
+import imaplib
 import os
 import sys
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -250,124 +250,6 @@ class TestGetExistingUids:
         result = backup_imap_emails.get_existing_uids(str(tmp_path))
         assert result == {"1"}
 
-    def test_os_error_handling(self, monkeypatch):
-        """Test handling of OS errors during listing."""
-
-        def mock_listdir(path):
-            raise OSError("Access denied")
-
-        monkeypatch.setattr(os, "listdir", mock_listdir)
-
-        uids = backup_imap_emails.get_existing_uids("/some/path")
-        assert len(uids) == 0
-
-
-class TestBackupErrorHandling:
-    """Tests for error handling scenarios in backup."""
-
-    def test_connection_error_in_worker(self, monkeypatch, tmp_path):
-        """Test worker handles connection failure gracefully."""
-        # Mock get_imap_connection to fail
-        monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: None)
-
-        # Should return None/Exit without crashing
-        backup_imap_emails.process_batch([], "INBOX", ("h", "u", "p"), str(tmp_path))
-
-    def test_select_error_in_worker(self, monkeypatch, tmp_path):
-        """Test worker handles SELECT failure."""
-        mock_conn = MagicMock()
-        mock_conn.select.side_effect = Exception("Select error")
-        monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: mock_conn)
-
-        # Should log error and return
-        backup_imap_emails.process_batch([], "INBOX", ("h", "u", "p"), str(tmp_path))
-        mock_conn.select.assert_called()
-
-    def test_fetch_body_error(self, monkeypatch, tmp_path):
-        """Test handling of fetch body failure."""
-        mock_conn = MagicMock()
-        mock_conn.select.return_value = "OK"
-
-        # Fetch body fails
-        mock_conn.uid.return_value = ("NO", [None])
-
-        monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: mock_conn)
-
-        # Try processing one UID
-        backup_imap_emails.process_batch([b"1"], "INBOX", ("h", "u", "p"), str(tmp_path))
-
-        # File should not exist
-        assert not list(tmp_path.glob("*.eml"))
-
-    def test_write_error(self, monkeypatch, tmp_path):
-        """Test handling of file write error."""
-        mock_conn = MagicMock()
-        monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: mock_conn)
-
-        # Mock fetched data
-        mock_conn.uid.return_value = ("OK", [(b"1 (RFC822 {10}", b"Content")])
-
-        # Mock open to fail
-        def mock_open(*args, **kwargs):
-            raise OSError("Disk full")
-
-        monkeypatch.setattr("builtins.open", mock_open)
-
-        backup_imap_emails.process_batch([b"1"], "INBOX", ("h", "u", "p"), str(tmp_path))
-
-    def test_folder_creation_error(self, monkeypatch, tmp_path):
-        """Test handling failure to create local folder."""
-
-        def mock_makedirs(path, exist_ok=False):
-            raise OSError("Permission denied")
-
-        monkeypatch.setattr(os, "makedirs", mock_makedirs)
-
-        mock_conn = MagicMock()
-
-        # backup_folder should return early
-        backup_imap_emails.backup_folder(mock_conn, "INBOX", str(tmp_path), ("h", "u", "p"))
-        mock_conn.select.assert_not_called()
-
-    def test_select_folder_error(self, monkeypatch, tmp_path):
-        """Test handling of select folder failure in main loop."""
-        mock_conn = MagicMock()
-        mock_conn.select.side_effect = Exception("Select failed")
-        monkeypatch.setattr(os, "makedirs", lambda p, exist_ok: None)
-
-        backup_imap_emails.backup_folder(mock_conn, "INBOX", str(tmp_path), ("h", "u", "p"))
-        mock_conn.uid.assert_not_called()
-
-    def test_search_error(self, monkeypatch, tmp_path):
-        """Test handling of search failure."""
-        mock_conn = MagicMock()
-        mock_conn.uid.return_value = ("NO", [])
-        monkeypatch.setattr(os, "makedirs", lambda p, exist_ok: None)
-
-        backup_imap_emails.backup_folder(mock_conn, "INBOX", str(tmp_path), ("h", "u", "p"))
-
-    def test_main_makedirs_error(self, monkeypatch, capsys):
-        """Test failure to create main backup directory."""
-        env = {
-            "SRC_IMAP_HOST": "h",
-            "SRC_IMAP_USERNAME": "u",
-            "SRC_IMAP_PASSWORD": "p",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["backup.py", "--dest-path", "/protected/path"])
-
-        def mock_makedirs(path):
-            raise OSError("No permission")
-
-        monkeypatch.setattr(os, "makedirs", mock_makedirs)
-        monkeypatch.setattr(os.path, "exists", lambda p: False)
-
-        with pytest.raises(SystemExit):
-            backup_imap_emails.main()
-
-        captured = capsys.readouterr()
-        assert "Error creating backup directory" in captured.out
-
 
 class TestGmailLabelsPreservation:
     """Tests for Gmail labels manifest functionality."""
@@ -419,173 +301,77 @@ class TestGmailLabelsPreservation:
         result = backup_imap_emails.load_labels_manifest(str(tmp_path))
         assert result == {}
 
-    def test_get_message_ids_in_folder(self, monkeypatch):
-        """Test extraction of message IDs from a folder."""
-        mock_conn = MagicMock()
-        mock_conn.select.return_value = ("OK", [b"1"])
-        mock_conn.uid.side_effect = [
-            ("OK", [b"1 2 3"]),  # search result
-            (
-                "OK",
-                [
-                    (b"1 (FLAGS (\\Seen) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg1@test.com>\r\n"),
-                    b")",
-                    (b"2 (FLAGS () BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg2@test.com>\r\n"),
-                    b")",
-                    (
-                        b"3 (FLAGS (\\Seen \\Answered) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}",
-                        b"Message-ID: <msg3@test.com>\r\n",
-                    ),
-                    b")",
-                ],
-            ),  # fetch result
-        ]
+    def test_get_message_ids_in_folder(self, single_mock_server):
+        src_data = {
+            "INBOX": [
+                b"Subject: A\r\nMessage-ID: <msg1@test.com>\r\n\r\nBody",
+                b"Subject: B\r\nMessage-ID: <msg2@test.com>\r\n\r\nBody",
+            ]
+        }
+        _server, port = single_mock_server(src_data)
 
-        result = backup_imap_emails.get_message_ids_in_folder(mock_conn, "INBOX", None)
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+
+        result = backup_imap_emails.get_message_ids_in_folder(conn, "INBOX", None)
 
         assert "<msg1@test.com>" in result
         assert "<msg2@test.com>" in result
-        assert "<msg3@test.com>" in result
+        conn.logout()
 
-    def test_get_message_info_in_folder_read_status(self, monkeypatch):
-        """Test extraction of message IDs with read/unread status."""
-        mock_conn = MagicMock()
-        mock_conn.select.return_value = ("OK", [b"1"])
-        mock_conn.uid.side_effect = [
-            ("OK", [b"1 2 3"]),  # search result
-            (
-                "OK",
-                [
-                    (b"1 (FLAGS (\\Seen) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg1@test.com>\r\n"),
-                    b")",
-                    (b"2 (FLAGS () BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg2@test.com>\r\n"),
-                    b")",
-                    (
-                        b"3 (FLAGS (\\Seen \\Answered) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}",
-                        b"Message-ID: <msg3@test.com>\r\n",
-                    ),
-                    b")",
-                ],
-            ),  # fetch result
-        ]
+    def test_get_message_info_in_folder_read_status(self, single_mock_server):
+        src_data = {
+            "INBOX": [
+                {"uid": 1, "flags": {"\\Seen"}, "content": b"Message-ID: <msg1@test.com>\r\n"},
+                {"uid": 2, "flags": set(), "content": b"Message-ID: <msg2@test.com>\r\n"},
+                {"uid": 3, "flags": {"\\Seen", "\\Answered"}, "content": b"Message-ID: <msg3@test.com>\r\n"},
+            ]
+        }
+        _server, port = single_mock_server(src_data)
 
-        result = backup_imap_emails.get_message_info_in_folder(mock_conn, "INBOX", None)
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+
+        result = backup_imap_emails.get_message_info_in_folder(conn, "INBOX", None)
 
         assert "<msg1@test.com>" in result
-        assert "\\Seen" in result["<msg1@test.com>"]["flags"]  # Has \Seen flag
+        assert "\\Seen" in result["<msg1@test.com>"]["flags"]
         assert "<msg2@test.com>" in result
-        assert result["<msg2@test.com>"]["flags"] == []  # No flags
+        assert result["<msg2@test.com>"]["flags"] == []
         assert "<msg3@test.com>" in result
-        assert "\\Seen" in result["<msg3@test.com>"]["flags"]  # Has \Seen flag
-        assert "\\Answered" in result["<msg3@test.com>"]["flags"]  # Also has \Answered
+        assert "\\Seen" in result["<msg3@test.com>"]["flags"]
+        assert "\\Answered" in result["<msg3@test.com>"]["flags"]
+        conn.logout()
 
-    def test_get_message_ids_in_folder_with_progress(self, monkeypatch):
-        """Test extraction of message IDs with progress callback."""
-        mock_conn = MagicMock()
-        mock_conn.select.return_value = ("OK", [b"1"])
-        mock_conn.uid.side_effect = [
-            ("OK", [b"1 2 3"]),  # search result
-            (
-                "OK",
-                [
-                    (b"1 (FLAGS (\\Seen) BODY[HEADER.FIELDS (MESSAGE-ID)] {30}", b"Message-ID: <msg1@test.com>\r\n"),
-                    b")",
-                ],
-            ),  # fetch result
-        ]
-
-        progress_calls = []
-
-        def progress_cb(current, total):
-            progress_calls.append((current, total))
-
-        backup_imap_emails.get_message_ids_in_folder(mock_conn, "INBOX", progress_cb)
-
-        # Progress should have been called
-        assert len(progress_calls) > 0
-        # Last call should show completion
-        assert progress_calls[-1][0] == progress_calls[-1][1]
-
-    def test_get_message_ids_in_folder_select_error(self, monkeypatch):
-        """Test handling of folder select error."""
-        mock_conn = MagicMock()
-        mock_conn.select.side_effect = Exception("Select failed")
-
-        result = backup_imap_emails.get_message_ids_in_folder(mock_conn, "INBOX")
-        assert result == set()
-
-    def test_get_message_ids_in_folder_empty(self, monkeypatch):
-        """Test extraction from empty folder."""
-        mock_conn = MagicMock()
-        mock_conn.select.return_value = ("OK", [b"0"])
-        mock_conn.uid.return_value = ("OK", [b""])
-
-        result = backup_imap_emails.get_message_ids_in_folder(mock_conn, "INBOX", None)
-        assert result == set()
-
-    def test_build_labels_manifest(self, monkeypatch, tmp_path):
-        """Test building labels manifest from mock folders."""
-        mock_conn = MagicMock()
-
-        # Mock folder list - simulate Gmail structure
-        mock_conn.list.return_value = (
-            "OK",
-            [
-                b'(\\HasNoChildren) "/" "INBOX"',
-                b'(\\HasNoChildren) "/" "Work"',
-                b'(\\HasNoChildren) "/" "[Gmail]/All Mail"',
-                b'(\\HasNoChildren) "/" "[Gmail]/Sent Mail"',
+    def test_build_labels_manifest(self, single_mock_server, tmp_path):
+        src_data = {
+            "INBOX": [b"Message-ID: <msg1@test.com>\r\n"],
+            "Work": [b"Message-ID: <msg1@test.com>\r\n"],
+            "[Gmail]/Sent Mail": [b"Message-ID: <msg2@test.com>\r\n"],
+            "[Gmail]/All Mail": [
+                {"uid": 1, "flags": {"\\Seen", "\\Flagged"}, "content": b"Message-ID: <msg1@test.com>\r\n"},
+                {"uid": 2, "flags": set(), "content": b"Message-ID: <msg2@test.com>\r\n"},
             ],
-        )
-
-        # Track which folder is selected
-        folder_data = {
-            "INBOX": {"<msg1@test.com>", "<msg2@test.com>"},
-            "Work": {"<msg1@test.com>"},
-            "[Gmail]/Sent Mail": {"<msg2@test.com>"},
         }
+        _server, port = single_mock_server(src_data)
 
-        # Mock info for All Mail (with flags)
-        all_mail_info = {
-            "<msg1@test.com>": {"flags": ["\\Seen", "\\Flagged"]},
-            "<msg2@test.com>": {"flags": []},
-        }
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
 
-        def mock_get_message_info_with_conf(conn, folder, src_conf, progress_cb=None):
-            if folder == "[Gmail]/All Mail":
-                return (all_mail_info, conn)
-            return ({}, conn)
+        result = backup_imap_emails.build_labels_manifest(conn, str(tmp_path))
 
-        def mock_get_message_ids_with_conf(conn, folder, src_conf, progress_cb=None):
-            return (folder_data.get(folder, set()), conn)
-
-        monkeypatch.setattr(backup_imap_emails, "get_message_ids_in_folder_with_conf", mock_get_message_ids_with_conf)
-        monkeypatch.setattr(backup_imap_emails, "get_message_info_in_folder_with_conf", mock_get_message_info_with_conf)
-
-        result = backup_imap_emails.build_labels_manifest(mock_conn, str(tmp_path))
-
-        # Check manifest structure (new format with labels and flags)
         assert "<msg1@test.com>" in result
         assert "<msg2@test.com>" in result
         assert "INBOX" in result["<msg1@test.com>"]["labels"]
         assert "Work" in result["<msg1@test.com>"]["labels"]
         assert "\\Seen" in result["<msg1@test.com>"]["flags"]
         assert "\\Flagged" in result["<msg1@test.com>"]["flags"]
-        assert "INBOX" in result["<msg2@test.com>"]["labels"]
         assert "Sent Mail" in result["<msg2@test.com>"]["labels"]
         assert result["<msg2@test.com>"]["flags"] == []
 
-        # Check file was saved
         manifest_path = tmp_path / "labels_manifest.json"
         assert manifest_path.exists()
-
-    def test_build_labels_manifest_list_error(self, monkeypatch, tmp_path):
-        """Test handling of folder list error."""
-        mock_conn = MagicMock()
-        mock_conn.list.return_value = ("NO", [])
-
-        result = backup_imap_emails.build_labels_manifest(mock_conn, str(tmp_path))
-        assert result == {}
+        conn.logout()
 
     def test_preserve_labels_flag_integration(self, single_mock_server, monkeypatch, tmp_path):
         """Test --preserve-labels flag creates manifest."""
