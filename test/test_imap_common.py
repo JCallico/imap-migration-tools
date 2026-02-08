@@ -14,43 +14,39 @@ Tests cover:
 
 import os
 import sys
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import imap_common
+from conftest import temp_env
 
 
 class TestVerifyEnvVars:
     """Tests for verify_env_vars function."""
 
-    def test_all_vars_present(self, monkeypatch):
+    def test_all_vars_present(self):
         """Test returns True when all variables are set."""
-        monkeypatch.setenv("VAR1", "value1")
-        monkeypatch.setenv("VAR2", "value2")
+        with temp_env({"VAR1": "value1", "VAR2": "value2"}):
+            result = imap_common.verify_env_vars(["VAR1", "VAR2"])
+            assert result is True
 
-        result = imap_common.verify_env_vars(["VAR1", "VAR2"])
-        assert result is True
-
-    def test_missing_vars(self, monkeypatch, capsys):
+    def test_missing_vars(self, capsys):
         """Test returns False and prints error when variables are missing."""
-        monkeypatch.delenv("MISSING_VAR", raising=False)
+        with temp_env({}):
+            result = imap_common.verify_env_vars(["MISSING_VAR"])
+            assert result is False
 
-        result = imap_common.verify_env_vars(["MISSING_VAR"])
-        assert result is False
+            captured = capsys.readouterr()
+            assert "MISSING_VAR" in captured.err
 
-        captured = capsys.readouterr()
-        assert "MISSING_VAR" in captured.err
-
-    def test_partial_vars_present(self, monkeypatch, capsys):
+    def test_partial_vars_present(self, capsys):
         """Test with some variables present and some missing."""
-        monkeypatch.setenv("PRESENT", "value")
-        monkeypatch.delenv("MISSING", raising=False)
-
-        result = imap_common.verify_env_vars(["PRESENT", "MISSING"])
-        assert result is False
+        with temp_env({"PRESENT": "value"}):
+            result = imap_common.verify_env_vars(["PRESENT", "MISSING"])
+            assert result is False
 
 
 class TestGetImapConnection:
@@ -75,6 +71,60 @@ class TestGetImapConnection:
 
         captured = capsys.readouterr()
         assert "Connection error" in captured.out or "Error" in captured.out
+
+    @patch("imaplib.IMAP4")
+    @patch("imaplib.IMAP4_SSL")
+    def test_scheme_parsing(self, mock_ssl, mock_imap):
+        """Test scheme parsing determines SSL usage."""
+        # Setup mocks
+        mock_conn = Mock()
+        mock_ssl.return_value = mock_conn
+        mock_imap.return_value = mock_conn
+
+        # Test SSL schemes
+        for scheme in ["imaps", "imap+ssl", "imapssl", "ssl"]:
+            host = f"{scheme}://mail.example.com"
+            # Note: mock_conn.login is called, so we can mock it to succeed or ignore it
+            imap_common.get_imap_connection(host, "user", "pass")
+            mock_ssl.assert_called_with("mail.example.com")
+            mock_imap.assert_not_called()
+            mock_ssl.reset_mock()
+            mock_imap.reset_mock()
+
+        # Test non-SSL schemes
+        for scheme in ["imap", "tcp"]:
+            host = f"{scheme}://mail.example.com"
+            imap_common.get_imap_connection(host, "user", "pass")
+            mock_imap.assert_called_with("mail.example.com")
+            mock_ssl.assert_not_called()
+            mock_ssl.reset_mock()
+            mock_imap.reset_mock()
+
+        # Test with port
+        host = "imap://mail.example.com:143"
+        imap_common.get_imap_connection(host, "user", "pass")
+        mock_imap.assert_called_with("mail.example.com", 143)
+
+    def test_invalid_schemes(self, capsys):
+        """Test invalid schemes raise ValueError caught by exception handler."""
+        imap_common.get_imap_connection("http://mail.example.com", "user", "pass")
+        captured = capsys.readouterr()
+        assert "Unsupported IMAP scheme: http" in captured.out
+
+    def test_invalid_host_url(self, capsys):
+        """Test invalid host URL parsing."""
+        # No hostname
+        imap_common.get_imap_connection("imaps://", "user", "pass")
+        captured = capsys.readouterr()
+        assert "Invalid IMAP host" in captured.out
+
+        # No scheme (urllib fails to parse scheme if missing :// or just host)
+        # But our code checks "://" in host. If not, it assumes basic host.
+        # So we test a case where "://" is present but scheme is empty?
+        # "://hostname" parses scheme as empty string.
+        imap_common.get_imap_connection("://mail.example.com", "user", "pass")
+        captured = capsys.readouterr()
+        assert "Invalid IMAP host" in captured.out
 
 
 class TestNormalizeFolderName:

@@ -21,37 +21,40 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 
 import imap_common
 import migrate_imap_emails
-from conftest import make_mock_connection
+from conftest import temp_argv, temp_env
+
+
+def _mock_migrate_env(src_port, dest_port):
+    return {
+        "SRC_IMAP_HOST": f"imap://localhost:{src_port}",
+        "SRC_IMAP_USERNAME": "src_user",
+        "SRC_IMAP_PASSWORD": "p",
+        "DEST_IMAP_HOST": f"imap://localhost:{dest_port}",
+        "DEST_IMAP_USERNAME": "dest_user",
+        "DEST_IMAP_PASSWORD": "p",
+        "MAX_WORKERS": "1",
+        "BATCH_SIZE": "1",
+    }
 
 
 class TestBasicMigration:
     """Tests for basic migration functionality."""
 
-    def test_single_email_migration(self, mock_server_factory, monkeypatch):
+    def test_single_email_migration(self, mock_server_factory):
         """Test migrating a single email from source to destination."""
         src_data = {"INBOX": [b"Subject: Hello\r\nMessage-ID: <1@test>\r\n\r\nBody"]}
         dest_data = {"INBOX": []}
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 1
         assert b"Subject: Hello" in dest_server.folders["INBOX"][0]["content"]
 
-    def test_multiple_emails_migration(self, mock_server_factory, monkeypatch):
+    def test_multiple_emails_migration(self, mock_server_factory):
         """Test migrating multiple emails."""
         src_data = {
             "INBOX": [
@@ -64,19 +67,9 @@ class TestBasicMigration:
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 3
 
@@ -84,7 +77,7 @@ class TestBasicMigration:
 class TestDuplicateHandling:
     """Tests for duplicate detection and skipping."""
 
-    def test_skip_duplicate_by_message_id(self, mock_server_factory, monkeypatch):
+    def test_skip_duplicate_by_message_id(self, mock_server_factory):
         """Test that emails with existing Message-ID are skipped."""
         msg = b"Subject: Dup\r\nMessage-ID: <dup-id>\r\n\r\nContent"
         src_data = {"INBOX": [msg]}
@@ -92,24 +85,14 @@ class TestDuplicateHandling:
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
 
         # Should still be 1 message (duplicate skipped)
         assert len(dest_server.folders["INBOX"]) == 1
 
-    def test_migrate_non_duplicate(self, mock_server_factory, monkeypatch):
+    def test_migrate_non_duplicate(self, mock_server_factory):
         """Test that non-duplicate emails are migrated even when others exist."""
         existing = b"Subject: Existing\r\nMessage-ID: <existing>\r\n\r\nOld"
         new_msg = b"Subject: New\r\nMessage-ID: <new>\r\n\r\nNew content"
@@ -119,19 +102,9 @@ class TestDuplicateHandling:
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
 
         # Should now have 2 messages
         assert len(dest_server.folders["INBOX"]) == 2
@@ -140,52 +113,31 @@ class TestDuplicateHandling:
 class TestDeleteFromSource:
     """Tests for delete-after-migration functionality."""
 
-    def test_delete_after_migration(self, mock_server_factory, monkeypatch):
+    def test_delete_after_migration(self, mock_server_factory):
         """Test that emails are deleted from source after successful migration."""
         src_data = {"INBOX": [b"Subject: Del\r\nMessage-ID: <del>\r\n\r\nC"]}
         dest_data = {"INBOX": []}
 
         src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-            "DELETE_FROM_SOURCE": "true",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        env["DELETE_FROM_SOURCE"] = "true"
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 1
         assert len(src_server.folders["INBOX"]) == 0
 
-    def test_no_delete_when_disabled(self, mock_server_factory, monkeypatch):
+    def test_no_delete_when_disabled(self, mock_server_factory):
         """Test that emails remain in source when delete is not enabled."""
         src_data = {"INBOX": [b"Subject: Keep\r\nMessage-ID: <keep>\r\n\r\nC"]}
         dest_data = {"INBOX": []}
 
         src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-            # DELETE_FROM_SOURCE not set
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 1
         assert len(src_server.folders["INBOX"]) == 1
@@ -194,31 +146,21 @@ class TestDeleteFromSource:
 class TestFolderHandling:
     """Tests for folder creation and multi-folder migration."""
 
-    def test_folder_creation(self, mock_server_factory, monkeypatch):
+    def test_folder_creation(self, mock_server_factory):
         """Test that folders are created on destination."""
         src_data = {"INBOX": [], "Archive": [b"Subject: A\r\nMessage-ID: <a>\r\n\r\nC"]}
         dest_data = {"INBOX": []}
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        with temp_env(env), temp_argv(["migrate_imap_emails.py"]):
+            migrate_imap_emails.main()
 
         assert "Archive" in dest_server.folders
         assert len(dest_server.folders["Archive"]) == 1
 
-    def test_multiple_folders_migration(self, mock_server_factory, monkeypatch):
+    def test_multiple_folders_migration(self, mock_server_factory):
         """Test migrating emails from multiple folders."""
         src_data = {
             "INBOX": [b"Subject: Inbox\r\nMessage-ID: <inbox>\r\n\r\nC"],
@@ -229,49 +171,28 @@ class TestFolderHandling:
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        with temp_env(env), temp_argv(["migrate_imap_emails.py"]):
+            migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 1
         assert "Sent" in dest_server.folders
         assert "Drafts" in dest_server.folders
 
-    def test_empty_folder_handling(self, mock_server_factory, monkeypatch):
+    def test_empty_folder_handling(self, mock_server_factory):
         """Test that empty folders are handled gracefully."""
         src_data = {"INBOX": [], "Empty": []}
         dest_data = {"INBOX": []}
 
         _, _, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        # Should complete without error
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        with temp_env(env), temp_argv(["migrate_imap_emails.py"]):
+            migrate_imap_emails.main()
 
 
 class TestPreserveFlags:
-    def test_preserve_flags_applied_on_copy(self, mock_server_factory, monkeypatch):
+    def test_preserve_flags_applied_on_copy(self, mock_server_factory):
         msg = b"Subject: Flagged\r\nMessage-ID: <f1@test>\r\n\r\nBody"
         src_data = {"INBOX": [msg]}
         dest_data = {"INBOX": []}
@@ -279,25 +200,15 @@ class TestPreserveFlags:
         src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
         src_server.folders["INBOX"][0]["flags"].add("\\Seen")
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-            "PRESERVE_FLAGS": "true",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        env["PRESERVE_FLAGS"] = "true"
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 1
         assert "\\Seen" in dest_server.folders["INBOX"][0]["flags"]
 
-    def test_preserve_flags_syncs_on_duplicate(self, mock_server_factory, monkeypatch):
+    def test_preserve_flags_syncs_on_duplicate(self, mock_server_factory):
         msg = b"Subject: DupFlags\r\nMessage-ID: <df1@test>\r\n\r\nBody"
         src_data = {"INBOX": [msg]}
         dest_data = {"INBOX": [msg]}
@@ -305,27 +216,17 @@ class TestPreserveFlags:
         src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
         src_server.folders["INBOX"][0]["flags"].add("\\Seen")
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-            "PRESERVE_FLAGS": "true",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        env["PRESERVE_FLAGS"] = "true"
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 1
         assert "\\Seen" in dest_server.folders["INBOX"][0]["flags"]
 
 
 class TestGmailModeLabels:
-    def test_gmail_mode_migrates_all_mail_and_applies_labels(self, mock_server_factory, monkeypatch):
+    def test_gmail_mode_migrates_all_mail_and_applies_labels(self, mock_server_factory):
         msg1 = b"Subject: One\r\nMessage-ID: <gm1@test>\r\n\r\nBody 1"
         msg2 = b"Subject: Two\r\nMessage-ID: <gm2@test>\r\n\r\nBody 2"
 
@@ -338,26 +239,16 @@ class TestGmailModeLabels:
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-            "GMAIL_MODE": "true",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        env["GMAIL_MODE"] = "true"
+        with temp_env(env), temp_argv(["migrate_imap_emails.py"]):
+            migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 1
         assert "Work" in dest_server.folders
         assert len(dest_server.folders["Work"]) == 2
 
-    def test_gmail_mode_fallback_folder_for_unlabeled(self, mock_server_factory, monkeypatch):
+    def test_gmail_mode_fallback_folder_for_unlabeled(self, mock_server_factory):
         msg = b"Subject: Unlabeled\r\nMessage-ID: <gm-unlabeled@test>\r\n\r\nBody"
 
         src_data = {
@@ -367,20 +258,10 @@ class TestGmailModeLabels:
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-            "GMAIL_MODE": "true",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        env["GMAIL_MODE"] = "true"
+        with temp_env(env), temp_argv(["migrate_imap_emails.py"]):
+            migrate_imap_emails.main()
 
         assert imap_common.FOLDER_RESTORED_UNLABELED in dest_server.folders
         assert len(dest_server.folders[imap_common.FOLDER_RESTORED_UNLABELED]) == 1
@@ -437,31 +318,29 @@ class TestCacheHitWithoutLock:
 class TestConfigValidation:
     """Tests for configuration validation."""
 
-    def test_missing_source_credentials(self, monkeypatch, capsys):
+    def test_missing_source_credentials(self, capsys):
         """Test that missing source credentials cause exit."""
         env = {
             "DEST_IMAP_HOST": "localhost",
             "DEST_IMAP_USERNAME": "dest",
             "DEST_IMAP_PASSWORD": "p",
         }
-        monkeypatch.setattr(os, "environ", env)
-
-        with pytest.raises(SystemExit) as exc_info:
-            migrate_imap_emails.main()
+        with temp_env(env):
+            with pytest.raises(SystemExit) as exc_info:
+                migrate_imap_emails.main()
 
         assert exc_info.value.code == 2
 
-    def test_missing_dest_credentials(self, monkeypatch, capsys):
+    def test_missing_dest_credentials(self, capsys):
         """Test that missing destination credentials cause exit."""
         env = {
             "SRC_IMAP_HOST": "localhost",
             "SRC_IMAP_USERNAME": "src",
             "SRC_IMAP_PASSWORD": "p",
         }
-        monkeypatch.setattr(os, "environ", env)
-
-        with pytest.raises(SystemExit) as exc_info:
-            migrate_imap_emails.main()
+        with temp_env(env):
+            with pytest.raises(SystemExit) as exc_info:
+                migrate_imap_emails.main()
 
         assert exc_info.value.code == 2
 
@@ -469,38 +348,30 @@ class TestConfigValidation:
 class TestMigrateErrorHandling:
     """Tests for error handling during migration."""
 
-    def test_connection_error_in_worker(self, mock_server_factory, monkeypatch):
+    def test_connection_error_in_worker(self, mock_server_factory):
         """Test error handling when worker fails to connect."""
         src_data = {"INBOX": [b"Subject: Test\r\nMessage-ID: <1>\r\n\r\nBody"]}
         dest_data = {"INBOX": []}
 
         _, _, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        # Proper setup for main thread connection
-        real_mock_conn = make_mock_connection(p1, p2)
+        from unittest.mock import patch
 
-        def side_effect(*args, **kwargs):
+        def side_effect(host, user, pwd, oauth2_token=None):
             if threading.current_thread() is threading.main_thread():
-                return real_mock_conn(*args, **kwargs)
+                return imap_common.get_imap_connection(host, user, pwd, oauth2_token)
             return None  # Simulate connection failure in worker
 
-        monkeypatch.setattr("imap_common.get_imap_connection", side_effect)
+        env = _mock_migrate_env(p1, p2)
+        with (
+            temp_env(env),
+            temp_argv(["migrate_imap_emails.py", "INBOX"]),
+            patch("imap_common.get_imap_connection", side_effect=side_effect),
+        ):
+            # Should not crash, but log error
+            migrate_imap_emails.main()
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-
-        # Should not crash, but log error
-        migrate_imap_emails.main()
-
-    def test_select_error_in_worker(self, mock_server_factory, monkeypatch):
+    def test_select_error_in_worker(self, mock_server_factory):
         """Test error handling when folder selection fails in worker."""
         src_data = {"INBOX": [b"Subject: Test\r\nMessage-ID: <1>\r\n\r\nBody"]}
         dest_data = {"INBOX": []}
@@ -515,23 +386,17 @@ class TestMigrateErrorHandling:
                 raise RuntimeError("Select failed")
             return original_select(self, mailbox, readonly)
 
-        monkeypatch.setattr(imaplib.IMAP4, "select", side_effect_select)
+        from unittest.mock import patch
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+        env = _mock_migrate_env(p1, p2)
+        with (
+            patch.object(imaplib.IMAP4, "select", side_effect=side_effect_select),
+            temp_env(env),
+            temp_argv(["migrate_imap_emails.py", "INBOX"]),
+        ):
+            migrate_imap_emails.main()
 
-        migrate_imap_emails.main()
-
-    def test_select_error_in_process_batch(self, mock_server_factory, monkeypatch):
+    def test_select_error_in_process_batch(self, mock_server_factory):
         """Cover process_batch select exception handling with real server data."""
         src_data = {"INBOX": [b"Subject: Test\r\nMessage-ID: <1>\r\n\r\nBody"]}
         dest_data = {"INBOX": []}
@@ -541,23 +406,24 @@ class TestMigrateErrorHandling:
         def raise_select(_self, _mailbox, readonly=False):
             raise RuntimeError("Select failed")
 
-        monkeypatch.setattr(imaplib.IMAP4, "select", raise_select)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+        from unittest.mock import patch
 
-        src_conf = {"host": "localhost", "user": "src_user", "password": "p"}
-        dest_conf = {"host": "localhost", "user": "dest_user", "password": "p"}
+        env = _mock_migrate_env(p1, p2)
+        src_conf = {"host": env["SRC_IMAP_HOST"], "user": "src_user", "password": "p"}
+        dest_conf = {"host": env["DEST_IMAP_HOST"], "user": "dest_user", "password": "p"}
 
-        migrate_imap_emails.process_batch(
-            [b"1"],
-            "INBOX",
-            src_conf,
-            dest_conf,
-            delete_from_source=False,
-            preserve_flags=False,
-            gmail_mode=False,
-        )
+        with patch.object(imaplib.IMAP4, "select", raise_select), temp_env(env):
+            migrate_imap_emails.process_batch(
+                [b"1"],
+                "INBOX",
+                src_conf,
+                dest_conf,
+                delete_from_source=False,
+                preserve_flags=False,
+                gmail_mode=False,
+            )
 
-    def test_fetch_error_in_worker(self, mock_server_factory, monkeypatch):
+    def test_fetch_error_in_worker(self, mock_server_factory):
         """Test error handling when fetching message details fails."""
         src_data = {"INBOX": [b"Subject: Test\r\nMessage-ID: <1>\r\n\r\nBody"]}
         dest_data = {"INBOX": []}
@@ -572,28 +438,22 @@ class TestMigrateErrorHandling:
                 raise RuntimeError("Fetch failed")
             return original_uid(self, command, *args)
 
-        monkeypatch.setattr(imaplib.IMAP4, "uid", side_effect_uid)
+        from unittest.mock import patch
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        with (
+            patch.object(imaplib.IMAP4, "uid", side_effect=side_effect_uid),
+            temp_env(env),
+            temp_argv(["migrate_imap_emails.py", "INBOX"]),
+        ):
+            migrate_imap_emails.main()
 
         # Dest should be empty as fetch failed
         assert len(dest_server.folders["INBOX"]) == 0
 
-    def test_main_connection_failure(self, monkeypatch):
+    def test_main_connection_failure(self):
         """Test that main exits if initial connection fails."""
-        monkeypatch.setattr("imap_common.get_imap_connection", lambda *args: None)
+        from unittest.mock import patch
 
         env = {
             "SRC_IMAP_HOST": "localhost",
@@ -603,37 +463,30 @@ class TestMigrateErrorHandling:
             "DEST_IMAP_USERNAME": "dest_user",
             "DEST_IMAP_PASSWORD": "p",
         }
-        monkeypatch.setattr(os, "environ", env)
-
-        with pytest.raises(SystemExit) as exc:
-            migrate_imap_emails.main()
+        with patch("imap_common.get_imap_connection", return_value=None), temp_env(env):
+            with pytest.raises(SystemExit) as exc:
+                migrate_imap_emails.main()
         assert exc.value.code == 1
 
-    def test_main_logs_progress_cache_load_failure(self, mock_server_factory, monkeypatch, capsys):
+    def test_main_logs_progress_cache_load_failure(self, mock_server_factory, capsys):
         """Cover progress cache load exception in main."""
         src_data = {"INBOX": [b"Subject: X\r\nMessage-ID: <x@test>\r\n\r\nBody"]}
         dest_data = {"INBOX": []}
 
         _src_server, _dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-        monkeypatch.setattr(
-            imap_common, "load_progress_cache", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
-        )
+        from unittest.mock import patch
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["migrate_imap_emails.py", "--migrate-cache", "./cache"])
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        with (
+            patch(
+                "imap_common.load_progress_cache",
+                lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+            ),
+            temp_env(env),
+            temp_argv(["migrate_imap_emails.py", "--migrate-cache", "./cache"]),
+        ):
+            migrate_imap_emails.main()
 
         captured = capsys.readouterr()
         assert "Warning: Failed to load progress cache" in captured.out
@@ -642,35 +495,28 @@ class TestMigrateErrorHandling:
 class TestTrashHandling:
     """Tests for trash folder related logic."""
 
-    def test_circular_trash_migration_prevention(self, mock_server_factory, monkeypatch):
+    def test_circular_trash_migration_prevention(self, mock_server_factory):
         """Test that the trash folder itself is not migrated when delete is on."""
         src_data = {"INBOX": [], "Trash": [b"Subject: Garbage\r\nMessage-ID: <g>\r\n\r\nC"]}
         dest_data = {"INBOX": []}
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        # Mock trash detection
-        monkeypatch.setattr("imap_common.detect_trash_folder", lambda conn: "Trash")
+        from unittest.mock import patch
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "DELETE_FROM_SOURCE": "true",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        env["DELETE_FROM_SOURCE"] = "true"
+        with (
+            patch("imap_common.detect_trash_folder", return_value="Trash"),
+            temp_env(env),
+            temp_argv(["migrate_imap_emails.py"]),
+        ):
+            migrate_imap_emails.main()
 
         # Trash folder should NOT be created in dest (skipped)
         assert "Trash" not in dest_server.folders
 
-    def test_deleted_moved_to_trash(self, mock_server_factory, monkeypatch):
+    def test_deleted_moved_to_trash(self, mock_server_factory):
         """Test that migrated emails are moved to trash on source."""
         src_data = {"INBOX": [b"Subject: T\r\nMessage-ID: <1>\r\n\r\nBody"]}
         dest_data = {"INBOX": []}
@@ -678,22 +524,16 @@ class TestTrashHandling:
         src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
         src_server.folders["Trash"] = []  # Create trash on source
 
-        monkeypatch.setattr("imap_common.detect_trash_folder", lambda conn: "Trash")
+        from unittest.mock import patch
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "src_user",
-            "SRC_IMAP_PASSWORD": "p",
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "dest_user",
-            "DEST_IMAP_PASSWORD": "p",
-            "DELETE_FROM_SOURCE": "true",
-            "MAX_WORKERS": "1",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        env["DELETE_FROM_SOURCE"] = "true"
+        with (
+            patch("imap_common.detect_trash_folder", return_value="Trash"),
+            temp_env(env),
+            temp_argv(["migrate_imap_emails.py", "INBOX"]),
+        ):
+            migrate_imap_emails.main()
 
         # Dest should have it
         assert len(dest_server.folders["INBOX"]) == 1
@@ -833,7 +673,7 @@ class TestDestDeleteArgument:
 class TestDestDeleteFunctionality:
     """Tests for --dest-delete actual deletion behavior."""
 
-    def test_delete_orphan_emails_removes_extra_dest_emails(self, mock_server_factory, monkeypatch):
+    def test_delete_orphan_emails_removes_extra_dest_emails(self, mock_server_factory):
         """Test that emails in dest but not in source are deleted with --dest-delete."""
         # Source has only 1 email
         src_data = {"INBOX": [b"Subject: Keep Me\r\nMessage-ID: <keep@test>\r\n\r\nBody"]}
@@ -848,24 +688,17 @@ class TestDestDeleteFunctionality:
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        monkeypatch.setenv("SRC_IMAP_HOST", "localhost")
-        monkeypatch.setenv("SRC_IMAP_USERNAME", "src_user")
-        monkeypatch.setenv("SRC_IMAP_PASSWORD", "p")
-        monkeypatch.setenv("DEST_IMAP_HOST", "localhost")
-        monkeypatch.setenv("DEST_IMAP_USERNAME", "dest_user")
-        monkeypatch.setenv("DEST_IMAP_PASSWORD", "p")
-        monkeypatch.setenv("MAX_WORKERS", "1")
-        monkeypatch.setenv("DEST_DELETE", "true")
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        env["DEST_DELETE"] = "true"
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
 
         # Only the email that exists in source should remain
         assert len(dest_server.folders["INBOX"]) == 1
         remaining_content = dest_server.folders["INBOX"][0]["content"]
         assert b"Message-ID: <keep@test>" in remaining_content
 
-    def test_dest_delete_disabled_keeps_extra_emails(self, mock_server_factory, monkeypatch):
+    def test_dest_delete_disabled_keeps_extra_emails(self, mock_server_factory):
         """Test that without --dest-delete, extra dest emails are kept."""
         src_data = {"INBOX": [b"Subject: Source Email\r\nMessage-ID: <src@test>\r\n\r\nBody"]}
         dest_data = {
@@ -876,22 +709,14 @@ class TestDestDeleteFunctionality:
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        monkeypatch.delenv("DEST_DELETE", raising=False)
-        monkeypatch.setenv("SRC_IMAP_HOST", "localhost")
-        monkeypatch.setenv("SRC_IMAP_USERNAME", "src_user")
-        monkeypatch.setenv("SRC_IMAP_PASSWORD", "p")
-        monkeypatch.setenv("DEST_IMAP_HOST", "localhost")
-        monkeypatch.setenv("DEST_IMAP_USERNAME", "dest_user")
-        monkeypatch.setenv("DEST_IMAP_PASSWORD", "p")
-        monkeypatch.setenv("MAX_WORKERS", "1")
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
 
         # Both emails should exist (source was copied, dest-only was kept)
         assert len(dest_server.folders["INBOX"]) == 2
 
-    def test_dest_delete_empty_source_deletes_all(self, mock_server_factory, monkeypatch):
+    def test_dest_delete_empty_source_deletes_all(self, mock_server_factory):
         """Test that if source folder is empty, all dest emails are deleted."""
         src_data = {"INBOX": []}
         dest_data = {
@@ -903,22 +728,15 @@ class TestDestDeleteFunctionality:
 
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
 
-        monkeypatch.setenv("SRC_IMAP_HOST", "localhost")
-        monkeypatch.setenv("SRC_IMAP_USERNAME", "src_user")
-        monkeypatch.setenv("SRC_IMAP_PASSWORD", "p")
-        monkeypatch.setenv("DEST_IMAP_HOST", "localhost")
-        monkeypatch.setenv("DEST_IMAP_USERNAME", "dest_user")
-        monkeypatch.setenv("DEST_IMAP_PASSWORD", "p")
-        monkeypatch.setenv("MAX_WORKERS", "1")
-        monkeypatch.setenv("DEST_DELETE", "true")
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
-
-        migrate_imap_emails.main()
+        env = _mock_migrate_env(p1, p2)
+        env["DEST_DELETE"] = "true"
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
 
         # All dest emails should be deleted
         assert len(dest_server.folders["INBOX"]) == 0
 
-    def test_dest_delete_syncs_after_migration(self, mock_server_factory, monkeypatch):
+    def test_dest_delete_syncs_after_migration(self, mock_server_factory):
         """End-to-end: delete orphans after a successful migration batch."""
         src_data = {"INBOX": [b"Subject: Keep\r\nMessage-ID: <keep@test>\r\n\r\nBody"]}
         dest_data = {
@@ -929,8 +747,6 @@ class TestDestDeleteFunctionality:
         }
 
         src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
-
-        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
 
         src = imaplib.IMAP4("localhost", p1)
         dest = imaplib.IMAP4("localhost", p2)

@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import threading
+import urllib.parse
 from email import policy
 from email.header import decode_header
 from email.parser import BytesParser
@@ -260,7 +261,27 @@ def get_imap_connection(host, user, password=None, oauth2_token=None):
         return None
 
     try:
-        conn = imaplib.IMAP4_SSL(host)
+        use_ssl = True
+        resolved_host = host
+        port = None
+        if "://" in host:
+            parsed = urllib.parse.urlparse(host)
+            scheme = parsed.scheme.lower()
+            if not scheme or not parsed.hostname:
+                raise ValueError("Invalid IMAP host")
+            if scheme in {"imap", "tcp"}:
+                use_ssl = False
+            elif scheme in {"imaps", "imap+ssl", "imapssl", "ssl"}:
+                use_ssl = True
+            else:
+                raise ValueError(f"Unsupported IMAP scheme: {scheme}")
+            resolved_host = parsed.hostname
+            port = parsed.port
+
+        if use_ssl:
+            conn = imaplib.IMAP4_SSL(resolved_host, port) if port else imaplib.IMAP4_SSL(resolved_host)
+        else:
+            conn = imaplib.IMAP4(resolved_host, port) if port else imaplib.IMAP4(resolved_host)
         if oauth2_token:
             auth_string = f"user={user}\x01auth=Bearer {oauth2_token}\x01\x01"
             conn.authenticate("XOAUTH2", lambda _: auth_string.encode())
