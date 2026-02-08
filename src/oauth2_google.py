@@ -7,6 +7,7 @@ Opens a browser for user consent and runs a local HTTP server for the redirect.
 Requires the 'google-auth-oauthlib' package: pip install google-auth-oauthlib
 """
 
+import os
 import sys
 
 # Module-level cache for credentials (holds refresh token)
@@ -43,12 +44,15 @@ def acquire_token(client_id, client_secret):
         print("Install it with: pip install google-auth-oauthlib")
         sys.exit(1)
 
+    auth_uri = os.getenv("OAUTH2_GOOGLE_AUTH_URL") or "https://accounts.google.com/o/oauth2/auth"
+    token_uri = os.getenv("OAUTH2_GOOGLE_TOKEN_URL") or "https://oauth2.googleapis.com/token"
+
     client_config = {
         "installed": {
             "client_id": client_id,
             "client_secret": client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_uri": auth_uri,
+            "token_uri": token_uri,
             "redirect_uris": ["http://localhost"],
         }
     }

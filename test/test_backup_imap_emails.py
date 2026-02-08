@@ -20,27 +20,30 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 import backup_imap_emails
 import imap_common
 import provider_gmail
-from conftest import make_single_mock_connection
+from conftest import temp_argv, temp_env
+
+
+def _mock_imap_env(port):
+    return {
+        "SRC_IMAP_HOST": f"imap://localhost:{port}",
+        "SRC_IMAP_USERNAME": "user",
+        "SRC_IMAP_PASSWORD": "pass",
+        "MAX_WORKERS": "1",
+        "BATCH_SIZE": "1",
+    }
 
 
 class TestBackupBasic:
     """Tests for basic backup functionality."""
 
-    def test_single_email_backup(self, single_mock_server, monkeypatch, tmp_path):
+    def test_single_email_backup(self, single_mock_server, tmp_path):
         """Test backing up a single email to local directory."""
         src_data = {"INBOX": [b"Subject: Test Email\r\nMessage-ID: <1@test>\r\n\r\nBody content"]}
         _, port = single_mock_server(src_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "user",
-            "SRC_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py", "--dest-path", str(tmp_path)])
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        backup_imap_emails.main()
+        env = _mock_imap_env(port)
+        with temp_env(env), temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path)]):
+            backup_imap_emails.main()
 
         # Check that backup was created
         inbox_path = tmp_path / "INBOX"
@@ -53,7 +56,7 @@ class TestBackupBasic:
         content = eml_files[0].read_bytes()
         assert b"Test Email" in content or b"Body content" in content
 
-    def test_multiple_emails_backup(self, single_mock_server, monkeypatch, tmp_path):
+    def test_multiple_emails_backup(self, single_mock_server, tmp_path):
         """Test backing up multiple emails."""
         src_data = {
             "INBOX": [
@@ -64,16 +67,9 @@ class TestBackupBasic:
         }
         _, port = single_mock_server(src_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "user",
-            "SRC_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py", "--dest-path", str(tmp_path)])
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        backup_imap_emails.main()
+        env = _mock_imap_env(port)
+        with temp_env(env), temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path)]):
+            backup_imap_emails.main()
 
         inbox_path = tmp_path / "INBOX"
         eml_files = list(inbox_path.glob("*.eml"))
@@ -83,7 +79,7 @@ class TestBackupBasic:
 class TestIncrementalBackup:
     """Tests for incremental backup functionality."""
 
-    def test_skip_existing_emails(self, single_mock_server, monkeypatch, tmp_path):
+    def test_skip_existing_emails(self, single_mock_server, tmp_path):
         """Test that existing emails are skipped during incremental backup."""
         src_data = {
             "INBOX": [
@@ -99,16 +95,9 @@ class TestIncrementalBackup:
         existing_file = inbox_path / "1_Email_1.eml"
         existing_file.write_bytes(b"existing content")
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "user",
-            "SRC_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py", "--dest-path", str(tmp_path)])
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        backup_imap_emails.main()
+        env = _mock_imap_env(port)
+        with temp_env(env), temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path)]):
+            backup_imap_emails.main()
 
         # Should still have original content (not overwritten)
         assert existing_file.read_bytes() == b"existing content"
@@ -121,7 +110,7 @@ class TestIncrementalBackup:
 class TestMultipleFolderBackup:
     """Tests for backing up multiple folders."""
 
-    def test_backup_all_folders(self, single_mock_server, monkeypatch, tmp_path):
+    def test_backup_all_folders(self, single_mock_server, tmp_path):
         """Test backing up emails from multiple folders."""
         src_data = {
             "INBOX": [b"Subject: Inbox\r\nMessage-ID: <1@test>\r\n\r\nC"],
@@ -130,22 +119,15 @@ class TestMultipleFolderBackup:
         }
         _, port = single_mock_server(src_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "user",
-            "SRC_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py", "--dest-path", str(tmp_path)])
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        backup_imap_emails.main()
+        env = _mock_imap_env(port)
+        with temp_env(env), temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path)]):
+            backup_imap_emails.main()
 
         assert (tmp_path / "INBOX").exists()
         assert (tmp_path / "Sent").exists()
         assert (tmp_path / "Archive").exists()
 
-    def test_backup_single_folder(self, single_mock_server, monkeypatch, tmp_path):
+    def test_backup_single_folder(self, single_mock_server, tmp_path):
         """Test backing up a specific folder only."""
         src_data = {
             "INBOX": [b"Subject: Inbox\r\nMessage-ID: <1@test>\r\n\r\nC"],
@@ -153,16 +135,9 @@ class TestMultipleFolderBackup:
         }
         _, port = single_mock_server(src_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "user",
-            "SRC_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py", "--dest-path", str(tmp_path), "INBOX"])
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        backup_imap_emails.main()
+        env = _mock_imap_env(port)
+        with temp_env(env), temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path), "INBOX"]):
+            backup_imap_emails.main()
 
         assert (tmp_path / "INBOX").exists()
         # Sent should NOT be backed up
@@ -172,50 +147,37 @@ class TestMultipleFolderBackup:
 class TestEmptyFolderHandling:
     """Tests for empty folder handling."""
 
-    def test_empty_folder(self, single_mock_server, monkeypatch, tmp_path):
+    def test_empty_folder(self, single_mock_server, tmp_path):
         """Test handling of empty folders."""
         src_data = {"INBOX": [], "Empty": []}
         _, port = single_mock_server(src_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "user",
-            "SRC_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py", "--dest-path", str(tmp_path)])
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        # Should complete without error
-        backup_imap_emails.main()
+        env = _mock_imap_env(port)
+        with temp_env(env), temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path)]):
+            backup_imap_emails.main()
 
 
 class TestConfigValidation:
     """Tests for configuration validation."""
 
-    def test_missing_credentials(self, monkeypatch, capsys, tmp_path):
+    def test_missing_credentials(self, capsys, tmp_path):
         """Test that missing credentials cause exit."""
-        env = {}
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py", "--dest-path", str(tmp_path)])
-
-        with pytest.raises(SystemExit) as exc_info:
-            backup_imap_emails.main()
+        with temp_env({}), temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path)]):
+            with pytest.raises(SystemExit) as exc_info:
+                backup_imap_emails.main()
 
         assert exc_info.value.code == 2
 
-    def test_missing_dest_path(self, monkeypatch, capsys):
+    def test_missing_dest_path(self, capsys):
         """Test that missing destination path causes exit."""
         env = {
             "SRC_IMAP_HOST": "localhost",
             "SRC_IMAP_USERNAME": "user",
             "SRC_IMAP_PASSWORD": "pass",
         }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py"])
-
-        with pytest.raises(SystemExit) as exc_info:
-            backup_imap_emails.main()
+        with temp_env(env), temp_argv(["backup_imap_emails.py"]):
+            with pytest.raises(SystemExit) as exc_info:
+                backup_imap_emails.main()
 
         assert exc_info.value.code == 2
 
@@ -374,7 +336,7 @@ class TestGmailLabelsPreservation:
         assert manifest_path.exists()
         conn.logout()
 
-    def test_preserve_labels_flag_integration(self, single_mock_server, monkeypatch, tmp_path):
+    def test_preserve_labels_flag_integration(self, single_mock_server, tmp_path):
         """Test --preserve-labels flag creates manifest."""
         src_data = {
             "INBOX": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
@@ -383,26 +345,18 @@ class TestGmailLabelsPreservation:
         }
         _, port = single_mock_server(src_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "user",
-            "SRC_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["backup_imap_emails.py", "--dest-path", str(tmp_path), "--preserve-labels", "[Gmail]/All Mail"],
-        )
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        backup_imap_emails.main()
+        env = _mock_imap_env(port)
+        with (
+            temp_env(env),
+            temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path), "--preserve-labels", "[Gmail]/All Mail"]),
+        ):
+            backup_imap_emails.main()
 
         # Check manifest was created
         manifest_path = tmp_path / "labels_manifest.json"
         assert manifest_path.exists()
 
-    def test_manifest_only_flag(self, single_mock_server, monkeypatch, tmp_path):
+    def test_manifest_only_flag(self, single_mock_server, tmp_path):
         """Test --manifest-only flag creates manifest without downloading emails."""
         src_data = {
             "INBOX": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
@@ -414,22 +368,11 @@ class TestGmailLabelsPreservation:
         }
         _, port = single_mock_server(src_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "user",
-            "SRC_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["backup_imap_emails.py", "--dest-path", str(tmp_path), "--manifest-only"],
-        )
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        # Should exit with code 0 after creating manifest
-        with pytest.raises(SystemExit) as exc_info:
-            backup_imap_emails.main()
+        env = _mock_imap_env(port)
+        with temp_env(env), temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path), "--manifest-only"]):
+            # Should exit with code 0 after creating manifest
+            with pytest.raises(SystemExit) as exc_info:
+                backup_imap_emails.main()
 
         assert exc_info.value.code == 0
 
@@ -455,7 +398,7 @@ class TestGmailLabelsPreservation:
         }
         assert provider_gmail.GMAIL_SYSTEM_FOLDERS == expected
 
-    def test_gmail_mode_flag(self, single_mock_server, monkeypatch, tmp_path):
+    def test_gmail_mode_flag(self, single_mock_server, tmp_path):
         """Test --gmail-mode flag backs up All Mail and creates manifest."""
         src_data = {
             "INBOX": [b"Subject: Inbox Email\r\nMessage-ID: <1@test>\r\n\r\nBody"],
@@ -464,20 +407,9 @@ class TestGmailLabelsPreservation:
         }
         _, port = single_mock_server(src_data)
 
-        env = {
-            "SRC_IMAP_HOST": "localhost",
-            "SRC_IMAP_USERNAME": "user",
-            "SRC_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["backup_imap_emails.py", "--dest-path", str(tmp_path), "--gmail-mode"],
-        )
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        backup_imap_emails.main()
+        env = _mock_imap_env(port)
+        with temp_env(env), temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path), "--gmail-mode"]):
+            backup_imap_emails.main()
 
         # Check manifest was created
         manifest_path = tmp_path / "labels_manifest.json"
@@ -609,7 +541,7 @@ class TestDestDeleteBackupArgument:
 class TestDestDeleteBackupEnvVar:
     """End-to-end tests for DEST_DELETE env var wiring in backup script."""
 
-    def test_dest_delete_enabled_via_env_var_deletes_orphans(self, single_mock_server, monkeypatch, tmp_path):
+    def test_dest_delete_enabled_via_env_var_deletes_orphans(self, single_mock_server, tmp_path):
         """If DEST_DELETE=true and server folder is empty, local orphans are deleted."""
         src_data = {"INBOX": []}
         _, port = single_mock_server(src_data)
@@ -620,16 +552,14 @@ class TestDestDeleteBackupEnvVar:
         orphan = inbox_path / "1_Orphan.eml"
         orphan.write_bytes(b"Subject: Orphan\r\nMessage-ID: <orphan@test>\r\n\r\nBody")
 
-        monkeypatch.setenv("SRC_IMAP_HOST", "localhost")
-        monkeypatch.setenv("SRC_IMAP_USERNAME", "user")
-        monkeypatch.setenv("SRC_IMAP_PASSWORD", "pass")
-        monkeypatch.setenv("BACKUP_LOCAL_PATH", str(backup_root))
-        monkeypatch.setenv("MAX_WORKERS", "1")
-        monkeypatch.setenv("DEST_DELETE", "true")
-
-        monkeypatch.setattr(sys, "argv", ["backup_imap_emails.py"])
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        backup_imap_emails.main()
+        env = _mock_imap_env(port)
+        env.update(
+            {
+                "BACKUP_LOCAL_PATH": str(backup_root),
+                "DEST_DELETE": "true",
+            }
+        )
+        with temp_env(env), temp_argv(["backup_imap_emails.py"]):
+            backup_imap_emails.main()
 
         assert not orphan.exists()

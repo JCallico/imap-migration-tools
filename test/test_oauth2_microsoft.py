@@ -17,6 +17,8 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import oauth2_microsoft
+from conftest import temp_env
+from mock_oauth_server import MOCK_TENANT_ID
 
 
 @pytest.fixture(autouse=True)
@@ -101,6 +103,13 @@ class TestDiscoverTenant:
         assert result2 == tenant_id
         # Should only fetch once due to caching
         assert mock_fetch.call_count == 1
+
+    def test_discovery_env_override(self, mock_oauth_server):
+        """Test discovery uses OAUTH2_MICROSOFT_DISCOVERY_URL when set."""
+        with temp_env({"OAUTH2_MICROSOFT_DISCOVERY_URL": mock_oauth_server}):
+            result = oauth2_microsoft.discover_tenant("user@example.org")
+
+        assert result == MOCK_TENANT_ID
 
 
 class TestAcquireToken:

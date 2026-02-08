@@ -21,7 +21,17 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 import imap_common
 import restore_cache
 import restore_imap_emails
-from conftest import make_single_mock_connection
+from conftest import temp_argv, temp_env
+
+
+def _mock_restore_env(port):
+    return {
+        "DEST_IMAP_HOST": f"imap://localhost:{port}",
+        "DEST_IMAP_USERNAME": "user",
+        "DEST_IMAP_PASSWORD": "pass",
+        "MAX_WORKERS": "1",
+        "BATCH_SIZE": "1",
+    }
 
 
 class TestLoadLabelsManifest:
@@ -187,48 +197,37 @@ class TestGetEmlFiles:
 class TestConfigValidation:
     """Tests for configuration validation."""
 
-    def test_missing_credentials(self, monkeypatch, capsys, tmp_path):
+    def test_missing_credentials(self, capsys, tmp_path):
         """Test that missing credentials cause exit."""
-        env = {}
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["restore_imap_emails.py", "--src-path", str(tmp_path)])
-
-        with pytest.raises(SystemExit) as exc_info:
-            restore_imap_emails.main()
+        with temp_env({}), temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path)]):
+            with pytest.raises(SystemExit) as exc_info:
+                restore_imap_emails.main()
 
         assert exc_info.value.code == 2
 
-    def test_missing_src_path(self, monkeypatch, capsys):
+    def test_missing_src_path(self, capsys):
         """Test that missing source path causes exit."""
         env = {
             "DEST_IMAP_HOST": "localhost",
             "DEST_IMAP_USERNAME": "user",
             "DEST_IMAP_PASSWORD": "pass",
         }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["restore_imap_emails.py"])
-
-        with pytest.raises(SystemExit) as exc_info:
-            restore_imap_emails.main()
+        with temp_env(env), temp_argv(["restore_imap_emails.py"]):
+            with pytest.raises(SystemExit) as exc_info:
+                restore_imap_emails.main()
 
         assert exc_info.value.code == 2
 
-    def test_nonexistent_src_path(self, monkeypatch, capsys):
+    def test_nonexistent_src_path(self, capsys):
         """Test that non-existent source path causes exit."""
         env = {
             "DEST_IMAP_HOST": "localhost",
             "DEST_IMAP_USERNAME": "user",
             "DEST_IMAP_PASSWORD": "pass",
         }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["restore_imap_emails.py", "--src-path", "/nonexistent/path"],
-        )
-
-        with pytest.raises(SystemExit) as exc_info:
-            restore_imap_emails.main()
+        with temp_env(env), temp_argv(["restore_imap_emails.py", "--src-path", "/nonexistent/path"]):
+            with pytest.raises(SystemExit) as exc_info:
+                restore_imap_emails.main()
 
         assert exc_info.value.code == 1
 
@@ -236,7 +235,7 @@ class TestConfigValidation:
 class TestRestoreIntegration:
     """Integration tests for restore functionality."""
 
-    def test_restore_single_folder(self, single_mock_server, monkeypatch, tmp_path):
+    def test_restore_single_folder(self, single_mock_server, tmp_path):
         """Test restoring a single folder."""
         # Create backup structure
         inbox = tmp_path / "INBOX"
@@ -256,23 +255,11 @@ Body content.
         src_data = {"INBOX": []}
         server, port = single_mock_server(src_data)
 
-        env = {
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "user",
-            "DEST_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["restore_imap_emails.py", "--src-path", str(tmp_path), "INBOX"],
-        )
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+        env = _mock_restore_env(port)
+        with temp_env(env), temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path), "INBOX"]):
+            restore_imap_emails.main()
 
-        # Run restore
-        restore_imap_emails.main()
-
-    def test_restore_all_folders_scans_backup(self, single_mock_server, monkeypatch, tmp_path):
+    def test_restore_all_folders_scans_backup(self, single_mock_server, tmp_path):
         """End-to-end: restore all folders from a backup tree."""
         inbox = tmp_path / "INBOX"
         inbox.mkdir()
@@ -290,16 +277,9 @@ Body content.
         dest_data = {"INBOX": []}
         server, port = single_mock_server(dest_data)
 
-        env = {
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "user",
-            "DEST_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(sys, "argv", ["restore_imap_emails.py", "--src-path", str(tmp_path)])
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        restore_imap_emails.main()
+        env = _mock_restore_env(port)
+        with temp_env(env), temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path)]):
+            restore_imap_emails.main()
 
         assert "INBOX" in server.folders
         assert "Archive/Sub" in server.folders
@@ -307,7 +287,7 @@ Body content.
         assert len(server.folders["Archive/Sub"]) == 1
         assert "Empty" not in server.folders
 
-    def test_restore_single_folder_full_restore_flag(self, single_mock_server, monkeypatch, tmp_path):
+    def test_restore_single_folder_full_restore_flag(self, single_mock_server, tmp_path):
         """Smoke test: --full-restore flag is accepted."""
         inbox = tmp_path / "INBOX"
         inbox.mkdir()
@@ -325,20 +305,12 @@ Body content.
         src_data = {"INBOX": []}
         _server, port = single_mock_server(src_data)
 
-        env = {
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "user",
-            "DEST_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["restore_imap_emails.py", "--src-path", str(tmp_path), "--full-restore", "INBOX"],
-        )
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        restore_imap_emails.main()
+        env = _mock_restore_env(port)
+        with (
+            temp_env(env),
+            temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path), "--full-restore", "INBOX"]),
+        ):
+            restore_imap_emails.main()
 
     def test_restore_with_labels_manifest(self, tmp_path):
         """Test that labels manifest is loaded correctly."""
@@ -355,7 +327,7 @@ Body content.
         assert len(result) == 2
         assert result["<msg1@test.com>"] == ["INBOX", "Work"]
 
-    def test_restore_gmail_mode_fallback_folder(self, single_mock_server, monkeypatch, tmp_path):
+    def test_restore_gmail_mode_fallback_folder(self, single_mock_server, tmp_path):
         """End-to-end: Gmail mode with no labels uses fallback folder."""
         gmail_all_mail = tmp_path / "[Gmail]" / "All Mail"
         gmail_all_mail.mkdir(parents=True)
@@ -364,25 +336,14 @@ Body content.
         dest_data = {"INBOX": []}
         server, port = single_mock_server(dest_data)
 
-        env = {
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "user",
-            "DEST_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["restore_imap_emails.py", "--src-path", str(tmp_path), "--gmail-mode"],
-        )
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        restore_imap_emails.main()
+        env = _mock_restore_env(port)
+        with temp_env(env), temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path), "--gmail-mode"]):
+            restore_imap_emails.main()
 
         assert imap_common.FOLDER_RESTORED_UNLABELED in server.folders
         assert len(server.folders[imap_common.FOLDER_RESTORED_UNLABELED]) == 1
 
-    def test_restore_dest_delete_removes_orphans(self, single_mock_server, monkeypatch, tmp_path):
+    def test_restore_dest_delete_removes_orphans(self, single_mock_server, tmp_path):
         """End-to-end: --dest-delete removes messages not in local backup."""
         inbox = tmp_path / "INBOX"
         inbox.mkdir()
@@ -396,26 +357,12 @@ Body content.
         }
         server, port = single_mock_server(dest_data)
 
-        env = {
-            "DEST_IMAP_HOST": "localhost",
-            "DEST_IMAP_USERNAME": "user",
-            "DEST_IMAP_PASSWORD": "pass",
-        }
-        monkeypatch.setattr(os, "environ", env)
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "restore_imap_emails.py",
-                "--src-path",
-                str(tmp_path),
-                "--dest-delete",
-                "INBOX",
-            ],
-        )
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        restore_imap_emails.main()
+        env = _mock_restore_env(port)
+        with (
+            temp_env(env),
+            temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path), "--dest-delete", "INBOX"]),
+        ):
+            restore_imap_emails.main()
 
         assert len(server.folders["INBOX"]) == 1
         assert b"Message-ID: <keep@test>" in server.folders["INBOX"][0]["content"]
@@ -773,9 +720,7 @@ class TestDestDeleteRestoreFunctionality:
         assert len(msg_ids) == 1
         assert "<valid@test>" in msg_ids
 
-    def test_dest_delete_enabled_via_env_var_main_deletes_all_in_folder(
-        self, single_mock_server, monkeypatch, tmp_path
-    ):
+    def test_dest_delete_enabled_via_env_var_main_deletes_all_in_folder(self, single_mock_server, tmp_path):
         """End-to-end: DEST_DELETE=true triggers deletion when local folder has no .eml files."""
         dest_data = {
             "INBOX": [
@@ -789,18 +734,15 @@ class TestDestDeleteRestoreFunctionality:
         backup_root = tmp_path / "backup"
         (backup_root / "INBOX").mkdir(parents=True)
 
-        monkeypatch.setenv("BACKUP_LOCAL_PATH", str(backup_root))
-        monkeypatch.setenv("DEST_IMAP_HOST", "localhost")
-        monkeypatch.setenv("DEST_IMAP_USERNAME", "user")
-        monkeypatch.setenv("DEST_IMAP_PASSWORD", "pass")
-        monkeypatch.setenv("MAX_WORKERS", "1")
-        monkeypatch.setenv("DEST_DELETE", "true")
-
-        # Force folder-mode so empty folders still get processed.
-        monkeypatch.setattr(sys, "argv", ["restore_imap_emails.py", "INBOX"])
-        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
-
-        restore_imap_emails.main()
+        env = _mock_restore_env(port)
+        env.update(
+            {
+                "BACKUP_LOCAL_PATH": str(backup_root),
+                "DEST_DELETE": "true",
+            }
+        )
+        with temp_env(env), temp_argv(["restore_imap_emails.py", "INBOX"]):
+            restore_imap_emails.main()
 
         assert len(server.folders["INBOX"]) == 0
 
@@ -808,7 +750,7 @@ class TestDestDeleteRestoreFunctionality:
 class TestAppendEmailReturnValueChecking:
     """Tests that verify append_email return values are checked before recording progress."""
 
-    def test_record_progress_not_called_on_append_failure(self, tmp_path, monkeypatch):
+    def test_record_progress_not_called_on_append_failure(self, tmp_path):
         """Test that record_progress is not called when append_email fails during label application."""
         from unittest.mock import Mock, patch
 
@@ -844,22 +786,18 @@ Body content.
         ]
 
         # Track calls to record_progress
-        with patch("restore_cache.record_progress") as mock_record_progress:
-            # Set up environment
-            monkeypatch.setenv("DEST_IMAP_HOST", "localhost")
-            monkeypatch.setenv("DEST_IMAP_USERNAME", "user")
-            monkeypatch.setenv("DEST_IMAP_PASSWORD", "pass")
-            monkeypatch.setenv("MAX_WORKERS", "1")
-
-            # Mock the connection
-            def mock_get_connection(*args, **kwargs):
-                return mock_conn
-
-            monkeypatch.setattr("imap_common.get_imap_connection", mock_get_connection)
-            monkeypatch.setattr(sys, "argv", ["restore_imap_emails.py", "--src-path", str(backup_root), "INBOX"])
-
-            # Run restore
-            restore_imap_emails.main()
+        with (
+            patch("restore_cache.record_progress") as mock_record_progress,
+            patch("imap_common.get_imap_connection", return_value=mock_conn),
+        ):
+            env = {
+                "DEST_IMAP_HOST": "localhost",
+                "DEST_IMAP_USERNAME": "user",
+                "DEST_IMAP_PASSWORD": "pass",
+                "MAX_WORKERS": "1",
+            }
+            with temp_env(env), temp_argv(["restore_imap_emails.py", "--src-path", str(backup_root), "INBOX"]):
+                restore_imap_emails.main()
 
             # Verify record_progress was called only once (for successful INBOX upload)
             # and NOT called for the failed Work label append

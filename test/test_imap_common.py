@@ -21,36 +21,32 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import imap_common
+from conftest import temp_env
 
 
 class TestVerifyEnvVars:
     """Tests for verify_env_vars function."""
 
-    def test_all_vars_present(self, monkeypatch):
+    def test_all_vars_present(self):
         """Test returns True when all variables are set."""
-        monkeypatch.setenv("VAR1", "value1")
-        monkeypatch.setenv("VAR2", "value2")
+        with temp_env({"VAR1": "value1", "VAR2": "value2"}):
+            result = imap_common.verify_env_vars(["VAR1", "VAR2"])
+            assert result is True
 
-        result = imap_common.verify_env_vars(["VAR1", "VAR2"])
-        assert result is True
-
-    def test_missing_vars(self, monkeypatch, capsys):
+    def test_missing_vars(self, capsys):
         """Test returns False and prints error when variables are missing."""
-        monkeypatch.delenv("MISSING_VAR", raising=False)
+        with temp_env({}):
+            result = imap_common.verify_env_vars(["MISSING_VAR"])
+            assert result is False
 
-        result = imap_common.verify_env_vars(["MISSING_VAR"])
-        assert result is False
+            captured = capsys.readouterr()
+            assert "MISSING_VAR" in captured.err
 
-        captured = capsys.readouterr()
-        assert "MISSING_VAR" in captured.err
-
-    def test_partial_vars_present(self, monkeypatch, capsys):
+    def test_partial_vars_present(self, capsys):
         """Test with some variables present and some missing."""
-        monkeypatch.setenv("PRESENT", "value")
-        monkeypatch.delenv("MISSING", raising=False)
-
-        result = imap_common.verify_env_vars(["PRESENT", "MISSING"])
-        assert result is False
+        with temp_env({"PRESENT": "value"}):
+            result = imap_common.verify_env_vars(["PRESENT", "MISSING"])
+            assert result is False
 
 
 class TestGetImapConnection:
