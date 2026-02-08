@@ -635,3 +635,45 @@ def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
 
     except Exception as e:
         safe_print(f"Error syncing flags for {message_id} in {folder_name}: {e}")
+
+
+def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msgid=None):
+    """Delete emails from a folder that don't exist in the source set.
+
+    Returns count of deleted emails.
+
+    Args:
+        imap_conn: IMAP connection
+        folder_name: Folder to delete orphans from
+        source_msg_ids: Set of Message-IDs that should be kept
+        dest_uid_to_msgid: Optional pre-fetched dict of UID -> Message-ID.
+            If None, fetches from the server.
+    """
+    deleted_count = 0
+    try:
+        imap_conn.select(f'"{folder_name}"', readonly=False)
+
+        if dest_uid_to_msgid is None:
+            dest_uid_to_msgid = get_message_ids_in_folder(imap_conn)
+
+        uids_to_delete = []
+        for uid, msg_id in dest_uid_to_msgid.items():
+            if msg_id not in source_msg_ids:
+                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+                uids_to_delete.append(uid_str)
+
+        for uid in uids_to_delete:
+            try:
+                imap_conn.uid(CMD_STORE, uid, OP_ADD_FLAGS, FLAG_DELETED_LITERAL)
+                deleted_count += 1
+            except Exception:
+                pass
+
+        if deleted_count > 0:
+            imap_conn.expunge()
+            safe_print(f"[{folder_name}] Deleted {deleted_count} orphan emails from destination")
+
+    except Exception as e:
+        safe_print(f"Error deleting orphans from {folder_name}: {e}")
+
+    return deleted_count

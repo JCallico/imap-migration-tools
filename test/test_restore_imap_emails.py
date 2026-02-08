@@ -711,7 +711,7 @@ class TestDestDeleteRestoreFunctionality:
         # Local backup only has one email
         local_msg_ids = {"<keep@test>"}
 
-        deleted = restore_imap_emails.delete_orphan_emails_from_dest(conn, "INBOX", local_msg_ids)
+        deleted = imap_common.delete_orphan_emails(conn, "INBOX", local_msg_ids)
 
         assert deleted == 2
         # Verify only 1 email remains
@@ -739,7 +739,7 @@ class TestDestDeleteRestoreFunctionality:
         # Empty local backup
         local_msg_ids = set()
 
-        deleted = restore_imap_emails.delete_orphan_emails_from_dest(conn, "INBOX", local_msg_ids)
+        deleted = imap_common.delete_orphan_emails(conn, "INBOX", local_msg_ids)
 
         assert deleted == 2
         assert len(server.folders["INBOX"]) == 0
@@ -765,7 +765,7 @@ class TestDestDeleteRestoreFunctionality:
         # Local has both emails
         local_msg_ids = {"<e1@test>", "<e2@test>"}
 
-        deleted = restore_imap_emails.delete_orphan_emails_from_dest(conn, "INBOX", local_msg_ids)
+        deleted = imap_common.delete_orphan_emails(conn, "INBOX", local_msg_ids)
 
         assert deleted == 0
         assert len(server.folders["INBOX"]) == 2

@@ -160,48 +160,6 @@ def filter_preservable_flags(flags_str):
     return " ".join(flags) if flags else None
 
 
-def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msgid=None):
-    """
-    Delete emails from destination folder that don't exist in source.
-    Returns count of deleted emails.
-
-    If dest_uid_to_msgid is provided (dict of UID -> Message-ID), it will be used
-    instead of fetching from the server, avoiding redundant IMAP calls.
-    """
-    deleted_count = 0
-    try:
-        imap_conn.select(f'"{folder_name}"', readonly=False)
-
-        # Use provided map or fetch from server
-        if dest_uid_to_msgid is None:
-            dest_uid_to_msgid = imap_common.get_message_ids_in_folder(imap_conn)
-
-        # Find UIDs to delete (in destination but not in source)
-        uids_to_delete = []
-        for uid, msg_id in dest_uid_to_msgid.items():
-            if msg_id not in source_msg_ids:
-                # Convert bytes UID to string for STORE command
-                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
-                uids_to_delete.append(uid_str)
-
-        # Delete orphan emails
-        for uid in uids_to_delete:
-            try:
-                imap_conn.uid(imap_common.CMD_STORE, uid, imap_common.OP_ADD_FLAGS, imap_common.FLAG_DELETED_LITERAL)
-                deleted_count += 1
-            except Exception:
-                pass
-
-        if deleted_count > 0:
-            imap_conn.expunge()
-            safe_print(f"[{folder_name}] Deleted {deleted_count} orphan emails from destination")
-
-    except Exception as e:
-        safe_print(f"Error deleting orphans from {folder_name}: {e}")
-
-    return deleted_count
-
-
 def get_thread_connections(src_conf, dest_conf):
     thread_local.src = imap_session.ensure_connection(getattr(thread_local, "src", None), src_conf)
     thread_local.dest = imap_session.ensure_connection(getattr(thread_local, "dest", None), dest_conf)
@@ -600,7 +558,7 @@ def migrate_folder(
         # Even if empty, we might need to delete from dest
         if dest_delete:
             safe_print("Checking destination for orphan emails to delete...")
-            delete_orphan_emails(dest, folder_name, set())
+            imap_common.delete_orphan_emails(dest, folder_name, set())
         return
 
     # Pre-fetch destination Message-IDs for fast duplicate detection (non-Gmail mode only)
@@ -642,7 +600,7 @@ def migrate_folder(
         safe_print(f"No new messages to migrate in {folder_name}.")
         if dest_delete and src_msg_ids is not None:
             safe_print("Syncing destination: removing emails not in source...")
-            delete_orphan_emails(dest, folder_name, src_msg_ids, dest_uid_to_msgid)
+            imap_common.delete_orphan_emails(dest, folder_name, src_msg_ids, dest_uid_to_msgid)
         return
 
     # Create batches from filtered UIDs
@@ -710,7 +668,7 @@ def migrate_folder(
     # Delete orphan emails from destination if enabled
     if dest_delete and src_msg_ids is not None and not gmail_mode:
         safe_print("Syncing destination: removing emails not in source...")
-        delete_orphan_emails(dest, folder_name, src_msg_ids, dest_uid_to_msgid)
+        imap_common.delete_orphan_emails(dest, folder_name, src_msg_ids, dest_uid_to_msgid)
 
     # Force-flush progress cache at end of folder migration.
     if cache_file and imap_common.is_progress_cache_ready(progress_cache_data, progress_cache_lock):

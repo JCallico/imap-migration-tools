@@ -532,75 +532,6 @@ def get_local_message_ids(local_folder_path):
     return message_ids
 
 
-def delete_orphan_emails_from_dest(imap_conn, folder_name, local_msg_ids):
-    """
-    Delete emails from destination folder that don't exist in local backup.
-    Returns count of deleted emails.
-    """
-    import re
-
-    deleted_count = 0
-    try:
-        imap_conn.select(f'"{folder_name}"', readonly=False)
-        resp, data = imap_conn.uid("search", None, "ALL")
-        if resp != "OK" or not data or not data[0]:
-            return 0
-
-        uids = data[0].split()
-        if not uids:
-            return 0
-
-        # Check each UID's Message-ID against local backup
-        batch_size = 100
-        uids_to_delete = []
-
-        for i in range(0, len(uids), batch_size):
-            batch = uids[i : i + batch_size]
-            uid_range = b",".join(batch)
-            try:
-                resp, items = imap_conn.uid("fetch", uid_range, "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
-                if resp != "OK":
-                    continue
-
-                for item in items:
-                    if isinstance(item, tuple) and len(item) >= 2:
-                        # Extract UID from response
-                        meta_str = (
-                            item[0].decode("utf-8", errors="ignore") if isinstance(item[0], bytes) else str(item[0])
-                        )
-                        uid_match = re.search(r"UID\s+(\d+)", meta_str)
-                        if not uid_match:
-                            continue
-                        uid = uid_match.group(1)
-
-                        # Extract Message-ID
-                        msg_id = imap_common.extract_message_id(item[1])
-
-                        # If not in local backup, mark for deletion
-                        if msg_id and msg_id not in local_msg_ids:
-                            uids_to_delete.append(uid)
-
-            except Exception:
-                continue
-
-        # Delete orphan emails
-        for uid in uids_to_delete:
-            try:
-                imap_conn.uid("store", uid, "+FLAGS", "(\\Deleted)")
-                deleted_count += 1
-            except Exception:
-                pass
-
-        if deleted_count > 0:
-            imap_conn.expunge()
-            safe_print(f"[{folder_name}] Deleted {deleted_count} orphan emails from destination")
-
-    except Exception as e:
-        safe_print(f"Error deleting orphans from {folder_name}: {e}")
-
-    return deleted_count
-
-
 def restore_folder(
     folder_name,
     local_folder_path,
@@ -627,7 +558,7 @@ def restore_folder(
         if dest_delete:
             dest = imap_common.get_imap_connection_from_conf(dest_conf)
             if dest:
-                delete_orphan_emails_from_dest(dest, folder_name, set())
+                imap_common.delete_orphan_emails(dest, folder_name, set())
                 dest.logout()
         return
 
@@ -711,7 +642,7 @@ def restore_folder(
             safe_print("Syncing destination: removing emails not in local backup...")
             dest = imap_session.ensure_connection(None, dest_conf)
             if dest:
-                delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
+                imap_common.delete_orphan_emails(dest, folder_name, local_msg_ids)
                 dest.logout()
 
         restore_cache.maybe_save_dest_index_cache(cache_path, cache_data, cache_lock, force=True)
@@ -756,7 +687,7 @@ def restore_folder(
         safe_print("Syncing destination: removing emails not in local backup...")
         dest = imap_session.ensure_connection(None, dest_conf)
         if dest:
-            delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
+            imap_common.delete_orphan_emails(dest, folder_name, local_msg_ids)
             dest.logout()
 
     # Force-flush progress cache at end.
