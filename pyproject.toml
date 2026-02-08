@@ -1,6 +1,44 @@
 # Ruff configuration for IMAP Migration Tools
 # https://docs.astral.sh/ruff/
 
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "imap-migration-tools"
+version = "0.1.0"
+authors = [
+  { name="Javier Callico", email="jcallico@callicode.com" },
+  { name="Nathan Moinvaziri", email="nathan@nathanm.com" }
+]
+description = "Tools for migrating IMAP emails"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "google-auth-oauthlib",
+    "msal",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/jcallico/imap-migration-tools"
+"Bug Tracker" = "https://github.com/jcallico/imap-migration-tools/issues"
+
+[project.scripts]
+imap-backup = "backup_imap_emails:main"
+imap-restore = "restore_imap_emails:main"
+imap-migrate = "migrate_imap_emails:main"
+imap-count = "count_imap_emails:main"
+imap-compare = "compare_imap_folders:main"
+
+[tool.setuptools.package-dir]
+"" = "src"
+
 [tool.ruff]
 target-version = "py39"
 line-length = 120
