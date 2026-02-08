@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "imap-migration-tools"
-version = "0.1.0"
+version = "1.0.0"
 authors = [
   { name="Javier Callico", email="jcallico@callicode.com" },
   { name="Nathan Moinvaziri", email="nathan@nathanm.com" }
