@@ -19,6 +19,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
+import imap_common
 import migrate_imap_emails
 from conftest import make_mock_connection
 
@@ -356,6 +357,82 @@ class TestGmailModeLabels:
         assert "Work" in dest_server.folders
         assert len(dest_server.folders["Work"]) == 2
 
+    def test_gmail_mode_fallback_folder_for_unlabeled(self, mock_server_factory, monkeypatch):
+        msg = b"Subject: Unlabeled\r\nMessage-ID: <gm-unlabeled@test>\r\n\r\nBody"
+
+        src_data = {
+            "[Gmail]/All Mail": [msg],
+        }
+        dest_data = {"INBOX": []}
+
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+            "MAX_WORKERS": "1",
+            "GMAIL_MODE": "true",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        migrate_imap_emails.main()
+
+        assert imap_common.FOLDER_RESTORED_UNLABELED in dest_server.folders
+        assert len(dest_server.folders[imap_common.FOLDER_RESTORED_UNLABELED]) == 1
+
+
+class TestCacheHitWithoutLock:
+    """Covers cached skip when no lock is provided."""
+
+    def test_cached_skip_without_lock(self, mock_server_factory):
+        msg_id = "<cache-no-lock@test>"
+        msg = f"Subject: Cached\r\nMessage-ID: {msg_id}\r\n\r\nBody".encode()
+        src_data = {"INBOX": [msg]}
+        dest_data = {"INBOX": []}
+
+        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        src = imaplib.IMAP4("localhost", p1)
+        dest = imaplib.IMAP4("localhost", p2)
+        src.login("src_user", "p")
+        dest.login("dest_user", "p")
+
+        src.select('"INBOX"', readonly=False)
+
+        existing_dest_msg_ids = {msg_id}
+        success, _src, _dest, deleted = migrate_imap_emails.process_single_uid(
+            src,
+            dest,
+            b"1",
+            "INBOX",
+            False,
+            None,
+            False,
+            False,
+            None,
+            True,
+            False,
+            existing_dest_msg_ids=existing_dest_msg_ids,
+            existing_dest_msg_ids_lock=None,
+            progress_cache_path=None,
+            progress_cache_data=None,
+            progress_cache_lock=None,
+            dest_host="localhost",
+            dest_user="dest_user",
+        )
+
+        assert success is True
+        assert deleted == 0
+        assert len(dest_server.folders["INBOX"]) == 0
+
+        src.logout()
+        dest.logout()
+
 
 class TestConfigValidation:
     """Tests for configuration validation."""
@@ -454,6 +531,32 @@ class TestMigrateErrorHandling:
 
         migrate_imap_emails.main()
 
+    def test_select_error_in_process_batch(self, mock_server_factory, monkeypatch):
+        """Cover process_batch select exception handling with real server data."""
+        src_data = {"INBOX": [b"Subject: Test\r\nMessage-ID: <1>\r\n\r\nBody"]}
+        dest_data = {"INBOX": []}
+
+        _src_server, _dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        def raise_select(_self, _mailbox, readonly=False):
+            raise RuntimeError("Select failed")
+
+        monkeypatch.setattr(imaplib.IMAP4, "select", raise_select)
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        src_conf = {"host": "localhost", "user": "src_user", "password": "p"}
+        dest_conf = {"host": "localhost", "user": "dest_user", "password": "p"}
+
+        migrate_imap_emails.process_batch(
+            [b"1"],
+            "INBOX",
+            src_conf,
+            dest_conf,
+            delete_from_source=False,
+            preserve_flags=False,
+            gmail_mode=False,
+        )
+
     def test_fetch_error_in_worker(self, mock_server_factory, monkeypatch):
         """Test error handling when fetching message details fails."""
         src_data = {"INBOX": [b"Subject: Test\r\nMessage-ID: <1>\r\n\r\nBody"]}
@@ -505,6 +608,35 @@ class TestMigrateErrorHandling:
         with pytest.raises(SystemExit) as exc:
             migrate_imap_emails.main()
         assert exc.value.code == 1
+
+    def test_main_logs_progress_cache_load_failure(self, mock_server_factory, monkeypatch, capsys):
+        """Cover progress cache load exception in main."""
+        src_data = {"INBOX": [b"Subject: X\r\nMessage-ID: <x@test>\r\n\r\nBody"]}
+        dest_data = {"INBOX": []}
+
+        _src_server, _dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+        monkeypatch.setattr(
+            imap_common, "load_progress_cache", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
+
+        env = {
+            "SRC_IMAP_HOST": "localhost",
+            "SRC_IMAP_USERNAME": "src_user",
+            "SRC_IMAP_PASSWORD": "p",
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "dest_user",
+            "DEST_IMAP_PASSWORD": "p",
+            "MAX_WORKERS": "1",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(sys, "argv", ["migrate_imap_emails.py", "--migrate-cache", "./cache"])
+
+        migrate_imap_emails.main()
+
+        captured = capsys.readouterr()
+        assert "Warning: Failed to load progress cache" in captured.out
 
 
 class TestTrashHandling:
@@ -569,6 +701,58 @@ class TestTrashHandling:
         assert len(src_server.folders["INBOX"]) == 0
         # Source Trash should have it (copied before delete)
         assert len(src_server.folders["Trash"]) == 1
+
+
+class TestCommonMessageParsing:
+    """Covers imap_common message parsing helpers used by migrate."""
+
+    def test_parse_message_id_from_empty_bytes(self):
+        assert imap_common.parse_message_id_from_bytes(b"") is None
+
+    def test_parse_message_id_and_subject_from_empty_bytes(self):
+        msg_id, subject = imap_common.parse_message_id_and_subject_from_bytes(b"")
+        assert msg_id is None
+        assert subject == "(No Subject)"
+
+    def test_get_uid_to_message_id_map_empty(self):
+        result = imap_common.get_uid_to_message_id_map(object(), [])
+        assert result == {}
+
+    def test_extract_message_id_invalid_type(self):
+        assert imap_common.extract_message_id(123) is None
+
+    def test_parse_message_id_from_invalid_type(self):
+        assert imap_common.parse_message_id_from_bytes(123) is None
+
+    def test_parse_message_id_from_bytes_success(self):
+        raw_message = b"Subject: X\r\nMessage-ID: <ok@test>\r\n\r\nBody"
+        assert imap_common.parse_message_id_from_bytes(raw_message) == "<ok@test>"
+
+    def test_parse_message_id_and_subject_from_invalid_type(self):
+        msg_id, subject = imap_common.parse_message_id_and_subject_from_bytes(123)
+        assert msg_id is None
+        assert subject == "(No Subject)"
+
+    def test_get_uid_to_message_id_map_missing_uid(self):
+        class FakeConn:
+            def uid(self, _cmd, _uids, _opts):
+                return (
+                    "OK",
+                    [
+                        (
+                            b"1 (BODY[HEADER.FIELDS (MESSAGE-ID)] {40}",
+                            b"Message-ID: <x@test>\r\n",
+                        ),
+                        b")",
+                    ],
+                )
+
+        result = imap_common.get_uid_to_message_id_map(FakeConn(), [b"1"])
+        assert result == {}
+
+    def test_decode_mime_header_exception_path(self):
+        result = imap_common.decode_mime_header(["not", "a", "header"])
+        assert result == "['not', 'a', 'header']"
 
 
 class TestFilterPreservableFlags:
@@ -733,3 +917,41 @@ class TestDestDeleteFunctionality:
 
         # All dest emails should be deleted
         assert len(dest_server.folders["INBOX"]) == 0
+
+    def test_dest_delete_syncs_after_migration(self, mock_server_factory, monkeypatch):
+        """End-to-end: delete orphans after a successful migration batch."""
+        src_data = {"INBOX": [b"Subject: Keep\r\nMessage-ID: <keep@test>\r\n\r\nBody"]}
+        dest_data = {
+            "INBOX": [
+                b"Subject: Keep\r\nMessage-ID: <keep@test>\r\n\r\nBody",
+                b"Subject: Orphan\r\nMessage-ID: <orphan@test>\r\n\r\nBody",
+            ]
+        }
+
+        src_server, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+
+        monkeypatch.setattr("imap_common.get_imap_connection", make_mock_connection(p1, p2))
+
+        src = imaplib.IMAP4("localhost", p1)
+        dest = imaplib.IMAP4("localhost", p2)
+        src.login("src_user", "p")
+        dest.login("dest_user", "p")
+
+        migrate_imap_emails.MAX_WORKERS = 1
+        migrate_imap_emails.BATCH_SIZE = 1
+
+        migrate_imap_emails.migrate_folder(
+            src,
+            dest,
+            "INBOX",
+            False,
+            {"host": "localhost", "user": "src_user", "password": "p"},
+            {"host": "localhost", "user": "dest_user", "password": "p"},
+            dest_delete=True,
+        )
+
+        assert len(dest_server.folders["INBOX"]) == 1
+        assert b"Message-ID: <keep@test>" in dest_server.folders["INBOX"][0]["content"]
+
+        src.logout()
+        dest.logout()

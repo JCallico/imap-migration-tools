@@ -25,6 +25,7 @@ This repository contains a set of Python scripts designed to migrate emails betw
    - **Cleanup**: Optionally deletes messages from the source after successful transfer (effectively a "Move" operation).
      - *Improved for Gmail*: Automatically detects "Trash" folders to ensure emails are properly binned rather than just archived.
    - **Sync Mode**: Optionally deletes emails from destination that no longer exist in source (`--dest-delete`).
+   - **Incremental Cache**: Supports `--migrate-cache <path>` to store a local map of processed emails, drastically speeding up subsequent runs by skipping known messages.
    - **Configurable**: Adjustable concurrency and batch sizes to respect server rate limits.
 
 2. **`compare_imap_folders.py`** (The Validator)
@@ -258,11 +259,23 @@ python3 migrate_imap_emails.py \
   --dest-pass "dest-app-password"
 ```
 
-Notes:
-- `--preserve-flags` is enabled automatically in `--gmail-mode`.
-- `--dest-delete` is not supported in `--gmail-mode`.
+### 1b. Fast Incremental Migration (Cached)
+Use a local cache file to remember processed emails. Use this for large migrations that may be interrupted or need to run multiple times.
 
-### 1b. Preserve Flags (Any IMAP Server)
+```bash
+python3 migrate_imap_emails.py \
+  --src-host "imap.source.com" \
+  --src-user "source" \
+  --src-pass "pass" \
+  --dest-host "imap.dest.com" \
+  --dest-user "dest" \
+  --dest-pass "pass" \
+  --migrate-cache "./migration_cache"
+```
+
+To force a re-check of cached items without clearing the cache logic entirely, add `--full-migrate`.
+
+### 1c. Preserve Flags (Any IMAP Server)
 Preserve IMAP flags (`\Seen`, `\Flagged`, `\Answered`, `\Draft`) during migration.
 
 If an email already exists on the destination (duplicate), the script can still sync missing flags on the existing message.

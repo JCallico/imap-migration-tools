@@ -80,6 +80,42 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                         self.current_folders[folder] = []
                     self.send_response(tag, "OK CREATE completed")
 
+                elif cmd == "SEARCH":
+                    if not self.selected_folder:
+                        self.send_response(tag, RESPONSE_SELECT_FIRST)
+                        continue
+
+                    msgs = self.current_folders[self.selected_folder]
+                    sub_args = args
+
+                    header_msg_id = None
+                    try:
+                        m = re.search(r'HEADER\s+Message-ID\s+"([^"]+)"', sub_args, re.IGNORECASE)
+                        if m:
+                            header_msg_id = m.group(1)
+                    except Exception:
+                        header_msg_id = None
+
+                    seq_nums = []
+                    for idx, m in enumerate(msgs, start=1):
+                        if "UNDELETED" in sub_args and "\\Deleted" in m["flags"]:
+                            continue
+                        if header_msg_id:
+                            msg_text = m["content"].decode("utf-8", errors="ignore")
+                            if header_msg_id not in msg_text:
+                                continue
+                        seq_nums.append(str(idx))
+
+                    if "ALL" in sub_args.upper() and not header_msg_id:
+                        seq_nums = [str(idx) for idx in range(1, len(msgs) + 1)]
+
+                    seq_str = " ".join(seq_nums)
+                    if seq_str:
+                        self.wfile.write(f"* SEARCH {seq_str}\r\n".encode())
+                    else:
+                        self.wfile.write(b"* SEARCH\r\n")
+                    self.send_response(tag, RESPONSE_SEARCH_COMPLETED)
+
                 elif cmd == "EXPUNGE":
                     if self.selected_folder:
                         msgs = self.current_folders[self.selected_folder]
@@ -125,7 +161,10 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                             valid_uids.append(str(m["uid"]))
 
                         uids_str = " ".join(valid_uids)
-                        self.wfile.write(f"* SEARCH {uids_str}\r\n".encode())
+                        if uids_str:
+                            self.wfile.write(f"* SEARCH {uids_str}\r\n".encode())
+                        else:
+                            self.wfile.write(b"* SEARCH\r\n")
                         self.send_response(tag, RESPONSE_SEARCH_COMPLETED)
 
                     elif sub_cmd == "STORE":
@@ -291,50 +330,6 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                     except Exception as e:
                         print(f"MOCK APPEND ERROR: {e}")
                         self.send_response(tag, "BAD APPEND")
-
-                elif cmd == "SEARCH":
-                    # Parse SEARCH ALL, SEARCH HEADER Message-ID "...", etc.
-                    # args might be: ALL, HEADER Message-ID "<123>", CHARSETS UTF-8 ...
-
-                    found_indices = []
-
-                    if not self.selected_folder:
-                        self.wfile.write(b"* SEARCH\r\n")
-                        self.send_response(tag, RESPONSE_SEARCH_COMPLETED)
-                        continue
-
-                    msgs = self.current_folders[self.selected_folder]
-
-                    if "ALL" in args.upper():
-                        # Return all message sequence numbers
-                        found_indices = [str(idx + 1) for idx in range(len(msgs))]
-                    elif "HEADER Message-ID" in args:
-                        # Extract value
-                        # Expected: ... HEADER Message-ID "value" ...
-                        try:
-                            # Split by 'MESSAGE-ID' (case insensitive?)
-                            # part after Message-ID
-                            post_mi = args.split("Message-ID", 1)[1].strip()
-                            # Should start with quote or value
-                            if post_mi.startswith('"'):
-                                search_val = post_mi.split('"', 2)[1]
-                            else:
-                                search_val = post_mi.split(" ", 1)[0]
-
-                            search_val = search_val.replace("<", "").replace(">", "")
-
-                            for idx, m in enumerate(msgs):
-                                content_str = m["content"].decode("utf-8", errors="ignore")
-                                if search_val in content_str:
-                                    # Simple substring check is risky but okay for mock
-                                    # Better: regex for Message-ID: <...search_val...>
-                                    found_indices.append(str(idx + 1))
-                        except Exception:
-                            pass
-
-                    indices_str = " ".join(found_indices)
-                    self.wfile.write(f"* SEARCH {indices_str}\r\n".encode())
-                    self.send_response(tag, RESPONSE_SEARCH_COMPLETED)
 
                 elif cmd == "STORE":
                     # STORE <msg_set> +FLAGS (\Seen)  (non-UID; uses message sequence numbers)

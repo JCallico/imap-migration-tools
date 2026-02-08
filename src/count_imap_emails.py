@@ -109,56 +109,10 @@ def count_emails(imap_server, username, password=None, oauth2_token=None):
         print(f"An error occurred: {e}")
 
 
-def _is_ignored_local_dir(dirname: str) -> bool:
-    return dirname.startswith(".") or dirname == "__pycache__"
-
-
-def list_local_folders(local_root: str) -> list[str]:
-    """List all folders under a local backup root in IMAP-style names."""
-    folders: set[str] = set()
-
-    for dirpath, dirnames, _filenames in os.walk(local_root):
-        dirnames[:] = [d for d in dirnames if not _is_ignored_local_dir(d)]
-
-        if os.path.abspath(dirpath) == os.path.abspath(local_root):
-            continue
-
-        rel = os.path.relpath(dirpath, local_root)
-        if rel == ".":
-            continue
-
-        parts = [p for p in rel.split(os.sep) if p and not _is_ignored_local_dir(p)]
-        if not parts:
-            continue
-
-        folders.add("/".join(parts))
-
-    return sorted(folders)
-
-
-def get_local_email_count(local_root: str, folder_name: str):
-    """Return the count of .eml files in a local folder, or None if missing/unreadable."""
-    folder_path = os.path.join(local_root, *folder_name.split("/"))
-    if not os.path.isdir(folder_path):
-        return None
-
-    try:
-        count = 0
-        for filename in os.listdir(folder_path):
-            if not filename.endswith(".eml"):
-                continue
-            full_path = os.path.join(folder_path, filename)
-            if os.path.isfile(full_path):
-                count += 1
-        return count
-    except OSError:
-        return None
-
-
 def count_local_emails(local_path: str) -> None:
     print(f"Scanning local backup: {local_path}")
 
-    folders = list_local_folders(local_path)
+    folders = imap_common.list_local_folders(local_path)
     if not folders:
         print("No folders found.")
         return
@@ -168,7 +122,7 @@ def count_local_emails(local_path: str) -> None:
     print("-" * 52)
 
     for folder_name in folders:
-        count = get_local_email_count(local_path, folder_name)
+        count = imap_common.get_local_email_count(local_path, folder_name)
         if count is None:
             print(f"{folder_name:<40} {'N/A':>10}")
             continue

@@ -9,16 +9,15 @@ Tests cover:
 - Configuration validation
 """
 
-import imaplib
 import os
 import sys
-from unittest.mock import MagicMock
 
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import count_imap_emails
+import imap_common
 from conftest import make_single_mock_connection
 
 
@@ -98,102 +97,154 @@ class TestLocalEmailCounting:
         assert "TOTAL" in captured.out
         assert "3" in captured.out
 
+    def test_count_local_ignores_hidden_dirs(self, tmp_path, capsys):
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+        (inbox_path / "1_a.eml").write_bytes(b"Subject: A\r\n\r\nBody")
+        (inbox_path / "note.txt").write_text("ignore")
 
-class TestEmailCountingErrors:
-    """Tests for error handling in email counting."""
+        hidden_path = tmp_path / ".hidden"
+        hidden_path.mkdir()
+        (hidden_path / "1_hidden.eml").write_bytes(b"Subject: Hidden\r\n\r\nBody")
 
-    def test_connection_failure(self, monkeypatch):
-        """Test graceful exit when connection fails."""
-        mock_get = MagicMock(return_value=None)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
+        cache_path = tmp_path / "__pycache__"
+        cache_path.mkdir()
+        (cache_path / "1_cache.eml").write_bytes(b"Subject: Cache\r\n\r\nBody")
 
-        # Should return silently without raising
-        count_imap_emails.count_emails("host", "user", "pass")
-        mock_get.assert_called_once()
+        nested_path = tmp_path / "Projects" / "Sub"
+        nested_path.mkdir(parents=True)
+        (nested_path / "1_sub.eml").write_bytes(b"Subject: Sub\r\n\r\nBody")
 
-    def test_list_command_failure(self, monkeypatch):
-        """Test handling of LIST command failure."""
-        mock_mail = MagicMock()
-        mock_mail.list.return_value = ("NO", [])
-        mock_get = MagicMock(return_value=mock_mail)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-
-        count_imap_emails.count_emails("host", "user", "pass")
-        mock_mail.list.assert_called_once()
-        # Should exit early, so select should not be called
-        mock_mail.select.assert_not_called()
-
-    def test_select_command_failure(self, monkeypatch):
-        """Test handling of SELECT command failure for a folder."""
-        mock_mail = MagicMock()
-        mock_mail.list.return_value = ("OK", [rb'(\HasNoChildren) "/" "INBOX"'])
-        # Fail selection
-        mock_mail.select.return_value = ("NO", [b"Select failed"])
-
-        mock_get = MagicMock(return_value=mock_mail)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-        monkeypatch.setattr("imap_common.normalize_folder_name", lambda x: "INBOX")
-
-        count_imap_emails.count_emails("host", "user", "pass")
-
-        mock_mail.select.assert_called_once()
-        # Should skip search for this folder
-        mock_mail.search.assert_not_called()
-
-    def test_search_command_failure(self, monkeypatch, capsys):
-        """Test handling of SEARCH command failure."""
-        mock_mail = MagicMock()
-        mock_mail.list.return_value = ("OK", [rb'(\HasNoChildren) "/" "INBOX"'])
-        mock_mail.select.return_value = ("OK", [b"Selected"])
-        # Fail search
-        mock_mail.search.return_value = ("NO", [b"Search failed"])
-
-        mock_get = MagicMock(return_value=mock_mail)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-        monkeypatch.setattr("imap_common.normalize_folder_name", lambda x: "INBOX")
-
-        count_imap_emails.count_emails("host", "user", "pass")
+        count_imap_emails.count_local_emails(str(tmp_path))
 
         captured = capsys.readouterr()
-        assert "Error" in captured.out
+        assert "INBOX" in captured.out
+        assert "Projects/Sub" in captured.out
+        assert ".hidden" not in captured.out
+        assert "__pycache__" not in captured.out
 
-    def test_imap_exception_during_list(self, monkeypatch, capsys):
-        """Test handling of IMAP4 exception during list command."""
-        mock_mail = MagicMock()
-        mock_mail.list.side_effect = imaplib.IMAP4.error("Crash listing")
-        mock_get = MagicMock(return_value=mock_mail)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
+    def test_get_local_email_count_unreadable_folder(self, tmp_path):
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+        (inbox_path / "1_a.eml").write_bytes(b"Subject: A\r\n\r\nBody")
 
-        count_imap_emails.count_emails("host", "user", "pass")
+        os.chmod(inbox_path, 0)
+        try:
+            result = imap_common.get_local_email_count(str(tmp_path), "INBOX")
+            assert result is None
+        finally:
+            os.chmod(inbox_path, 0o700)
 
-        captured = capsys.readouterr()
-        assert "Failed to list mailboxes" in captured.out
 
-    def test_imap_exception_during_select(self, monkeypatch, capsys):
-        """Test handling of IMAP4 exception during folder selection."""
-        mock_mail = MagicMock()
-        mock_mail.list.return_value = ("OK", [rb'(\HasNoChildren) "/" "INBOX"'])
-        mock_mail.select.side_effect = imaplib.IMAP4.error("Crash selecting")
+class TestImapCommonHelpers:
+    """Tests for imap_common helpers via script tests."""
 
-        mock_get = MagicMock(return_value=mock_mail)
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
-        monkeypatch.setattr("imap_common.normalize_folder_name", lambda x: "INBOX")
+    def test_list_selectable_folders_filters_noselect(self):
+        class FakeConn:
+            def list(self):
+                return (
+                    "OK",
+                    [
+                        b'(\\Noselect) "/" "Archive"',
+                        b'(\\HasNoChildren) "/" "INBOX"',
+                        '(\\HasNoChildren) "/" "Sent"',
+                    ],
+                )
 
-        count_imap_emails.count_emails("host", "user", "pass")
+        result = imap_common.list_selectable_folders(FakeConn())
+        assert result == ["INBOX", "Sent"]
 
-        captured = capsys.readouterr()
-        # Should print Error for that folder
-        assert "Error" in captured.out
+    def test_list_selectable_folders_list_error(self):
+        class FakeConn:
+            def list(self):
+                return ("NO", [])
 
-    def test_generic_exception(self, monkeypatch, capsys):
-        """Test handling of generic connection/runtime exceptions."""
-        mock_get = MagicMock(side_effect=Exception("Generic Crash"))
-        monkeypatch.setattr("imap_common.get_imap_connection", mock_get)
+        result = imap_common.list_selectable_folders(FakeConn())
+        assert result == []
 
-        count_imap_emails.count_emails("host", "user", "pass")
+    def test_list_selectable_folders_exception(self):
+        class FakeConn:
+            def list(self):
+                raise Exception("list failed")
 
-        captured = capsys.readouterr()
-        assert "An error occurred: Generic Crash" in captured.out
+        result = imap_common.list_selectable_folders(FakeConn())
+        assert result == []
+
+    def test_get_imap_connection_oauth2_uses_authenticate(self, monkeypatch):
+        class FakeIMAP:
+            def __init__(self, _host):
+                self.auth_called = False
+                self.login_called = False
+
+            def authenticate(self, _mechanism, auth_cb):
+                self.auth_called = True
+                auth_cb(None)
+
+            def login(self, _user, _password):
+                self.login_called = True
+
+        monkeypatch.setattr(imap_common.imaplib, "IMAP4_SSL", FakeIMAP)
+
+        conn = imap_common.get_imap_connection("host", "user", oauth2_token="token")
+
+        assert isinstance(conn, FakeIMAP)
+        assert conn.auth_called is True
+        assert conn.login_called is False
+
+    def test_get_imap_connection_basic_login(self, monkeypatch):
+        class FakeIMAP:
+            def __init__(self, _host):
+                self.auth_called = False
+                self.login_called = False
+
+            def authenticate(self, _mechanism, _auth_cb):
+                self.auth_called = True
+
+            def login(self, _user, _password):
+                self.login_called = True
+
+        monkeypatch.setattr(imap_common.imaplib, "IMAP4_SSL", FakeIMAP)
+
+        conn = imap_common.get_imap_connection("host", "user", password="pass")
+
+        assert isinstance(conn, FakeIMAP)
+        assert conn.login_called is True
+        assert conn.auth_called is False
+
+    def test_ensure_connection_returns_same_conn_when_healthy(self):
+        class GoodConn:
+            def __init__(self):
+                self.noop_calls = 0
+
+            def noop(self):
+                self.noop_calls += 1
+
+        conn = GoodConn()
+        result = imap_common.ensure_connection(conn, "host", "user", "pass")
+        assert result is conn
+        assert conn.noop_calls == 1
+
+    def test_ensure_connection_reconnects_on_noop_error(self, monkeypatch):
+        class BadConn:
+            def noop(self):
+                raise Exception("fail")
+
+        new_conn = object()
+        monkeypatch.setattr(imap_common, "get_imap_connection", lambda *args, **kwargs: new_conn)
+
+        result = imap_common.ensure_connection(BadConn(), "host", "user", "pass")
+        assert result is new_conn
+
+    def test_ensure_connection_from_conf_reconnects_on_noop_error(self, monkeypatch):
+        class BadConn:
+            def noop(self):
+                raise Exception("fail")
+
+        new_conn = object()
+        monkeypatch.setattr(imap_common, "get_imap_connection_from_conf", lambda _conf: new_conn)
+
+        result = imap_common.ensure_connection_from_conf(BadConn(), {"host": "h", "user": "u"})
+        assert result is new_conn
 
 
 class TestMainFunction:

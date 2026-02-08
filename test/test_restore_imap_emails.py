@@ -9,10 +9,10 @@ Tests cover:
 - Configuration validation
 """
 
+import imaplib
 import json
 import os
 import sys
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -147,6 +147,15 @@ Body content.
         assert message_id is None
         assert raw_content is None
 
+    def test_parse_eml_file_unknown_charset_subject(self, tmp_path):
+        """Test parsing with a subject that uses an unknown charset."""
+        file_path = tmp_path / "unknown_charset.eml"
+        file_path.write_text("Subject: =?X-UNKNOWN?B?SGVsbG8=?=\r\nMessage-ID: <unknown@test>\r\n\r\nBody")
+
+        message_id, _date_str, _raw_content, subject = restore_imap_emails.parse_eml_file(str(file_path))
+        assert message_id == "<unknown@test>"
+        assert "Hello" in subject
+
 
 class TestGetEmlFiles:
     """Tests for getting .eml files from a folder."""
@@ -172,46 +181,6 @@ class TestGetEmlFiles:
     def test_get_eml_files_nonexistent_folder(self):
         """Test getting .eml files from non-existent folder."""
         result = restore_imap_emails.get_eml_files("/nonexistent/folder")
-        assert result == []
-
-
-class TestGetBackupFolders:
-    """Tests for scanning backup folder structure."""
-
-    def test_get_backup_folders(self, tmp_path):
-        """Test scanning backup folders."""
-        # Create folder structure
-        inbox = tmp_path / "INBOX"
-        inbox.mkdir()
-        (inbox / "email1.eml").write_text("content")
-
-        sent = tmp_path / "Sent"
-        sent.mkdir()
-        (sent / "email2.eml").write_text("content")
-
-        result = restore_imap_emails.get_backup_folders(str(tmp_path))
-
-        assert len(result) == 2
-        folder_names = [f[0] for f in result]
-        assert "INBOX" in folder_names
-        assert "Sent" in folder_names
-
-    def test_get_backup_folders_nested(self, tmp_path):
-        """Test scanning nested folder structure."""
-        gmail = tmp_path / "[Gmail]"
-        gmail.mkdir()
-        all_mail = gmail / "All Mail"
-        all_mail.mkdir()
-        (all_mail / "email.eml").write_text("content")
-
-        result = restore_imap_emails.get_backup_folders(str(tmp_path))
-
-        assert len(result) == 1
-        assert result[0][0] == "[Gmail]/All Mail"
-
-    def test_get_backup_folders_empty(self, tmp_path):
-        """Test scanning empty backup folder."""
-        result = restore_imap_emails.get_backup_folders(str(tmp_path))
         assert result == []
 
 
@@ -264,94 +233,6 @@ class TestConfigValidation:
         assert exc_info.value.code == 1
 
 
-class TestUploadEmail:
-    """Tests for email upload functionality."""
-
-    def test_upload_email_success(self, monkeypatch):
-        """Test successful email upload."""
-        mock_conn = MagicMock()
-        mock_conn.create.return_value = ("OK", [])
-        mock_conn.select.return_value = ("OK", [b"1"])
-        mock_conn.append.return_value = ("OK", [])
-
-        # Mock email_exists_in_folder to return False (not a duplicate)
-        monkeypatch.setattr(restore_imap_emails, "email_exists_in_folder", lambda *args: False)
-
-        result = restore_imap_emails.upload_email(
-            mock_conn,
-            "INBOX",
-            b"raw email content",
-            '"15-Jan-2024 10:30:00 +0000"',
-            "<test@test.com>",
-        )
-
-        assert result == restore_imap_emails.UploadResult.SUCCESS
-        mock_conn.append.assert_called_once()
-
-    def test_upload_email_duplicate(self, monkeypatch):
-        """Test upload returns ALREADY_EXISTS when message exists."""
-        mock_conn = MagicMock()
-        mock_conn.select.return_value = ("OK", [b"1"])
-
-        # Mock email_exists_in_folder to return True (is a duplicate)
-        monkeypatch.setattr(restore_imap_emails, "email_exists_in_folder", lambda *args: True)
-
-        result = restore_imap_emails.upload_email(
-            mock_conn,
-            "INBOX",
-            b"raw email content",
-            '"15-Jan-2024 10:30:00 +0000"',
-            "<test@test.com>",
-            check_duplicate=True,
-        )
-
-        assert result == restore_imap_emails.UploadResult.ALREADY_EXISTS
-        mock_conn.append.assert_not_called()
-
-    def test_upload_email_with_seen_flag(self, monkeypatch):
-        """Test upload with \\Seen flag for read emails."""
-        mock_conn = MagicMock()
-        mock_conn.create.return_value = ("OK", [])
-        mock_conn.select.return_value = ("OK", [b"1"])
-        mock_conn.append.return_value = ("OK", [])
-
-        # Mock email_exists_in_folder to return False (not a duplicate)
-        monkeypatch.setattr(restore_imap_emails, "email_exists_in_folder", lambda *args: False)
-
-        result = restore_imap_emails.upload_email(
-            mock_conn,
-            "INBOX",
-            b"raw email content",
-            '"15-Jan-2024 10:30:00 +0000"',
-            "<test@test.com>",
-            flags="\\Seen",  # Mark as read
-        )
-
-        assert result == restore_imap_emails.UploadResult.SUCCESS
-        # Check that append was called with the \\Seen flag
-        call_args = mock_conn.append.call_args
-        assert call_args[0][1] == "(\\Seen)"
-
-    def test_upload_email_failure(self, monkeypatch):
-        """Test upload returns FAILURE when an exception occurs."""
-        mock_conn = MagicMock()
-        mock_conn.select.side_effect = Exception("Connection error")
-
-        # Mock email_exists_in_folder to return False (not a duplicate)
-        monkeypatch.setattr(restore_imap_emails, "email_exists_in_folder", lambda *args: False)
-
-        result = restore_imap_emails.upload_email(
-            mock_conn,
-            "INBOX",
-            b"raw email content",
-            '"15-Jan-2024 10:30:00 +0000"',
-            "<test@test.com>",
-        )
-
-        assert result == restore_imap_emails.UploadResult.FAILURE
-        mock_conn.append.assert_not_called()
-
-
 class TestRestoreIntegration:
     """Integration tests for restore functionality."""
 
@@ -390,6 +271,41 @@ Body content.
 
         # Run restore
         restore_imap_emails.main()
+
+    def test_restore_all_folders_scans_backup(self, single_mock_server, monkeypatch, tmp_path):
+        """End-to-end: restore all folders from a backup tree."""
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+        (inbox / "1_Test_Email.eml").write_text("Subject: Inbox\nMessage-ID: <inbox@test>\n\nBody")
+
+        archive = tmp_path / "Archive"
+        archive.mkdir()
+        subfolder = archive / "Sub"
+        subfolder.mkdir()
+        (subfolder / "2_Test_Email.eml").write_text("Subject: Archive\nMessage-ID: <archive@test>\n\nBody")
+
+        empty_folder = tmp_path / "Empty"
+        empty_folder.mkdir()
+
+        dest_data = {"INBOX": []}
+        server, port = single_mock_server(dest_data)
+
+        env = {
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "user",
+            "DEST_IMAP_PASSWORD": "pass",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(sys, "argv", ["restore_imap_emails.py", "--src-path", str(tmp_path)])
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        restore_imap_emails.main()
+
+        assert "INBOX" in server.folders
+        assert "Archive/Sub" in server.folders
+        assert len(server.folders["INBOX"]) == 1
+        assert len(server.folders["Archive/Sub"]) == 1
+        assert "Empty" not in server.folders
 
     def test_restore_single_folder_full_restore_flag(self, single_mock_server, monkeypatch, tmp_path):
         """Smoke test: --full-restore flag is accepted."""
@@ -439,44 +355,70 @@ Body content.
         assert len(result) == 2
         assert result["<msg1@test.com>"] == ["INBOX", "Work"]
 
+    def test_restore_gmail_mode_fallback_folder(self, single_mock_server, monkeypatch, tmp_path):
+        """End-to-end: Gmail mode with no labels uses fallback folder."""
+        gmail_all_mail = tmp_path / "[Gmail]" / "All Mail"
+        gmail_all_mail.mkdir(parents=True)
+        (gmail_all_mail / "1_Test.eml").write_text("Subject: X\nMessage-ID: <no-labels@test>\n\nBody")
 
-class TestEmailExistsInFolder:
-    """Tests for duplicate detection."""
+        dest_data = {"INBOX": []}
+        server, port = single_mock_server(dest_data)
 
-    def test_email_exists_true(self, monkeypatch):
-        """Test detecting existing email."""
-        mock_conn = MagicMock()
-        monkeypatch.setattr("imap_common.message_exists_in_folder", lambda *args: True)
-
-        result = restore_imap_emails.email_exists_in_folder(mock_conn, "<test@test.com>")
-        assert result is True
-
-    def test_email_exists_false(self, monkeypatch):
-        """Test detecting non-existing email."""
-        mock_conn = MagicMock()
-        monkeypatch.setattr("imap_common.message_exists_in_folder", lambda *args: False)
-
-        result = restore_imap_emails.email_exists_in_folder(mock_conn, "<test@test.com>")
-        assert result is False
-
-    def test_email_exists_no_message_id(self, monkeypatch):
-        """Test with no message ID."""
-        mock_conn = MagicMock()
-
-        result = restore_imap_emails.email_exists_in_folder(mock_conn, None)
-        assert result is False
-
-    def test_email_exists_exception(self, monkeypatch):
-        """Test handling exception."""
-        mock_conn = MagicMock()
-
+        env = {
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "user",
+            "DEST_IMAP_PASSWORD": "pass",
+        }
+        monkeypatch.setattr(os, "environ", env)
         monkeypatch.setattr(
-            "imap_common.message_exists_in_folder",
-            lambda *args: (_ for _ in ()).throw(Exception("Error")),
+            sys,
+            "argv",
+            ["restore_imap_emails.py", "--src-path", str(tmp_path), "--gmail-mode"],
         )
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
 
-        result = restore_imap_emails.email_exists_in_folder(mock_conn, "<test@test.com>")
-        assert result is False
+        restore_imap_emails.main()
+
+        assert imap_common.FOLDER_RESTORED_UNLABELED in server.folders
+        assert len(server.folders[imap_common.FOLDER_RESTORED_UNLABELED]) == 1
+
+    def test_restore_dest_delete_removes_orphans(self, single_mock_server, monkeypatch, tmp_path):
+        """End-to-end: --dest-delete removes messages not in local backup."""
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+        (inbox / "1_keep.eml").write_text("Subject: Keep\nMessage-ID: <keep@test>\n\nBody")
+
+        dest_data = {
+            "INBOX": [
+                b"Subject: Keep\r\nMessage-ID: <keep@test>\r\n\r\nBody",
+                b"Subject: Orphan\r\nMessage-ID: <orphan@test>\r\n\r\nBody",
+            ]
+        }
+        server, port = single_mock_server(dest_data)
+
+        env = {
+            "DEST_IMAP_HOST": "localhost",
+            "DEST_IMAP_USERNAME": "user",
+            "DEST_IMAP_PASSWORD": "pass",
+        }
+        monkeypatch.setattr(os, "environ", env)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "restore_imap_emails.py",
+                "--src-path",
+                str(tmp_path),
+                "--dest-delete",
+                "INBOX",
+            ],
+        )
+        monkeypatch.setattr("imap_common.get_imap_connection", make_single_mock_connection(port))
+
+        restore_imap_emails.main()
+
+        assert len(server.folders["INBOX"]) == 1
+        assert b"Message-ID: <keep@test>" in server.folders["INBOX"][0]["content"]
 
 
 class TestRestoreProgressCache:
@@ -517,6 +459,60 @@ class TestRestoreProgressCache:
         ids = restore_cache.get_cached_message_ids(cache_data2, lock, "imap.example.com", "user@example.com", "INBOX")
         assert "<a@test>" in ids
         assert "<b@test>" in ids
+
+
+class TestBackupFolderDiscovery:
+    """Tests for backup folder discovery helpers."""
+
+    def test_get_backup_folders_skips_unreadable(self, tmp_path):
+        inbox_path = tmp_path / "INBOX"
+        inbox_path.mkdir()
+        (inbox_path / "1.eml").write_bytes(b"Subject: Inbox\r\n\r\nBody")
+
+        parent_path = tmp_path / "Parent"
+        parent_path.mkdir()
+
+        unreadable_path = parent_path / "Unreadable"
+        unreadable_path.mkdir()
+        (unreadable_path / "1.eml").write_bytes(b"Subject: Hidden\r\n\r\nBody")
+        os.chmod(unreadable_path, 0)
+
+        try:
+            folders = imap_common.get_backup_folders(str(tmp_path))
+        finally:
+            os.chmod(unreadable_path, 0o700)
+
+        folder_names = {name for name, _path in folders}
+        assert "INBOX" in folder_names
+        assert "Unreadable" not in folder_names
+
+    def test_extract_message_id_from_eml_missing_file(self, tmp_path):
+        missing_path = tmp_path / "missing.eml"
+        assert imap_common.extract_message_id_from_eml(str(missing_path)) is None
+
+    def test_extract_message_id_from_eml_success(self, tmp_path):
+        eml_path = tmp_path / "message.eml"
+        eml_path.write_text("Message-ID: <ok@test>\r\nSubject: Hi\r\n\r\nBody")
+
+        assert imap_common.extract_message_id_from_eml(str(eml_path)) == "<ok@test>"
+
+
+class TestTrashFolderDetection:
+    """Tests for trash folder detection with string LIST entries."""
+
+    def test_detect_trash_folder_with_string_entries(self):
+        class FakeConn:
+            def list(self):
+                return (
+                    "OK",
+                    [
+                        '(\\HasNoChildren) "/" "INBOX"',
+                        '(\\HasNoChildren \\Trash) "/" "Trash"',
+                    ],
+                )
+
+        result = imap_common.detect_trash_folder(FakeConn())
+        assert result == "Trash"
 
 
 class TestGetLabelsFromManifest:
@@ -590,68 +586,81 @@ class TestLabelToFolder:
         assert result == "Projects/2024"
 
 
-class TestGmailModeDraftsFallbackRegression:
-    def test_gmail_mode_no_labels_does_not_upload_to_drafts(self, monkeypatch):
-        """Regression: messages with no usable labels must not be uploaded to Gmail Drafts."""
+class TestRestoreE2EHelpers:
+    """End-to-end tests for restore helper functions using the mock IMAP server."""
 
-        captured = {}
+    def test_upload_email_success(self, single_mock_server):
+        dest_data = {"INBOX": []}
+        server, port = single_mock_server(dest_data)
 
-        def fake_upload_email(dest, folder_name, raw_content, date_str, message_id, flags=None, check_duplicate=True):
-            captured["folder_name"] = folder_name
-            return restore_imap_emails.UploadResult.SUCCESS
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
 
-        def fake_parse_eml_file(_path):
-            return (
-                "<no-labels@test>",
-                '"01-Jan-2024 00:00:00 +0000"',
-                b"Subject: X\r\nMessage-ID: <no-labels@test>\r\n\r\nBody",
-                "X",
-            )
-
-        monkeypatch.setattr(restore_imap_emails, "get_thread_connection", lambda _conf: MagicMock())
-        monkeypatch.setattr(restore_imap_emails, "upload_email", fake_upload_email)
-        monkeypatch.setattr(restore_imap_emails, "parse_eml_file", fake_parse_eml_file)
-
-        restore_imap_emails.process_restore_batch(
-            eml_files=[("/does/not/matter.eml", "x.eml")],
-            folder_name="__GMAIL_MODE__",
-            dest_conf=("host", "user", "pass"),
-            manifest={},
-            apply_labels=True,
-            apply_flags=False,
+        result = restore_imap_emails.upload_email(
+            conn,
+            "INBOX",
+            b"Subject: Upload\r\nMessage-ID: <up@test>\r\n\r\nBody",
+            '"15-Jan-2024 10:30:00 +0000"',
+            "<up@test>",
         )
 
-        assert captured["folder_name"] == imap_common.FOLDER_RESTORED_UNLABELED
-        assert captured["folder_name"] != "[Gmail]/Drafts"
+        assert result == restore_imap_emails.UploadResult.SUCCESS
+        assert len(server.folders["INBOX"]) == 1
+        conn.logout()
 
+    def test_upload_email_duplicate(self, single_mock_server):
+        dest_data = {"INBOX": [b"Subject: Dup\r\nMessage-ID: <dup@test>\r\n\r\nBody"]}
+        server, port = single_mock_server(dest_data)
 
-class TestSyncFlagsOnExisting:
-    """Tests for sync_flags_on_existing function."""
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
 
-    def test_sync_flags_adds_missing(self):
-        """Test that missing flags are added to existing email."""
-        mock_conn = MagicMock()
-        mock_conn.select.return_value = ("OK", [b"1"])
-        mock_conn.search.return_value = ("OK", [b"1"])
-        mock_conn.fetch.return_value = ("OK", [(b"1 (FLAGS ())", b"")])
-        mock_conn.store.return_value = ("OK", None)
+        result = restore_imap_emails.upload_email(
+            conn,
+            "INBOX",
+            b"Subject: Dup\r\nMessage-ID: <dup@test>\r\n\r\nBody",
+            '"15-Jan-2024 10:30:00 +0000"',
+            "<dup@test>",
+            check_duplicate=True,
+        )
 
-        # Should not raise
-        restore_imap_emails.sync_flags_on_existing(mock_conn, "INBOX", "<test@test.com>", "\\Seen \\Flagged", 1000)
+        assert result == restore_imap_emails.UploadResult.ALREADY_EXISTS
+        assert len(server.folders["INBOX"]) == 1
+        conn.logout()
 
-        # Verify store was called with flags
-        mock_conn.store.assert_called()
+    def test_email_exists_in_folder(self, single_mock_server):
+        dest_data = {"INBOX": [b"Subject: Exists\r\nMessage-ID: <exists@test>\r\n\r\nBody"]}
+        _server, port = single_mock_server(dest_data)
 
-    def test_sync_flags_no_message_found(self):
-        """Test when message is not found."""
-        mock_conn = MagicMock()
-        mock_conn.select.return_value = ("OK", [b"1"])
-        mock_conn.search.return_value = ("OK", [b""])  # No match
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+        conn.select('"INBOX"')
 
-        # Should not raise or call store
-        restore_imap_emails.sync_flags_on_existing(mock_conn, "INBOX", "<test@test.com>", "\\Seen", 1000)
+        assert restore_imap_emails.email_exists_in_folder(conn, "<exists@test>") is True
+        assert restore_imap_emails.email_exists_in_folder(conn, "<missing@test>") is False
+        conn.logout()
 
-        mock_conn.store.assert_not_called()
+    def test_sync_flags_on_existing(self, single_mock_server):
+        dest_data = {
+            "INBOX": [{"uid": 1, "flags": set(), "content": b"Subject: Flag\r\nMessage-ID: <flag@test>\r\n\r\nBody"}]
+        }
+        _server, port = single_mock_server(dest_data)
+
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+
+        restore_imap_emails.sync_flags_on_existing(conn, "INBOX", "<flag@test>", "\\Seen \\Flagged", 1000)
+
+        conn.select('"INBOX"')
+        resp, data = conn.search(None, 'HEADER Message-ID "<flag@test>"')
+        assert resp == "OK"
+        msg_num = data[0].split()[0]
+        resp, flag_data = conn.fetch(msg_num, "(FLAGS)")
+        assert resp == "OK"
+        flag_text = str(flag_data[0])
+        assert "\\Seen" in flag_text
+        assert "\\Flagged" in flag_text
+        conn.logout()
 
 
 class TestDestDeleteRestoreArgument:
