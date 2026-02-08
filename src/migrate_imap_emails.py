@@ -283,7 +283,7 @@ def process_single_uid(
                 imap_common.sync_flags_on_existing(dest, target_folder, msg_id, flags, size)
         else:
             valid_flags = f"({flags})" if (preserve_flags and flags) else None
-            imap_common.append_email(
+            success = imap_common.append_email(
                 dest,
                 target_folder,
                 msg_content,
@@ -291,10 +291,13 @@ def process_single_uid(
                 valid_flags,
                 ensure_folder=False,
             )
-            safe_print(f"[{target_folder}] {'COPIED':<12} | {size_str:<8} | {subject[:40]}")
-            if preserve_flags and flags:
-                for flag in flags.split():
-                    safe_print(f"  -> Applied flag: {flag}")
+            if success:
+                safe_print(f"[{target_folder}] {'COPIED':<12} | {size_str:<8} | {subject[:40]}")
+                if preserve_flags and flags:
+                    for flag in flags.split():
+                        safe_print(f"  -> Applied flag: {flag}")
+            else:
+                safe_print(f"[{target_folder}] FAILED        | {size_str:<8} | {subject[:40]}")
 
         # Update cache if processed effectively (copied or duplicate)
         if msg_id:
@@ -328,18 +331,20 @@ def process_single_uid(
                     dest.select(f'"{label_folder}"')
                     if not imap_common.message_exists_in_folder(dest, msg_id):
                         valid_flags = f"({flags})" if (preserve_flags and flags) else None
-                        imap_common.append_email(
+                        if imap_common.append_email(
                             dest,
                             label_folder,
                             msg_content,
                             date_str,
                             valid_flags,
                             ensure_folder=False,
-                        )
-                        safe_print(f"  -> Applied label: {label}")
-                        if preserve_flags and flags:
-                            for flag in flags.split():
-                                safe_print(f"    -> Applied flag: {flag}")
+                        ):
+                            safe_print(f"  -> Applied label: {label}")
+                            if preserve_flags and flags:
+                                for flag in flags.split():
+                                    safe_print(f"    -> Applied flag: {flag}")
+                        else:
+                            safe_print(f"  -> Failed to apply label {label}")
                     elif preserve_flags and flags:
                         imap_common.sync_flags_on_existing(dest, label_folder, msg_id, flags, size)
                 except Exception as e:

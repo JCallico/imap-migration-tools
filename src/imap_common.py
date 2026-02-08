@@ -213,7 +213,9 @@ def append_email(
             else:
                 normalized_flags = f"({stripped})"
 
-    resp, _ = imap_conn.append(f'"{folder_name}"', normalized_flags, date_str, raw_content)
+    resp, data = imap_conn.append(f'"{folder_name}"', normalized_flags, date_str, raw_content)
+    if resp != "OK":
+        safe_print(f"APPEND failed for {folder_name}: {resp} {data}")
     return resp == "OK"
 
 
@@ -650,10 +652,12 @@ def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
 
         if flags_to_add:
             flags_str = " ".join(flags_to_add)
-            typ, _ = imap_conn.store(msg_num, "+FLAGS", f"({flags_str})")
+            typ, data = imap_conn.store(msg_num, "+FLAGS", f"({flags_str})")
             if typ == "OK":
                 for flag in flags_to_add:
                     safe_print(f"  -> Synced flag: {flag}")
+            else:
+                safe_print(f"STORE +FLAGS failed for {message_id} in {folder_name}: {typ} {data}")
 
     except Exception as e:
         safe_print(f"Error syncing flags for {message_id} in {folder_name}: {e}")
