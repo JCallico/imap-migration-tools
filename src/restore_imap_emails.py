@@ -48,7 +48,6 @@ Gmail Labels Restoration:
 
 import argparse
 import concurrent.futures
-import json
 import os
 import sys
 import threading
@@ -81,40 +80,6 @@ BATCH_SIZE = 10
 # Thread-local storage
 thread_local = threading.local()
 safe_print = imap_common.safe_print
-
-
-def load_labels_manifest(local_path):
-    """
-    Loads the labels manifest from the backup directory.
-    Returns the manifest dict or empty dict if not found.
-    """
-    manifest_path = os.path.join(local_path, "labels_manifest.json")
-    if os.path.exists(manifest_path):
-        try:
-            with open(manifest_path, encoding="utf-8") as f:
-                manifest = json.load(f)
-                safe_print(f"Loaded labels manifest with {len(manifest)} entries.")
-                return manifest
-        except Exception as e:
-            safe_print(f"Warning: Could not load labels manifest: {e}")
-    return {}
-
-
-def load_flags_manifest(local_path):
-    """
-    Loads the flags manifest from the backup directory.
-    Returns the manifest dict or empty dict if not found.
-    """
-    manifest_path = os.path.join(local_path, "flags_manifest.json")
-    if os.path.exists(manifest_path):
-        try:
-            with open(manifest_path, encoding="utf-8") as f:
-                manifest = json.load(f)
-                safe_print(f"Loaded flags manifest with {len(manifest)} entries.")
-                return manifest
-        except Exception as e:
-            safe_print(f"Warning: Could not load flags manifest: {e}")
-    return {}
 
 
 def get_flags_from_manifest(manifest, message_id):
@@ -962,11 +927,11 @@ def main():
 
     if apply_labels or apply_flags:
         # Try to load labels manifest first (contains both labels and flags for Gmail backups)
-        manifest = load_labels_manifest(local_path)
+        manifest = imap_common.load_manifest(local_path, "labels_manifest.json")
 
         # If no labels manifest, try flags-only manifest
         if not manifest and apply_flags:
-            manifest = load_flags_manifest(local_path)
+            manifest = imap_common.load_manifest(local_path, "flags_manifest.json")
 
         if not manifest:
             print("Warning: No manifest found. Labels/flags will not be applied.")

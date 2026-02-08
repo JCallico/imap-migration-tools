@@ -7,6 +7,7 @@ Shared functionality for IMAP migration, counting, and comparison scripts.
 from __future__ import annotations
 
 import imaplib
+import json
 import os
 import re
 import sys
@@ -677,3 +678,25 @@ def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msg
         safe_print(f"Error deleting orphans from {folder_name}: {e}")
 
     return deleted_count
+
+
+def load_manifest(local_path, filename):
+    """Load a manifest JSON file from a backup directory.
+
+    Args:
+        local_path: Directory containing the manifest file
+        filename: Manifest filename (e.g. LABELS_MANIFEST_FILENAME)
+
+    Returns:
+        Parsed manifest dict, or empty dict if not found or invalid.
+    """
+    manifest_path = os.path.join(local_path, filename)
+    if os.path.exists(manifest_path):
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+                safe_print(f"Loaded {filename} with {len(manifest)} entries.")
+                return manifest
+        except Exception as e:
+            safe_print(f"Warning: Could not load {filename}: {e}")
+    return {}

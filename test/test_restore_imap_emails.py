@@ -36,7 +36,7 @@ class TestLoadLabelsManifest:
         manifest_path = tmp_path / "labels_manifest.json"
         manifest_path.write_text(json.dumps(manifest_data))
 
-        result = restore_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert result == manifest_data
 
     def test_load_manifest_new_format(self, tmp_path):
@@ -48,14 +48,14 @@ class TestLoadLabelsManifest:
         manifest_path = tmp_path / "labels_manifest.json"
         manifest_path.write_text(json.dumps(manifest_data))
 
-        result = restore_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert result == manifest_data
         assert "\\Seen" in result["<msg1@test.com>"]["flags"]
         assert result["<msg2@test.com>"]["flags"] == []
 
     def test_load_nonexistent_manifest(self, tmp_path):
         """Test loading when manifest doesn't exist."""
-        result = restore_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert result == {}
 
     def test_load_invalid_json_manifest(self, tmp_path):
@@ -63,7 +63,7 @@ class TestLoadLabelsManifest:
         manifest_path = tmp_path / "labels_manifest.json"
         manifest_path.write_text("not valid json {{{")
 
-        result = restore_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert result == {}
 
 
@@ -351,7 +351,7 @@ Body content.
         manifest_path.write_text(json.dumps(manifest_data))
 
         # Load and verify
-        result = restore_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert len(result) == 2
         assert result["<msg1@test.com>"] == ["INBOX", "Work"]
 

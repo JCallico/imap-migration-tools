@@ -545,21 +545,6 @@ def build_flags_manifest(imap_conn, local_path, folders_to_scan=None, src_conf=N
     return manifest
 
 
-def load_labels_manifest(local_path):
-    """
-    Loads an existing labels manifest from the backup directory.
-    Returns the manifest dict or empty dict if not found.
-    """
-    manifest_path = os.path.join(local_path, MANIFEST_FILENAME)
-    if os.path.exists(manifest_path):
-        try:
-            with open(manifest_path, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {}
-
-
 def delete_orphan_local_files(local_folder_path, server_uids):
     """
     Delete local .eml files that no longer exist on the server.
