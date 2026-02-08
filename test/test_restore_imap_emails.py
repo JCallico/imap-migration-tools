@@ -547,45 +547,6 @@ class TestGetLabelsFromManifest:
         assert result == []
 
 
-class TestLabelToFolder:
-    """Tests for label_to_folder function."""
-
-    def test_inbox_label(self):
-        """Test INBOX label conversion."""
-        result = restore_imap_emails.label_to_folder("INBOX")
-        assert result == "INBOX"
-
-    def test_sent_mail_label(self):
-        """Test Sent Mail label conversion."""
-        result = restore_imap_emails.label_to_folder("Sent Mail")
-        assert result == "[Gmail]/Sent Mail"
-
-    def test_starred_label(self):
-        """Test Starred label conversion."""
-        result = restore_imap_emails.label_to_folder("Starred")
-        assert result == "[Gmail]/Starred"
-
-    def test_drafts_label(self):
-        """Test Drafts label conversion."""
-        result = restore_imap_emails.label_to_folder("Drafts")
-        assert result == "[Gmail]/Drafts"
-
-    def test_important_label(self):
-        """Test Important label conversion."""
-        result = restore_imap_emails.label_to_folder("Important")
-        assert result == "[Gmail]/Important"
-
-    def test_custom_label(self):
-        """Test custom user label (no conversion)."""
-        result = restore_imap_emails.label_to_folder("Work")
-        assert result == "Work"
-
-    def test_nested_label(self):
-        """Test nested user label (no conversion)."""
-        result = restore_imap_emails.label_to_folder("Projects/2024")
-        assert result == "Projects/2024"
-
-
 class TestRestoreE2EHelpers:
     """End-to-end tests for restore helper functions using the mock IMAP server."""
 

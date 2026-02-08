@@ -220,18 +220,6 @@ def get_labels_from_manifest(manifest, message_id):
     return []
 
 
-def label_to_folder(label):
-    """
-    Convert a Gmail label name to an IMAP folder path.
-    """
-    if label == imap_common.FOLDER_INBOX:
-        return imap_common.FOLDER_INBOX
-    elif label in ("Sent Mail", "Starred", "Drafts", "Important"):
-        return f"[Gmail]/{label}"
-    else:
-        return label
-
-
 def process_restore_batch(
     eml_files,
     folder_name,
@@ -300,7 +288,7 @@ def process_restore_batch(
                 remaining_labels = []
 
                 for label in labels:
-                    label_folder = label_to_folder(label)
+                    label_folder = provider_gmail.label_to_folder(label)
                     if label_folder in skip_folders:
                         continue
                     if target_folder is None:
@@ -394,7 +382,7 @@ def process_restore_batch(
             # - Incremental (default): apply labels only for newly uploaded emails
             if apply_labels and remaining_labels and (upload_result == UploadResult.SUCCESS or full_restore):
                 for label in remaining_labels:
-                    label_folder = label_to_folder(label)
+                    label_folder = provider_gmail.label_to_folder(label)
 
                     # Skip if this is the same as the target folder
                     if label_folder == target_folder:
