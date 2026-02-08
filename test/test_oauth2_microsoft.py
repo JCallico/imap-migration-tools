@@ -130,6 +130,26 @@ class TestAcquireToken:
 
             assert result == "test_token"
 
+    def test_custom_authority_url(self):
+        """Test custom authority URL from environment variable."""
+        custom_base = "https://custom.login.example.com"
+        tenant_id = "tenant-123"
+        expected_authority = f"{custom_base}/{tenant_id}"
+
+        with patch.object(oauth2_microsoft, "discover_tenant", return_value=tenant_id):
+            mock_msal = MagicMock()
+            mock_app = MagicMock()
+            mock_app.get_accounts.return_value = []
+            mock_app.initiate_device_flow.return_value = {"user_code": "ABC", "message": "msg"}
+            mock_app.acquire_token_by_device_flow.return_value = {"access_token": "token"}
+            mock_msal.PublicClientApplication.return_value = mock_app
+
+            with patch.dict("sys.modules", {"msal": mock_msal}):
+                with temp_env({"OAUTH2_MICROSOFT_AUTHORITY_BASE_URL": custom_base}):
+                    oauth2_microsoft.acquire_token("client-id", "user@test.com")
+
+            mock_msal.PublicClientApplication.assert_called_with("client-id", authority=expected_authority)
+
     def test_tenant_discovery_failure(self, capsys):
         """Test returns None when tenant discovery fails."""
         with patch.object(oauth2_microsoft, "discover_tenant", return_value=None):
@@ -212,3 +232,59 @@ class TestAcquireToken:
                 result = oauth2_microsoft.acquire_token("client-id", "user@test.com")
 
             assert result is None
+
+
+class TestFetchJsonHttps:
+    """Tests for internal _fetch_json_https function."""
+
+    def test_invalid_host_raises_value_error(self):
+        """Test invalid host raises ValueError."""
+        # Test empty host
+        with pytest.raises(ValueError, match="Invalid host"):
+            oauth2_microsoft._fetch_json_https("", "/path")
+
+        # Test None host
+        with pytest.raises(ValueError, match="Invalid host"):
+            oauth2_microsoft._fetch_json_https(None, "/path")
+
+        # Test host with newline
+        with pytest.raises(ValueError, match="Invalid host"):
+            oauth2_microsoft._fetch_json_https("api.example.com\n", "/path")
+
+    def test_path_normalization(self):
+        """Test path missing leading slash is corrected."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = b'{"key": "value"}'
+
+        mock_conn = MagicMock()
+        mock_conn.getresponse.return_value = mock_response
+
+        with patch("http.client.HTTPSConnection", return_value=mock_conn):
+            # Pass path without '/'
+            result = oauth2_microsoft._fetch_json_https("api.example.com", "my/resource")
+
+            # Check request called with normalized path
+            mock_conn.request.assert_called_with("GET", "/my/resource", headers={"Accept": "application/json"})
+            assert result == {"key": "value"}
+
+    def test_https_ssl_context(self):
+        """Test SSL context is created and passed to HTTPSConnection."""
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read.return_value = b"{}"
+
+        mock_conn = MagicMock()
+        mock_conn.getresponse.return_value = mock_response
+
+        mock_context = MagicMock()
+
+        with patch("ssl.create_default_context", return_value=mock_context) as mock_create_context:
+            with patch("http.client.HTTPSConnection", return_value=mock_conn) as mock_https:
+                oauth2_microsoft._fetch_json_https("example.com", "/")
+
+                # Verify SSL context creation
+                mock_create_context.assert_called_once()
+
+                # Verify context passed to connection
+                mock_https.assert_called_with("example.com", timeout=10, context=mock_context)
