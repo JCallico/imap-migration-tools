@@ -388,13 +388,13 @@ def process_batch(
     dest = imap_session.get_thread_connection(thread_local, "dest", dest_conf)
     if not src or not dest:
         safe_print("Error: Could not establish connections in worker thread.")
-        return
+        return False, 0
 
     try:
         src.select(f'"{folder_name}"', readonly=False)
     except Exception as e:
         safe_print(f"Error selecting folder {folder_name} in worker: {e}")
-        return
+        return False, 0
 
     if not gmail_mode:
         try:
@@ -402,16 +402,26 @@ def process_batch(
             dest.select(f'"{folder_name}"')
         except Exception as e:
             safe_print(f"Error selecting folder {folder_name} in worker: {e}")
-            return
+            return False, 0
 
     # Extract info for cache update if needed
     dest_host = dest_conf.get("host")
     dest_user = dest_conf.get("user")
 
     deleted_count = 0
+    max_uid_processed = 0
 
     for uid in uids:
         uid_str = uid.decode("utf-8") if isinstance(uid, bytes) else str(uid)
+
+        # Track max UID seen in this batch
+        try:
+            uid_int = int(uid_str)
+            if uid_int > max_uid_processed:
+                max_uid_processed = uid_int
+        except ValueError:
+            pass
+
         max_retries = 2
 
         for attempt in range(max_retries):
@@ -419,20 +429,20 @@ def process_batch(
             thread_local.src = src
             if not src_ok:
                 safe_print(f"[{folder_name}] ERROR: Source connection/folder lost for UID {uid_str}")
-                return
+                return False, 0
 
             if not gmail_mode:
                 dest, dest_ok = imap_session.ensure_folder_session(dest, dest_conf, folder_name, readonly=False)
                 thread_local.dest = dest
                 if not dest_ok:
                     safe_print(f"[{folder_name}] ERROR: Dest connection/folder lost for UID {uid_str}")
-                    return
+                    return False, 0
             else:
                 dest = imap_session.ensure_connection(dest, dest_conf)
                 thread_local.dest = dest
                 if not dest:
                     safe_print(f"[{folder_name}] ERROR: Dest connection lost for UID {uid_str}")
-                    return
+                    return False, 0
 
             success, src, dest, deleted = process_single_uid(
                 src,
@@ -472,6 +482,8 @@ def process_batch(
             safe_print(f"[{folder_name}] Expunged {deleted_count} messages from batch.")
         except Exception as e:
             safe_print(f"[{folder_name}] ERROR Expunge: {e}")
+
+    return True, max_uid_processed
 
 
 def migrate_folder(
@@ -546,6 +558,28 @@ def migrate_folder(
         safe_print(f"Skipping {folder_name}: {e}")
         return
 
+    # Get Current UIDVALIDITY (for resume check)
+    current_validity = None
+    try:
+        typ, val_data = src.response("UIDVALIDITY")
+        if val_data:
+            current_validity = int(val_data[0])
+    except Exception:
+        pass
+
+    start_uid = 0
+    if not full_migrate and current_validity and progress_cache_data:
+        try:
+            src_data = restore_cache.get_source_data(progress_cache_data, folder_name)
+            if src_data and src_data.get("uid_validity") == current_validity:
+                start_uid = src_data.get("last_uid", 0) or 0
+                if start_uid > 0:
+                    safe_print(
+                        f"Resuming {folder_name} from Source UID > {start_uid} (UIDVALIDITY: {current_validity})"
+                    )
+        except Exception:
+            pass
+
     # Get UIDs
     # Search for UNDELETED to avoid processing messages marked for deletion but not yet expunged
     resp, data = src.uid("search", None, "UNDELETED")
@@ -555,10 +589,23 @@ def migrate_folder(
     uids = data[0].split()
     total = len(uids)
 
-    if total == 0:
-        safe_print(f"Folder {folder_name} is empty.")
-        # Even if empty, we might need to delete from dest
-        if dest_delete:
+    # Filter UIDs if resuming
+    if start_uid > 0:
+        filtered = []
+        for u in uids:
+            try:
+                if int(u) > start_uid:
+                    filtered.append(u)
+            except ValueError:
+                filtered.append(u)
+        uids = filtered
+        safe_print(f"Filtered to {len(uids)} new UIDs (was {total}).")
+
+    if not uids:
+        safe_print(f"Folder {folder_name} is up to date (no new UIDs).")
+        # Do not perform dest_delete if we filtered or found nothing via resume,
+        # as we don't have the full source picture.
+        if dest_delete and start_uid == 0:
             safe_print("Checking destination for orphan emails to delete...")
             imap_common.delete_orphan_emails(dest, folder_name, set())
         return
@@ -587,9 +634,13 @@ def migrate_folder(
 
     if not uids_to_process:
         safe_print(f"No new messages to migrate in {folder_name}.")
-        if dest_delete and src_msg_ids is not None:
+        # Only support orphan delete if we have full user list (no start_uid resume)
+        if dest_delete and src_msg_ids is not None and start_uid == 0:
             safe_print("Syncing destination: removing emails not in source...")
             imap_common.delete_orphan_emails(dest, folder_name, src_msg_ids, dest_uid_to_msgid)
+        # Still deleting skipped duplicates from source is valid?
+        # Only if we aren't resuming? If skipping duplicates, we found duplicates.
+        # But we return here.
         return
 
     # Create batches from filtered UIDs
@@ -623,12 +674,28 @@ def migrate_folder(
                 )
             )
 
-        # Wait for all batches to complete
-        for future in concurrent.futures.as_completed(futures):
+        # Wait for all batches to complete and update watermark
+        should_update_watermark = True
+
+        for future in futures:
             try:
-                future.result()
+                success, batch_max_uid = future.result()
+                if success:
+                    if should_update_watermark and current_validity and progress_cache_data and batch_max_uid > 0:
+                        restore_cache.record_source_progress(
+                            folder_name=folder_name,
+                            uid_validity=current_validity,
+                            last_uid=batch_max_uid,
+                            progress_cache_path=cache_file,
+                            progress_cache_data=progress_cache_data,
+                            progress_cache_lock=progress_cache_lock,
+                            log_fn=safe_print,
+                        )
+                else:
+                    should_update_watermark = False
             except Exception as e:
                 safe_print(f"Batch Error: {e}")
+                should_update_watermark = False
     except KeyboardInterrupt:
         safe_print("\n\n!!! Migration interrupted by user. Shutting down threads... !!!\n")
         executor.shutdown(wait=False, cancel_futures=True)

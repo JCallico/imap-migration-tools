@@ -252,3 +252,62 @@ def record_progress(
             progress_cache_lock,
             log_fn=log_fn,
         )
+
+
+def get_source_data(
+    cache_data: dict,
+    folder_name: str,
+) -> dict:
+    """Retrieve source tracking data for a folder."""
+    folders = cache_data.get("folders", {})
+    if not isinstance(folders, dict):
+        return {}
+    folder_entry = folders.get(folder_name, {})
+    if not isinstance(folder_entry, dict):
+        return {}
+    return folder_entry.get("source_state", {})
+
+
+def set_source_data(
+    cache_data: dict,
+    folder_name: str,
+    uid_validity: int,
+    last_uid: int,
+) -> None:
+    """Update source tracking data for a folder."""
+    if "folders" not in cache_data or not isinstance(cache_data["folders"], dict):
+        cache_data["folders"] = {}
+
+    if folder_name not in cache_data["folders"] or not isinstance(cache_data["folders"][folder_name], dict):
+        cache_data["folders"][folder_name] = {}
+
+    # Ensure folder entry is a dict
+    if not isinstance(cache_data["folders"][folder_name], dict):
+        cache_data["folders"][folder_name] = {}
+
+    cache_data["folders"][folder_name]["source_state"] = {"uid_validity": uid_validity, "last_uid": last_uid}
+
+
+def record_source_progress(
+    *,
+    folder_name: str,
+    uid_validity: int,
+    last_uid: int,
+    progress_cache_path: str | None,
+    progress_cache_data: dict | None,
+    progress_cache_lock: threading.Lock | None,
+    log_fn: Callable[[str], None] | None = None,
+) -> None:
+    """Record source progress (last processed UID) to the cache."""
+    if progress_cache_path and progress_cache_data is not None and progress_cache_lock is not None:
+        with progress_cache_lock:
+            set_source_data(progress_cache_data, folder_name, uid_validity, last_uid)
+
+        # Force save to ensure watermark is persistent
+        maybe_save_dest_index_cache(
+            progress_cache_path,
+            progress_cache_data,
+            progress_cache_lock,
+            force=True,
+            log_fn=log_fn,
+        )
