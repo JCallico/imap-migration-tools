@@ -59,7 +59,6 @@ Examples:
 
 import argparse
 import os
-import sys
 
 import imap_common
 import imap_oauth2
@@ -205,41 +204,20 @@ def main():
     DEST_HOST = args.dest_host
     DEST_USER = args.dest_user
 
-    src_use_oauth2 = bool(args.src_client_id) and not src_is_local
-    dest_use_oauth2 = bool(args.dest_client_id) and not dest_is_local
-
     # Acquire OAuth2 tokens if configured
     src_oauth2_token = None
     src_oauth2_provider = None
-    if src_use_oauth2:
-        src_oauth2_provider = imap_oauth2.detect_oauth2_provider(SRC_HOST)
-        if not src_oauth2_provider:
-            print(f"Error: Could not detect OAuth2 provider from host '{SRC_HOST}'.")
-            sys.exit(1)
-        print(f"Acquiring OAuth2 token for source ({src_oauth2_provider})...")
-        src_oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
-            src_oauth2_provider, args.src_client_id, SRC_USER, args.src_client_secret
+    if not src_is_local and args.src_client_id:
+        src_oauth2_token, src_oauth2_provider = imap_oauth2.acquire_token(
+            SRC_HOST, args.src_client_id, SRC_USER, args.src_client_secret, "source"
         )
-        if not src_oauth2_token:
-            print("Error: Failed to acquire OAuth2 token for source.")
-            sys.exit(1)
-        print("Source OAuth2 token acquired successfully.\n")
 
     dest_oauth2_token = None
     dest_oauth2_provider = None
-    if dest_use_oauth2:
-        dest_oauth2_provider = imap_oauth2.detect_oauth2_provider(DEST_HOST)
-        if not dest_oauth2_provider:
-            print(f"Error: Could not detect OAuth2 provider from host '{DEST_HOST}'.")
-            sys.exit(1)
-        print(f"Acquiring OAuth2 token for destination ({dest_oauth2_provider})...")
-        dest_oauth2_token = imap_oauth2.acquire_oauth2_token_for_provider(
-            dest_oauth2_provider, args.dest_client_id, DEST_USER, args.dest_client_secret
+    if not dest_is_local and args.dest_client_id:
+        dest_oauth2_token, dest_oauth2_provider = imap_oauth2.acquire_token(
+            DEST_HOST, args.dest_client_id, DEST_USER, args.dest_client_secret, "destination"
         )
-        if not dest_oauth2_token:
-            print("Error: Failed to acquire OAuth2 token for destination.")
-            sys.exit(1)
-        print("Destination OAuth2 token acquired successfully.\n")
 
     print("\n--- Configuration Summary ---")
     if src_is_local:
@@ -247,18 +225,14 @@ def main():
     else:
         print(f"Source Host     : {args.src_host}")
         print(f"Source User     : {args.src_user}")
-        print(
-            f"Source Auth     : {'OAuth2/' + src_oauth2_provider + ' (XOAUTH2)' if src_use_oauth2 else 'Basic (password)'}"
-        )
+        print(f"Source Auth     : {imap_oauth2.auth_description(src_oauth2_provider)}")
 
     if dest_is_local:
         print(f"Destination (Local): {args.dest_path}")
     else:
         print(f"Destination Host: {args.dest_host}")
         print(f"Destination User: {args.dest_user}")
-        print(
-            f"Destination Auth: {'OAuth2/' + dest_oauth2_provider + ' (XOAUTH2)' if dest_use_oauth2 else 'Basic (password)'}"
-        )
+        print(f"Destination Auth: {imap_oauth2.auth_description(dest_oauth2_provider)}")
     print("-----------------------------\n")
 
     src = None
