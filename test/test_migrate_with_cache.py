@@ -10,6 +10,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import imap_common
+import imap_session
 import migrate_imap_emails
 import restore_cache
 from conftest import make_mock_connection
@@ -177,7 +178,9 @@ class TestMigrationCache:
         src.login("src", "p")
         dest.login("dest", "p")
 
-        monkeypatch.setattr(migrate_imap_emails, "get_thread_connections", lambda _src_conf, _dest_conf: (src, dest))
+        monkeypatch.setattr(
+            imap_session, "get_thread_connection", lambda _store, key, _conf: src if key == "src" else dest
+        )
 
         migrate_imap_emails.MAX_WORKERS = 1
         migrate_imap_emails.BATCH_SIZE = 1
@@ -222,7 +225,9 @@ class TestMigrationCache:
         src.login("src", "p")
         dest.login("dest", "p")
 
-        monkeypatch.setattr(migrate_imap_emails, "get_thread_connections", lambda _src_conf, _dest_conf: (src, dest))
+        monkeypatch.setattr(
+            imap_session, "get_thread_connection", lambda _store, key, _conf: src if key == "src" else dest
+        )
 
         migrate_imap_emails.MAX_WORKERS = 1
         migrate_imap_emails.BATCH_SIZE = 1

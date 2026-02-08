@@ -72,17 +72,6 @@ thread_local = threading.local()
 safe_print = imap_common.safe_print
 
 
-def get_thread_connection(src_conf):
-    # Backwards-compatible: tests and some internal call sites may still pass
-    # (host, user, password) tuples. Normalize to the dict form used by
-    # imap_common.get_imap_connection_from_conf().
-    if isinstance(src_conf, tuple) and len(src_conf) == 3:
-        src_conf = {"host": src_conf[0], "user": src_conf[1], "password": src_conf[2]}
-
-    thread_local.src = imap_session.ensure_connection(getattr(thread_local, "src", None), src_conf)
-    return thread_local.src
-
-
 def process_single_uid(src, uid, folder_name, local_folder_path):
     """
     Fetch and save a single email by UID.
@@ -148,10 +137,7 @@ def process_single_uid(src, uid, folder_name, local_folder_path):
 
 
 def process_batch(uids, folder_name, src_conf, local_folder_path):
-    if isinstance(src_conf, tuple) and len(src_conf) == 3:
-        src_conf = {"host": src_conf[0], "user": src_conf[1], "password": src_conf[2]}
-
-    src = get_thread_connection(src_conf)
+    src = imap_session.get_thread_connection(thread_local, "src", src_conf)
     if not src:
         safe_print("Error: Could not establish connection for batch.")
         return

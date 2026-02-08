@@ -83,12 +83,6 @@ thread_local = threading.local()
 safe_print = imap_common.safe_print
 
 
-def get_thread_connection(dest_conf):
-    """Get or create a thread-local IMAP connection."""
-    thread_local.dest = imap_session.ensure_connection(getattr(thread_local, "dest", None), dest_conf)
-    return thread_local.dest
-
-
 def load_labels_manifest(local_path):
     """
     Loads the labels manifest from the backup directory.
@@ -298,7 +292,7 @@ def process_restore_batch(
         apply_labels: Whether to apply Gmail labels from manifest
         apply_flags: Whether to apply IMAP flags from manifest
     """
-    dest = get_thread_connection(dest_conf)
+    dest = imap_session.get_thread_connection(thread_local, "dest", dest_conf)
     if not dest:
         safe_print("Error: Could not establish connection for batch.")
         return
@@ -307,7 +301,7 @@ def process_restore_batch(
 
     for file_path, filename in eml_files:
         # Proactively refresh token if needed
-        dest = get_thread_connection(dest_conf)
+        dest = imap_session.get_thread_connection(thread_local, "dest", dest_conf)
         if not dest:
             safe_print(f"ERROR: Connection lost for {filename}")
             return

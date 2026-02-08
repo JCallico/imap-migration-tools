@@ -160,12 +160,6 @@ def filter_preservable_flags(flags_str):
     return " ".join(flags) if flags else None
 
 
-def get_thread_connections(src_conf, dest_conf):
-    thread_local.src = imap_session.ensure_connection(getattr(thread_local, "src", None), src_conf)
-    thread_local.dest = imap_session.ensure_connection(getattr(thread_local, "dest", None), dest_conf)
-    return thread_local.src, thread_local.dest
-
-
 def process_single_uid(
     src,
     dest,
@@ -383,7 +377,8 @@ def process_batch(
     progress_cache_data: Optional[dict] = None,
     progress_cache_lock: Optional[threading.Lock] = None,
 ):
-    src, dest = get_thread_connections(src_conf, dest_conf)
+    src = imap_session.get_thread_connection(thread_local, "src", src_conf)
+    dest = imap_session.get_thread_connection(thread_local, "dest", dest_conf)
     if not src or not dest:
         safe_print("Error: Could not establish connections in worker thread.")
         return
