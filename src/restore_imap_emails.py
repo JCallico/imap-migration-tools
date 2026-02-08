@@ -280,27 +280,7 @@ def process_restore_batch(
 
             # Determine target folder and remaining labels
             if gmail_mode:
-                # In Gmail mode, upload to first valid label folder
-                # Skip system folders we can't upload to
-                skip_folders = {"[Gmail]/All Mail", "[Gmail]/Spam", "[Gmail]/Trash"}
-
-                target_folder = None
-                remaining_labels = []
-
-                for label in labels:
-                    label_folder = provider_gmail.label_to_folder(label)
-                    if label_folder in skip_folders:
-                        continue
-                    if target_folder is None:
-                        target_folder = label_folder
-                    else:
-                        remaining_labels.append(label)
-
-                # If no valid label found, use a dedicated label folder as fallback.
-                # This avoids placing non-draft messages into Gmail Drafts.
-                if target_folder is None:
-                    target_folder = imap_common.FOLDER_RESTORED_UNLABELED
-                    remaining_labels = []
+                target_folder, remaining_labels = provider_gmail.resolve_target(labels)
             else:
                 target_folder = folder_name
                 remaining_labels = labels

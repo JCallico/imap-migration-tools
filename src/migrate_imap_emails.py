@@ -251,22 +251,7 @@ def process_single_uid(
             labels = sorted(label_index.get(msg_id, set()))
 
         if apply_labels:
-            skip_folders = {provider_gmail.GMAIL_ALL_MAIL, provider_gmail.GMAIL_SPAM, provider_gmail.GMAIL_TRASH}
-            target_folder = None
-            remaining_labels = []
-
-            for label in labels:
-                label_folder = provider_gmail.label_to_folder(label)
-                if label_folder in skip_folders:
-                    continue
-                if target_folder is None:
-                    target_folder = label_folder
-                else:
-                    remaining_labels.append(label)
-
-            if target_folder is None:
-                target_folder = imap_common.FOLDER_RESTORED_UNLABELED
-                remaining_labels = []
+            target_folder, remaining_labels = provider_gmail.resolve_target(labels)
         else:
             target_folder = folder_name
 
