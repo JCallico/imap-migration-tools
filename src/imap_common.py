@@ -667,8 +667,8 @@ def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msg
             try:
                 imap_conn.uid(CMD_STORE, uid, OP_ADD_FLAGS, FLAG_DELETED_LITERAL)
                 deleted_count += 1
-            except Exception:
-                pass
+            except Exception as e:
+                safe_print(f"Warning: Failed to mark UID {uid} as deleted in folder {folder_name}: {e}")
 
         if deleted_count > 0:
             imap_conn.expunge()
