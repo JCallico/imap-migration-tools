@@ -7,6 +7,7 @@ Shared functionality for IMAP migration, counting, and comparison scripts.
 from __future__ import annotations
 
 import imaplib
+import json
 import os
 import re
 import sys
@@ -580,3 +581,122 @@ def detect_trash_folder(imap_conn):
             return candidate
 
     return None
+
+
+def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
+    """Sync flags on an existing email in the given folder.
+
+    Finds the email by Message-ID and adds any missing flags.
+
+    Args:
+        imap_conn: IMAP connection
+        folder_name: Folder containing the email
+        message_id: Message-ID header value
+        flags: Space-separated flags string like "\\Seen \\Flagged"
+        size: Email size for verification
+    """
+    if not flags or not message_id:
+        return
+
+    try:
+        imap_conn.select(f'"{folder_name}"')
+
+        clean_id = message_id.strip("<>").replace('"', '\\"')
+        typ, data = imap_conn.search(None, f'HEADER Message-ID "{clean_id}"')
+        if typ != "OK" or not data or not data[0]:
+            return
+
+        msg_num = data[0].split()[0]
+
+        flag_list = flags.split()
+        if not flag_list:
+            return
+
+        typ, flag_data = imap_conn.fetch(msg_num, "(FLAGS)")
+        if typ != "OK" or not flag_data:
+            return
+
+        current_flags = set()
+        for item in flag_data:
+            if isinstance(item, tuple) and item[0]:
+                resp_str = item[0].decode("utf-8", errors="ignore")
+                match = re.search(r"FLAGS\s+\((.*?)\)", resp_str)
+                if match:
+                    current_flags.update(match.group(1).split())
+
+        current_flags_lower = {f.lower() for f in current_flags}
+        flags_to_add = [f for f in flag_list if f.lower() not in current_flags_lower]
+
+        if flags_to_add:
+            flags_str = " ".join(flags_to_add)
+            typ, _ = imap_conn.store(msg_num, "+FLAGS", f"({flags_str})")
+            if typ == "OK":
+                for flag in flags_to_add:
+                    safe_print(f"  -> Synced flag: {flag}")
+
+    except Exception as e:
+        safe_print(f"Error syncing flags for {message_id} in {folder_name}: {e}")
+
+
+def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msgid=None):
+    """Delete emails from a folder that don't exist in the source set.
+
+    Returns count of deleted emails.
+
+    Args:
+        imap_conn: IMAP connection
+        folder_name: Folder to delete orphans from
+        source_msg_ids: Set of Message-IDs that should be kept
+        dest_uid_to_msgid: Optional pre-fetched dict of UID -> Message-ID.
+            If None, fetches from the server.
+    """
+    deleted_count = 0
+    try:
+        imap_conn.select(f'"{folder_name}"', readonly=False)
+
+        if dest_uid_to_msgid is None:
+            dest_uid_to_msgid = get_message_ids_in_folder(imap_conn)
+
+        uids_to_delete = []
+        for uid, msg_id in dest_uid_to_msgid.items():
+            if msg_id not in source_msg_ids:
+                uid_str = uid.decode() if isinstance(uid, bytes) else str(uid)
+                uids_to_delete.append(uid_str)
+
+        for uid in uids_to_delete:
+            try:
+                imap_conn.uid(CMD_STORE, uid, OP_ADD_FLAGS, FLAG_DELETED_LITERAL)
+                deleted_count += 1
+            except Exception as e:
+                safe_print(f"Warning: Failed to mark UID {uid} as deleted in folder {folder_name}: {e}")
+
+        if deleted_count > 0:
+            imap_conn.expunge()
+            safe_print(f"[{folder_name}] Deleted {deleted_count} orphan emails from destination")
+
+    except Exception as e:
+        safe_print(f"Error deleting orphans from {folder_name}: {e}")
+
+    return deleted_count
+
+
+def load_manifest(local_path, filename):
+    """Load a manifest JSON file from a backup directory.
+
+    Args:
+        local_path: Directory containing the manifest file
+        filename: Manifest filename (e.g. "labels_manifest.json")
+
+    Returns:
+        Parsed manifest dict, or empty dict if not found or invalid.
+    """
+    manifest_path = os.path.join(local_path, filename)
+    if os.path.exists(manifest_path):
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+                safe_print(f"Loaded {filename} with {len(manifest)} entries.")
+                return manifest
+        except Exception as e:
+            safe_print(f"Warning: Could not load {filename}: {e}")
+    return {}

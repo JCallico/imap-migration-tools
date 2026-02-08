@@ -36,7 +36,7 @@ class TestLoadLabelsManifest:
         manifest_path = tmp_path / "labels_manifest.json"
         manifest_path.write_text(json.dumps(manifest_data))
 
-        result = restore_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert result == manifest_data
 
     def test_load_manifest_new_format(self, tmp_path):
@@ -48,14 +48,14 @@ class TestLoadLabelsManifest:
         manifest_path = tmp_path / "labels_manifest.json"
         manifest_path.write_text(json.dumps(manifest_data))
 
-        result = restore_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert result == manifest_data
         assert "\\Seen" in result["<msg1@test.com>"]["flags"]
         assert result["<msg2@test.com>"]["flags"] == []
 
     def test_load_nonexistent_manifest(self, tmp_path):
         """Test loading when manifest doesn't exist."""
-        result = restore_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert result == {}
 
     def test_load_invalid_json_manifest(self, tmp_path):
@@ -63,7 +63,7 @@ class TestLoadLabelsManifest:
         manifest_path = tmp_path / "labels_manifest.json"
         manifest_path.write_text("not valid json {{{")
 
-        result = restore_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert result == {}
 
 
@@ -351,7 +351,7 @@ Body content.
         manifest_path.write_text(json.dumps(manifest_data))
 
         # Load and verify
-        result = restore_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert len(result) == 2
         assert result["<msg1@test.com>"] == ["INBOX", "Work"]
 
@@ -547,45 +547,6 @@ class TestGetLabelsFromManifest:
         assert result == []
 
 
-class TestLabelToFolder:
-    """Tests for label_to_folder function."""
-
-    def test_inbox_label(self):
-        """Test INBOX label conversion."""
-        result = restore_imap_emails.label_to_folder("INBOX")
-        assert result == "INBOX"
-
-    def test_sent_mail_label(self):
-        """Test Sent Mail label conversion."""
-        result = restore_imap_emails.label_to_folder("Sent Mail")
-        assert result == "[Gmail]/Sent Mail"
-
-    def test_starred_label(self):
-        """Test Starred label conversion."""
-        result = restore_imap_emails.label_to_folder("Starred")
-        assert result == "[Gmail]/Starred"
-
-    def test_drafts_label(self):
-        """Test Drafts label conversion."""
-        result = restore_imap_emails.label_to_folder("Drafts")
-        assert result == "[Gmail]/Drafts"
-
-    def test_important_label(self):
-        """Test Important label conversion."""
-        result = restore_imap_emails.label_to_folder("Important")
-        assert result == "[Gmail]/Important"
-
-    def test_custom_label(self):
-        """Test custom user label (no conversion)."""
-        result = restore_imap_emails.label_to_folder("Work")
-        assert result == "Work"
-
-    def test_nested_label(self):
-        """Test nested user label (no conversion)."""
-        result = restore_imap_emails.label_to_folder("Projects/2024")
-        assert result == "Projects/2024"
-
-
 class TestRestoreE2EHelpers:
     """End-to-end tests for restore helper functions using the mock IMAP server."""
 
@@ -649,7 +610,7 @@ class TestRestoreE2EHelpers:
         conn = imaplib.IMAP4("localhost", port)
         conn.login("user", "pass")
 
-        restore_imap_emails.sync_flags_on_existing(conn, "INBOX", "<flag@test>", "\\Seen \\Flagged", 1000)
+        imap_common.sync_flags_on_existing(conn, "INBOX", "<flag@test>", "\\Seen \\Flagged", 1000)
 
         conn.select('"INBOX"')
         resp, data = conn.search(None, 'HEADER Message-ID "<flag@test>"')
@@ -711,7 +672,7 @@ class TestDestDeleteRestoreFunctionality:
         # Local backup only has one email
         local_msg_ids = {"<keep@test>"}
 
-        deleted = restore_imap_emails.delete_orphan_emails_from_dest(conn, "INBOX", local_msg_ids)
+        deleted = imap_common.delete_orphan_emails(conn, "INBOX", local_msg_ids)
 
         assert deleted == 2
         # Verify only 1 email remains
@@ -739,7 +700,7 @@ class TestDestDeleteRestoreFunctionality:
         # Empty local backup
         local_msg_ids = set()
 
-        deleted = restore_imap_emails.delete_orphan_emails_from_dest(conn, "INBOX", local_msg_ids)
+        deleted = imap_common.delete_orphan_emails(conn, "INBOX", local_msg_ids)
 
         assert deleted == 2
         assert len(server.folders["INBOX"]) == 0
@@ -765,7 +726,7 @@ class TestDestDeleteRestoreFunctionality:
         # Local has both emails
         local_msg_ids = {"<e1@test>", "<e2@test>"}
 
-        deleted = restore_imap_emails.delete_orphan_emails_from_dest(conn, "INBOX", local_msg_ids)
+        deleted = imap_common.delete_orphan_emails(conn, "INBOX", local_msg_ids)
 
         assert deleted == 0
         assert len(server.folders["INBOX"]) == 2

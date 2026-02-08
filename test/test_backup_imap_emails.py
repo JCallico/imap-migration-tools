@@ -18,6 +18,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import backup_imap_emails
+import imap_common
 import provider_gmail
 from conftest import make_single_mock_connection
 
@@ -276,7 +277,7 @@ class TestGmailLabelsPreservation:
 
     def test_load_labels_manifest_nonexistent(self, tmp_path):
         """Test loading manifest when file doesn't exist."""
-        result = backup_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert result == {}
 
     def test_load_labels_manifest_existing(self, tmp_path):
@@ -290,7 +291,7 @@ class TestGmailLabelsPreservation:
         manifest_path = tmp_path / "labels_manifest.json"
         manifest_path.write_text(json.dumps(manifest_data))
 
-        result = backup_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert result == manifest_data
 
     def test_load_labels_manifest_invalid_json(self, tmp_path):
@@ -298,7 +299,7 @@ class TestGmailLabelsPreservation:
         manifest_path = tmp_path / "labels_manifest.json"
         manifest_path.write_text("not valid json {{{")
 
-        result = backup_imap_emails.load_labels_manifest(str(tmp_path))
+        result = imap_common.load_manifest(str(tmp_path), "labels_manifest.json")
         assert result == {}
 
     def test_get_message_ids_in_folder(self, single_mock_server):
