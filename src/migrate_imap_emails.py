@@ -160,6 +160,28 @@ def filter_preservable_flags(flags_str):
     return " ".join(flags) if flags else None
 
 
+def pre_filter_uids(src, uids, dest_msg_ids, folder_name):
+    """Filter out UIDs whose Message-IDs already exist in the destination.
+
+    Returns:
+        Tuple of (uids_to_process, src_msg_ids, skipped_duplicate_uids)
+    """
+    safe_print(f"Pre-fetching source Message-IDs for {folder_name}...")
+    src_uid_to_msgid = imap_common.get_uid_to_message_id_map(src, uids)
+    src_msg_ids = set(src_uid_to_msgid.values())
+
+    uids_to_process = []
+    skipped_duplicate_uids = []
+    for uid in uids:
+        msg_id = src_uid_to_msgid.get(uid)
+        if msg_id not in dest_msg_ids:
+            uids_to_process.append(uid)
+        else:
+            skipped_duplicate_uids.append(uid)
+    safe_print(f"Skipping {len(skipped_duplicate_uids)} duplicates, {len(uids_to_process)} to migrate.")
+    return uids_to_process, src_msg_ids, skipped_duplicate_uids
+
+
 def process_single_uid(
     src,
     dest,
@@ -574,20 +596,7 @@ def migrate_folder(
     pre_filtered = False
     if not gmail_mode and dest_msg_ids is not None and not preserve_flags:
         pre_filtered = True
-        safe_print(f"Pre-fetching source Message-IDs for {folder_name}...")
-        # Use get_uid_to_message_id_map directly since we already have UIDs from folder select
-        src_uid_to_msgid = imap_common.get_uid_to_message_id_map(src, uids)
-        src_msg_ids = set(src_uid_to_msgid.values())
-
-        # Filter to only UIDs that need migration (not already in destination)
-        uids_to_process = []
-        for uid in uids:
-            msg_id = src_uid_to_msgid.get(uid)
-            if msg_id not in dest_msg_ids:
-                uids_to_process.append(uid)
-            else:
-                skipped_duplicate_uids.append(uid)
-        safe_print(f"Skipping {len(skipped_duplicate_uids)} duplicates, {len(uids_to_process)} to migrate.")
+        uids_to_process, src_msg_ids, skipped_duplicate_uids = pre_filter_uids(src, uids, dest_msg_ids, folder_name)
     elif dest_delete and gmail_mode:
         safe_print("Warning: --dest-delete is not supported in --gmail-mode; ignoring.")
 

@@ -479,6 +479,21 @@ def get_local_message_ids(local_folder_path):
     return message_ids
 
 
+def pre_filter_eml_files(eml_files, dest_msg_ids):
+    """Filter out .eml files whose Message-IDs already exist in the destination."""
+    safe_print("Pre-filtering duplicates...")
+    files_to_restore = []
+    skipped = 0
+    for file_path, filename in eml_files:
+        msg_id = imap_common.extract_message_id_from_eml(file_path)
+        if msg_id and msg_id in dest_msg_ids:
+            skipped += 1
+        else:
+            files_to_restore.append((file_path, filename))
+    safe_print(f"Skipping {skipped} duplicates, {len(files_to_restore)} to restore.")
+    return files_to_restore
+
+
 def restore_folder(
     folder_name,
     local_folder_path,
@@ -572,16 +587,7 @@ def restore_folder(
 
         # Pre-filter files to skip duplicates
         if dest_msg_ids:
-            safe_print("Pre-filtering duplicates...")
-            files_to_restore = []
-            skipped = 0
-            for file_path, filename in eml_files:
-                msg_id = imap_common.extract_message_id_from_eml(file_path)
-                if msg_id and msg_id in dest_msg_ids:
-                    skipped += 1
-                else:
-                    files_to_restore.append((file_path, filename))
-            safe_print(f"Skipping {skipped} duplicates, {len(files_to_restore)} to restore.")
+            files_to_restore = pre_filter_eml_files(eml_files, dest_msg_ids)
 
     if not files_to_restore:
         safe_print("No new emails to restore.")
