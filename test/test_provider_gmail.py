@@ -10,9 +10,7 @@ Tests cover:
 
 import os
 import sys
-from unittest.mock import MagicMock
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
@@ -185,10 +183,10 @@ class TestBuildGmailLabelIndex:
 
         import imap_common
 
-        with pytest.MonkeyPatch.context() as m:
-            m.setattr(imap_common, "list_selectable_folders", mock_list_folders)
-            m.setattr(imap_common, "get_message_ids_in_folder", mock_get_message_ids)
-
+        with (
+            patch.object(imap_common, "list_selectable_folders", mock_list_folders),
+            patch.object(imap_common, "get_message_ids_in_folder", mock_get_message_ids),
+        ):
             result = provider_gmail.build_gmail_label_index(mock_conn, mock_safe_print)
 
         # Verify the index contains the expected mappings
@@ -225,10 +223,10 @@ class TestBuildGmailLabelIndex:
 
         import imap_common
 
-        with pytest.MonkeyPatch.context() as m:
-            m.setattr(imap_common, "list_selectable_folders", mock_list_folders)
-            m.setattr(imap_common, "get_message_ids_in_folder", mock_get_message_ids)
-
+        with (
+            patch.object(imap_common, "list_selectable_folders", mock_list_folders),
+            patch.object(imap_common, "get_message_ids_in_folder", mock_get_message_ids),
+        ):
             result = provider_gmail.build_gmail_label_index(mock_conn, mock_safe_print)
 
         # Should only have the Work label, system folders should be excluded
@@ -255,10 +253,10 @@ class TestBuildGmailLabelIndex:
 
         import imap_common
 
-        with pytest.MonkeyPatch.context() as m:
-            m.setattr(imap_common, "list_selectable_folders", mock_list_folders)
-            m.setattr(imap_common, "get_message_ids_in_folder", mock_get_message_ids)
-
+        with (
+            patch.object(imap_common, "list_selectable_folders", mock_list_folders),
+            patch.object(imap_common, "get_message_ids_in_folder", mock_get_message_ids),
+        ):
             # Should not raise, should continue and build partial index
             result = provider_gmail.build_gmail_label_index(mock_conn, mock_safe_print)
 

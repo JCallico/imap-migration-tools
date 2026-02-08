@@ -9,6 +9,7 @@ Requires the 'msal' package: pip install msal
 
 import http.client
 import json
+import os
 import re
 import ssl
 import sys
@@ -20,14 +21,32 @@ _tenant_cache = {}  # domain -> tenant_id
 
 
 def _fetch_json_https(host, path, timeout=10):
-    """Fetch JSON from an HTTPS endpoint."""
+    """Fetch JSON from an HTTP(S) endpoint."""
     if not host or any(ch in host for ch in "\r\n"):
         raise ValueError("Invalid host")
     if not path.startswith("/"):
         path = f"/{path}"
 
-    context = ssl.create_default_context()
-    conn = http.client.HTTPSConnection(host, timeout=timeout, context=context)
+    if host.startswith("http://") or host.startswith("https://"):
+        parsed = urllib.parse.urlparse(host)
+        if not parsed.hostname:
+            raise ValueError("Invalid host")
+        host = parsed.hostname
+        if parsed.port:
+            host = f"{host}:{parsed.port}"
+        base_path = parsed.path.rstrip("/")
+        if base_path:
+            path = f"{base_path}{path}"
+
+        use_https = parsed.scheme == "https"
+    else:
+        use_https = True
+
+    if use_https:
+        context = ssl.create_default_context()
+        conn = http.client.HTTPSConnection(host, timeout=timeout, context=context)
+    else:
+        conn = http.client.HTTPConnection(host, timeout=timeout)
     try:
         conn.request("GET", path, headers={"Accept": "application/json"})
         response = conn.getresponse()
@@ -59,9 +78,10 @@ def discover_tenant(email):
     domain_quoted = urllib.parse.quote(domain, safe=".-")
     path = f"/{domain_quoted}/.well-known/openid-configuration"
 
+    discovery_host = os.getenv("OAUTH2_MICROSOFT_DISCOVERY_URL") or "login.microsoftonline.com"
     try:
-        data = _fetch_json_https("login.microsoftonline.com", path, timeout=10)
-    except (OSError, http.client.HTTPException, json.JSONDecodeError, RuntimeError, ValueError) as e:
+        data = _fetch_json_https(discovery_host, path, timeout=10)
+    except (OSError, http.client.HTTPException, RuntimeError, ValueError) as e:
         print(f"Error: Could not discover Microsoft tenant for domain '{domain}': {e}")
         return None
 
@@ -95,7 +115,11 @@ def acquire_token(client_id, email):
         print("Error: 'msal' package is required for Microsoft OAuth2. Install it with: pip install msal")
         sys.exit(1)
 
-    authority = f"https://login.microsoftonline.com/{tenant_id}"
+    authority_base = os.getenv("OAUTH2_MICROSOFT_AUTHORITY_BASE_URL")
+    if authority_base:
+        authority = f"{authority_base.rstrip('/')}/{tenant_id}"
+    else:
+        authority = f"https://login.microsoftonline.com/{tenant_id}"
     scopes = ["https://outlook.office365.com/IMAP.AccessAsUser.All"]
 
     # Reuse cached MSAL app so acquire_token_silent can access refresh tokens

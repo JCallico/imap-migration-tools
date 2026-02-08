@@ -42,6 +42,12 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                     self.wfile.write(b"* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n")
                     self.send_response(tag, "OK CAPABILITY completed")
 
+                elif cmd == "AUTHENTICATE":
+                    # Minimal XOAUTH2 support for tests.
+                    self.wfile.write(b"+ \r\n")
+                    _ = self.rfile.readline()
+                    self.send_response(tag, "OK AUTHENTICATE completed")
+
                 elif cmd == "LIST":
                     for folder in self.current_folders:
                         self.wfile.write(f'* LIST (\\HasNoChildren) "/" "{folder}"\r\n'.encode())

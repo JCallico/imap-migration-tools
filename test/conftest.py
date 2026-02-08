@@ -7,6 +7,7 @@ import os
 import socket
 import sys
 import time
+from contextlib import contextmanager
 
 import pytest
 
@@ -15,6 +16,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../tools")))
 
 from mock_imap_server import start_server_thread
+from mock_oauth_server import start_server_thread as start_oauth_server_thread
 
 
 def get_free_port():
@@ -92,10 +94,35 @@ def single_mock_server():
         thread.join(timeout=2)
 
 
+@contextmanager
+def temp_env(env):
+    original = os.environ.copy()
+    os.environ.clear()
+    os.environ.update(env)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(original)
+
+
+@contextmanager
+def temp_argv(args):
+    original = sys.argv[:]
+    sys.argv = list(args)
+    try:
+        yield
+    finally:
+        sys.argv = original
+
+
 @pytest.fixture(autouse=True)
-def clean_sys_argv(monkeypatch):
+def clean_sys_argv():
     """Ensure sys.argv is clean for all tests."""
-    monkeypatch.setattr(sys, "argv", ["test_script.py"])
+    original = sys.argv[:]
+    sys.argv = ["test_script.py"]
+    yield
+    sys.argv = original
 
 
 def make_mock_connection(src_port, dest_port, src_user="src_user", dest_user="dest_user"):
@@ -111,7 +138,7 @@ def make_mock_connection(src_port, dest_port, src_user="src_user", dest_user="de
         else:
             raise ValueError(f"Unknown user: {user}")
         c = imaplib.IMAP4("localhost", port)
-        c.login(user, pwd)
+        c.login(user, pwd or "")
         return c
 
     return mock_conn
@@ -124,7 +151,31 @@ def make_single_mock_connection(port):
 
     def mock_conn(host, user, pwd, oauth2_token=None):
         c = imaplib.IMAP4("localhost", port)
-        c.login(user, pwd)
+        c.login(user, pwd or "")
         return c
 
     return mock_conn
+
+
+@pytest.fixture
+def mock_oauth_server():
+    """Starts a mock OAuth2 server for token and discovery endpoints."""
+    thread, server = start_oauth_server_thread(0)
+    host, port = server.server_address
+    base_url = f"http://{host}:{port}"
+
+    yield base_url
+
+    server.shutdown()
+    thread.join(timeout=2)
+
+
+__all__ = [
+    "mock_server_factory",
+    "single_mock_server",
+    "make_mock_connection",
+    "make_single_mock_connection",
+    "mock_oauth_server",
+    "temp_env",
+    "temp_argv",
+]
