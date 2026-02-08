@@ -48,7 +48,6 @@ Gmail Labels Restoration:
 
 import argparse
 import concurrent.futures
-import json
 import os
 import sys
 import threading
@@ -83,46 +82,6 @@ thread_local = threading.local()
 safe_print = imap_common.safe_print
 
 
-def get_thread_connection(dest_conf):
-    """Get or create a thread-local IMAP connection."""
-    thread_local.dest = imap_session.ensure_connection(getattr(thread_local, "dest", None), dest_conf)
-    return thread_local.dest
-
-
-def load_labels_manifest(local_path):
-    """
-    Loads the labels manifest from the backup directory.
-    Returns the manifest dict or empty dict if not found.
-    """
-    manifest_path = os.path.join(local_path, "labels_manifest.json")
-    if os.path.exists(manifest_path):
-        try:
-            with open(manifest_path, encoding="utf-8") as f:
-                manifest = json.load(f)
-                safe_print(f"Loaded labels manifest with {len(manifest)} entries.")
-                return manifest
-        except Exception as e:
-            safe_print(f"Warning: Could not load labels manifest: {e}")
-    return {}
-
-
-def load_flags_manifest(local_path):
-    """
-    Loads the flags manifest from the backup directory.
-    Returns the manifest dict or empty dict if not found.
-    """
-    manifest_path = os.path.join(local_path, "flags_manifest.json")
-    if os.path.exists(manifest_path):
-        try:
-            with open(manifest_path, encoding="utf-8") as f:
-                manifest = json.load(f)
-                safe_print(f"Loaded flags manifest with {len(manifest)} entries.")
-                return manifest
-        except Exception as e:
-            safe_print(f"Warning: Could not load flags manifest: {e}")
-    return {}
-
-
 def get_flags_from_manifest(manifest, message_id):
     """
     Extract IMAP flags string from manifest entry.
@@ -139,67 +98,6 @@ def get_flags_from_manifest(manifest, message_id):
             return " ".join(flags)
 
     return None
-
-
-def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
-    """
-    Sync flags on an existing email in the given folder.
-    Finds the email by Message-ID and updates its flags.
-
-    Args:
-        imap_conn: IMAP connection
-        folder_name: Folder containing the email
-        message_id: Message-ID header value
-        flags: Space-separated flags string like "\\Seen \\Flagged"
-        size: Email size for verification
-    """
-    try:
-        # Select folder
-        imap_conn.select(f'"{folder_name}"')
-
-        # Search for the message by Message-ID
-        search_id = message_id.strip("<>")
-        resp, data = imap_conn.search(None, f'HEADER Message-ID "{search_id}"')
-
-        if resp != "OK" or not data[0]:
-            return
-
-        msg_nums = data[0].split()
-        if not msg_nums:
-            return
-
-        # Use the first matching message
-        msg_num = msg_nums[0]
-
-        # Parse flags into a list
-        flag_list = flags.split() if flags else []
-        if not flag_list:
-            return
-
-        # Get current flags
-        resp, flag_data = imap_conn.fetch(msg_num, "(FLAGS)")
-        if resp != "OK":
-            return
-
-        # Check which flags need to be added
-        current_flags_str = str(flag_data[0]) if flag_data and flag_data[0] else ""
-        flags_to_add = []
-
-        for flag in flag_list:
-            # Normalize flag for comparison (case-insensitive)
-            if flag.lower() not in current_flags_str.lower():
-                flags_to_add.append(flag)
-
-        if flags_to_add:
-            # Add missing flags
-            flags_str = " ".join(flags_to_add)
-            resp, _ = imap_conn.store(msg_num, "+FLAGS", f"({flags_str})")
-            if resp == "OK":
-                for flag in flags_to_add:
-                    safe_print(f"  -> Synced flag: {flag}")
-
-    except Exception as e:
-        safe_print(f"  -> Error syncing flags: {e}")
 
 
 def parse_eml_file(file_path):
@@ -322,18 +220,6 @@ def get_labels_from_manifest(manifest, message_id):
     return []
 
 
-def label_to_folder(label):
-    """
-    Convert a Gmail label name to an IMAP folder path.
-    """
-    if label == imap_common.FOLDER_INBOX:
-        return imap_common.FOLDER_INBOX
-    elif label in ("Sent Mail", "Starred", "Drafts", "Important"):
-        return f"[Gmail]/{label}"
-    else:
-        return label
-
-
 def process_restore_batch(
     eml_files,
     folder_name,
@@ -359,7 +245,7 @@ def process_restore_batch(
         apply_labels: Whether to apply Gmail labels from manifest
         apply_flags: Whether to apply IMAP flags from manifest
     """
-    dest = get_thread_connection(dest_conf)
+    dest = imap_session.get_thread_connection(thread_local, "dest", dest_conf)
     if not dest:
         safe_print("Error: Could not establish connection for batch.")
         return
@@ -368,7 +254,7 @@ def process_restore_batch(
 
     for file_path, filename in eml_files:
         # Proactively refresh token if needed
-        dest = get_thread_connection(dest_conf)
+        dest = imap_session.get_thread_connection(thread_local, "dest", dest_conf)
         if not dest:
             safe_print(f"ERROR: Connection lost for {filename}")
             return
@@ -394,27 +280,7 @@ def process_restore_batch(
 
             # Determine target folder and remaining labels
             if gmail_mode:
-                # In Gmail mode, upload to first valid label folder
-                # Skip system folders we can't upload to
-                skip_folders = {"[Gmail]/All Mail", "[Gmail]/Spam", "[Gmail]/Trash"}
-
-                target_folder = None
-                remaining_labels = []
-
-                for label in labels:
-                    label_folder = label_to_folder(label)
-                    if label_folder in skip_folders:
-                        continue
-                    if target_folder is None:
-                        target_folder = label_folder
-                    else:
-                        remaining_labels.append(label)
-
-                # If no valid label found, use a dedicated label folder as fallback.
-                # This avoids placing non-draft messages into Gmail Drafts.
-                if target_folder is None:
-                    target_folder = imap_common.FOLDER_RESTORED_UNLABELED
-                    remaining_labels = []
+                target_folder, remaining_labels = provider_gmail.resolve_target(labels)
             else:
                 target_folder = folder_name
                 remaining_labels = labels
@@ -481,7 +347,7 @@ def process_restore_batch(
                 safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {display_subject}")
                 # Full restore preserves legacy behavior: sync flags on existing email if requested
                 if full_restore and apply_flags and flags and message_id:
-                    sync_flags_on_existing(dest, target_folder, message_id, flags, size)
+                    imap_common.sync_flags_on_existing(dest, target_folder, message_id, flags, size)
             elif upload_result == UploadResult.SUCCESS:
                 safe_print(f"[{target_folder}] UPLOADED      | {size_str:<8} | {display_subject}")
                 # Show applied flags in same style as labels
@@ -496,7 +362,7 @@ def process_restore_batch(
             # - Incremental (default): apply labels only for newly uploaded emails
             if apply_labels and remaining_labels and (upload_result == UploadResult.SUCCESS or full_restore):
                 for label in remaining_labels:
-                    label_folder = label_to_folder(label)
+                    label_folder = provider_gmail.label_to_folder(label)
 
                     # Skip if this is the same as the target folder
                     if label_folder == target_folder:
@@ -571,7 +437,7 @@ def process_restore_batch(
                                 safe_print(f"  -> Failed to apply label {label} (will retry on next restore)")
                         # If email exists in this label folder, sync flags (full restore only)
                         elif full_restore and apply_flags and flags:
-                            sync_flags_on_existing(dest, label_folder, message_id, flags, size)
+                            imap_common.sync_flags_on_existing(dest, label_folder, message_id, flags, size)
                     except Exception as e:
                         safe_print(f"  -> Error applying label {label}: {e}")
 
@@ -593,73 +459,19 @@ def get_local_message_ids(local_folder_path):
     return message_ids
 
 
-def delete_orphan_emails_from_dest(imap_conn, folder_name, local_msg_ids):
-    """
-    Delete emails from destination folder that don't exist in local backup.
-    Returns count of deleted emails.
-    """
-    import re
-
-    deleted_count = 0
-    try:
-        imap_conn.select(f'"{folder_name}"', readonly=False)
-        resp, data = imap_conn.uid("search", None, "ALL")
-        if resp != "OK" or not data or not data[0]:
-            return 0
-
-        uids = data[0].split()
-        if not uids:
-            return 0
-
-        # Check each UID's Message-ID against local backup
-        batch_size = 100
-        uids_to_delete = []
-
-        for i in range(0, len(uids), batch_size):
-            batch = uids[i : i + batch_size]
-            uid_range = b",".join(batch)
-            try:
-                resp, items = imap_conn.uid("fetch", uid_range, "(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])")
-                if resp != "OK":
-                    continue
-
-                for item in items:
-                    if isinstance(item, tuple) and len(item) >= 2:
-                        # Extract UID from response
-                        meta_str = (
-                            item[0].decode("utf-8", errors="ignore") if isinstance(item[0], bytes) else str(item[0])
-                        )
-                        uid_match = re.search(r"UID\s+(\d+)", meta_str)
-                        if not uid_match:
-                            continue
-                        uid = uid_match.group(1)
-
-                        # Extract Message-ID
-                        msg_id = imap_common.extract_message_id(item[1])
-
-                        # If not in local backup, mark for deletion
-                        if msg_id and msg_id not in local_msg_ids:
-                            uids_to_delete.append(uid)
-
-            except Exception:
-                continue
-
-        # Delete orphan emails
-        for uid in uids_to_delete:
-            try:
-                imap_conn.uid("store", uid, "+FLAGS", "(\\Deleted)")
-                deleted_count += 1
-            except Exception:
-                pass
-
-        if deleted_count > 0:
-            imap_conn.expunge()
-            safe_print(f"[{folder_name}] Deleted {deleted_count} orphan emails from destination")
-
-    except Exception as e:
-        safe_print(f"Error deleting orphans from {folder_name}: {e}")
-
-    return deleted_count
+def pre_filter_eml_files(eml_files, dest_msg_ids):
+    """Filter out .eml files whose Message-IDs already exist in the destination."""
+    safe_print("Pre-filtering duplicates...")
+    files_to_restore = []
+    skipped = 0
+    for file_path, filename in eml_files:
+        msg_id = imap_common.extract_message_id_from_eml(file_path)
+        if msg_id and msg_id in dest_msg_ids:
+            skipped += 1
+        else:
+            files_to_restore.append((file_path, filename))
+    safe_print(f"Skipping {skipped} duplicates, {len(files_to_restore)} to restore.")
+    return files_to_restore
 
 
 def restore_folder(
@@ -688,7 +500,7 @@ def restore_folder(
         if dest_delete:
             dest = imap_common.get_imap_connection_from_conf(dest_conf)
             if dest:
-                delete_orphan_emails_from_dest(dest, folder_name, set())
+                imap_common.delete_orphan_emails(dest, folder_name, set())
                 dest.logout()
         return
 
@@ -755,16 +567,7 @@ def restore_folder(
 
         # Pre-filter files to skip duplicates
         if dest_msg_ids:
-            safe_print("Pre-filtering duplicates...")
-            files_to_restore = []
-            skipped = 0
-            for file_path, filename in eml_files:
-                msg_id = imap_common.extract_message_id_from_eml(file_path)
-                if msg_id and msg_id in dest_msg_ids:
-                    skipped += 1
-                else:
-                    files_to_restore.append((file_path, filename))
-            safe_print(f"Skipping {skipped} duplicates, {len(files_to_restore)} to restore.")
+            files_to_restore = pre_filter_eml_files(eml_files, dest_msg_ids)
 
     if not files_to_restore:
         safe_print("No new emails to restore.")
@@ -772,7 +575,7 @@ def restore_folder(
             safe_print("Syncing destination: removing emails not in local backup...")
             dest = imap_session.ensure_connection(None, dest_conf)
             if dest:
-                delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
+                imap_common.delete_orphan_emails(dest, folder_name, local_msg_ids)
                 dest.logout()
 
         restore_cache.maybe_save_dest_index_cache(cache_path, cache_data, cache_lock, force=True)
@@ -817,7 +620,7 @@ def restore_folder(
         safe_print("Syncing destination: removing emails not in local backup...")
         dest = imap_session.ensure_connection(None, dest_conf)
         if dest:
-            delete_orphan_emails_from_dest(dest, folder_name, local_msg_ids)
+            imap_common.delete_orphan_emails(dest, folder_name, local_msg_ids)
             dest.logout()
 
     # Force-flush progress cache at end.
@@ -1068,11 +871,11 @@ def main():
 
     if apply_labels or apply_flags:
         # Try to load labels manifest first (contains both labels and flags for Gmail backups)
-        manifest = load_labels_manifest(local_path)
+        manifest = imap_common.load_manifest(local_path, "labels_manifest.json")
 
         # If no labels manifest, try flags-only manifest
         if not manifest and apply_flags:
-            manifest = load_flags_manifest(local_path)
+            manifest = imap_common.load_manifest(local_path, "flags_manifest.json")
 
         if not manifest:
             print("Warning: No manifest found. Labels/flags will not be applied.")

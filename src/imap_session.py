@@ -102,3 +102,22 @@ def ensure_folder_session(conn, conf, folder_name, readonly=True):
             return new_conn, False
 
     return new_conn, True
+
+
+def get_thread_connection(thread_store, key, conf):
+    """Get or refresh a thread-local IMAP connection.
+
+    Stores the connection on thread_store under the given key so it persists
+    across calls within the same thread.
+
+    Args:
+        thread_store: A threading.local() instance
+        key: Attribute name to store the connection under (e.g. "src", "dest")
+        conf: Connection config dict (see ensure_connection)
+
+    Returns:
+        Healthy IMAP connection, or None if connection failed.
+    """
+    conn = ensure_connection(getattr(thread_store, key, None), conf)
+    setattr(thread_store, key, conn)
+    return conn

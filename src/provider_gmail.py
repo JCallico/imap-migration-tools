@@ -70,6 +70,32 @@ def label_to_folder(label):
     return label
 
 
+def resolve_target(labels):
+    """Pick the primary target folder and remaining labels for Gmail mode.
+
+    Returns:
+        Tuple of (target_folder, remaining_labels)
+    """
+    skip_folders = {GMAIL_ALL_MAIL, GMAIL_SPAM, GMAIL_TRASH}
+    target_folder = None
+    remaining_labels = []
+
+    for label in labels:
+        lf = label_to_folder(label)
+        if lf in skip_folders:
+            continue
+        if target_folder is None:
+            target_folder = lf
+        else:
+            remaining_labels.append(label)
+
+    if target_folder is None:
+        target_folder = imap_common.FOLDER_RESTORED_UNLABELED
+        remaining_labels = []
+
+    return target_folder, remaining_labels
+
+
 def build_gmail_label_index(src_conn, safe_print_func):
     """
     Build a mapping of Message-ID -> set(labels) by scanning label folders.
