@@ -122,6 +122,40 @@ class TestLabelToFolder:
         assert provider_gmail.label_to_folder("Work/Projects") == "Work/Projects"
 
 
+class TestResolveTarget:
+    """Tests for resolve_target function."""
+
+    def test_picks_first_valid_label_as_target(self):
+        target, remaining = provider_gmail.resolve_target(["Work", "Personal"])
+        assert target == "Work"
+        assert remaining == ["Personal"]
+
+    def test_skips_system_folders(self):
+        target, remaining = provider_gmail.resolve_target(["[Gmail]/All Mail", "[Gmail]/Spam", "[Gmail]/Trash", "Work"])
+        assert target == "Work"
+        assert remaining == []
+
+    def test_all_system_labels_returns_unlabeled(self):
+        target, remaining = provider_gmail.resolve_target(["[Gmail]/All Mail", "[Gmail]/Spam"])
+        assert target == "Restored/Unlabeled"
+        assert remaining == []
+
+    def test_empty_labels_returns_unlabeled(self):
+        target, remaining = provider_gmail.resolve_target([])
+        assert target == "Restored/Unlabeled"
+        assert remaining == []
+
+    def test_special_labels_mapped_to_gmail_folders(self):
+        target, remaining = provider_gmail.resolve_target(["Sent Mail", "Work"])
+        assert target == "[Gmail]/Sent Mail"
+        assert remaining == ["Work"]
+
+    def test_multiple_remaining_labels(self):
+        target, remaining = provider_gmail.resolve_target(["Work", "Personal", "Finance"])
+        assert target == "Work"
+        assert remaining == ["Personal", "Finance"]
+
+
 class TestBuildGmailLabelIndex:
     """Tests for build_gmail_label_index function."""
 
