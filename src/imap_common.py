@@ -584,7 +584,7 @@ def detect_trash_folder(imap_conn):
 
 
 def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
-    """Sync preservable flags on an existing email in the given folder.
+    """Sync flags on an existing email in the given folder.
 
     Finds the email by Message-ID and adds any missing flags.
 
