@@ -17,6 +17,7 @@ from email import policy
 from email.header import decode_header
 from email.parser import BytesParser
 
+import imap_compress
 import imap_oauth2
 import imap_retry
 import restore_cache
@@ -290,6 +291,7 @@ def get_imap_connection(host, user, password=None, oauth2_token=None):
             conn.authenticate("XOAUTH2", lambda _: auth_string.encode())
         else:
             conn.login(user, password)
+        imap_compress.enable_compression(conn, log_fn=safe_print)
         return imap_retry.ConnectionProxy(conn, log_fn=safe_print)
     except Exception as e:
         print(f"Connection error to {host}: {e}")
