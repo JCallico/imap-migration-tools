@@ -285,7 +285,7 @@ class TestCacheHitWithoutLock:
 
         src.select('"INBOX"', readonly=False)
 
-        existing_dest_msg_ids = {msg_id}
+        existing_dest_msg_ids_by_folder = {"INBOX": {msg_id}}
         success, _src, _dest, deleted = migrate_imap_emails.process_single_uid(
             src,
             dest,
@@ -298,7 +298,7 @@ class TestCacheHitWithoutLock:
             None,
             True,
             False,
-            existing_dest_msg_ids=existing_dest_msg_ids,
+            existing_dest_msg_ids_by_folder=existing_dest_msg_ids_by_folder,
             existing_dest_msg_ids_lock=None,
             progress_cache_path=None,
             progress_cache_data=None,
