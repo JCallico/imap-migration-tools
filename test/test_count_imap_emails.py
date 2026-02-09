@@ -196,7 +196,6 @@ class TestImapCommonHelpers:
         with patch.object(imap_common.imaplib, "IMAP4_SSL", FakeIMAP):
             conn = imap_common.get_imap_connection("host", "user", oauth2_token="token")
 
-        assert isinstance(conn, FakeIMAP)
         assert conn.auth_called is True
         assert conn.login_called is False
 
@@ -217,7 +216,6 @@ class TestImapCommonHelpers:
         with patch.object(imap_common.imaplib, "IMAP4_SSL", FakeIMAP):
             conn = imap_common.get_imap_connection("host", "user", password="pass")
 
-        assert isinstance(conn, FakeIMAP)
         assert conn.login_called is True
         assert conn.auth_called is False
 
