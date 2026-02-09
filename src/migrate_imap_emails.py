@@ -429,14 +429,6 @@ def process_batch(
         safe_print(f"Error selecting folder {folder_name} in worker: {e}")
         return False, 0
 
-    if not gmail_mode:
-        try:
-            imap_common.ensure_folder_exists(dest, folder_name)
-            dest.select(f'"{folder_name}"')
-        except Exception as e:
-            safe_print(f"Error selecting folder {folder_name} in worker: {e}")
-            return False, 0
-
     # Extract info for cache update if needed
     dest_host = dest_conf.get("host")
     dest_user = dest_conf.get("user")

@@ -178,11 +178,9 @@ def upload_email(dest, folder_name, raw_content, date_str, message_id, flags=Non
         check_duplicate: Whether to check for duplicates before uploading.
     """
     try:
-        # Ensure folder exists
-        imap_common.ensure_folder_exists(dest, folder_name)
-
         # Check for duplicates if requested (requires SELECT for SEARCH)
         if check_duplicate:
+            imap_common.ensure_folder_exists(dest, folder_name)
             dest.select(f'"{folder_name}"')
             if message_id and email_exists_in_folder(dest, message_id):
                 return UploadResult.ALREADY_EXISTS
@@ -394,6 +392,7 @@ def process_restore_batch(
                                 raw_content,
                                 date_str,
                                 flags,
+                                ensure_folder=False,
                             )
                             if append_success:
                                 restore_cache.record_progress(
