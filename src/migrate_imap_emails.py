@@ -376,6 +376,8 @@ def process_single_uid(
                     elif preserve_flags and flags:
                         imap_common.sync_flags_on_existing(dest, label_folder, msg_id, flags, size)
                 except Exception as e:
+                    if imap_oauth2.is_auth_error(e):
+                        raise
                     safe_print(f"  -> Error applying label {label}: {e}")
 
         deleted = 0

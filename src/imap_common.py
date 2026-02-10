@@ -744,13 +744,10 @@ def load_folder_msg_ids(
         )
 
     # Fetch from server for a comprehensive set (one-time cost per folder)
-    try:
-        ensure_folder_exists(imap_conn, folder_name)
-        imap_conn.select(f'"{folder_name}"')
-        server_ids = set(get_message_ids_in_folder(imap_conn).values())
-        built.update(server_ids)
-    except Exception:
-        pass
+    ensure_folder_exists(imap_conn, folder_name)
+    imap_conn.select(f'"{folder_name}"')
+    server_ids = set(get_message_ids_in_folder(imap_conn).values())
+    built.update(server_ids)
 
     with msg_ids_lock:
         msg_ids_by_folder.setdefault(folder_name, built)

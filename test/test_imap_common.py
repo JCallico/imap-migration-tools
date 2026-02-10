@@ -911,35 +911,19 @@ class TestLoadFolderMsgIds:
 
         assert result == {"<server@test.com>", "<cached@test.com>"}
 
-    def test_handles_server_error(self):
-        """Returns cache-only IDs if server fetch fails."""
+    def test_propagates_server_error(self):
+        """Propagates server errors so callers can reconnect or retry."""
         import threading
 
         mock_conn = Mock()
-        mock_conn.create.side_effect = Exception("connection lost")
+        mock_conn.create.return_value = ("OK", [b"Created"])
+        mock_conn.select.side_effect = Exception("connection lost")
 
         lock = threading.Lock()
         by_folder: dict[str, set[str]] = {}
 
-        with (
-            patch("imap_common.is_progress_cache_ready", return_value=True),
-            patch(
-                "imap_common.restore_cache.get_cached_message_ids",
-                return_value={"<cached@test.com>"},
-            ),
-        ):
-            result = imap_common.load_folder_msg_ids(
-                mock_conn,
-                "INBOX",
-                by_folder,
-                lock,
-                progress_cache_data={},
-                progress_cache_lock=threading.Lock(),
-                dest_host="imap.test.com",
-                dest_user="user@test.com",
-            )
-
-        assert result == {"<cached@test.com>"}
+        with pytest.raises(Exception, match="connection lost"):
+            imap_common.load_folder_msg_ids(mock_conn, "INBOX", by_folder, lock)
 
     def test_setdefault_prevents_race(self):
         """Uses setdefault so first writer wins if two threads build concurrently."""

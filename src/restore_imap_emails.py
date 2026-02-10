@@ -414,6 +414,8 @@ def process_restore_batch(
                         elif full_restore and apply_flags and flags:
                             imap_common.sync_flags_on_existing(dest, label_folder, message_id, flags, size)
                     except Exception as e:
+                        if imap_oauth2.is_auth_error(e):
+                            raise
                         safe_print(f"  -> Error applying label {label}: {e}")
 
         except Exception as e:
