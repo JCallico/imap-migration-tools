@@ -529,8 +529,8 @@ def restore_folder(
             existing_dest_msg_ids_by_folder[folder_name] = dest_msg_ids
         dest_msg_ids = existing_dest_msg_ids_by_folder[folder_name]
 
-        # Pre-filter files to skip duplicates
-        if dest_msg_ids:
+        # Pre-filter files to skip duplicates (skip in full_restore: need to process all for flag/label sync)
+        if dest_msg_ids and not full_restore:
             files_to_restore = pre_filter_eml_files(eml_files, dest_msg_ids)
 
     if not files_to_restore:
