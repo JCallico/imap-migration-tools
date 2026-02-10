@@ -44,7 +44,7 @@ def create_server_pair(src_data=None, dest_data=None):
     # It dropped returning 't'. I need to fix that or update consumers to not need 't'.
     # Shutdown() stops serve_forever loop. join() is nice but maybe not strictly required if we trust shutdown.
     # However, to avoid ResourceWarnings, we might want 't'.
-    
+
     return (None, src_s, p1_actual), (None, dest_s, p2_actual)
 
 
@@ -53,11 +53,13 @@ def shutdown_server_pair(src_tuple, dest_tuple):
     src_t, src_s, _ = src_tuple
     dest_t, dest_s, _ = dest_tuple
     src_s.shutdown()
-    src_s.server_close() # Explicitly close socket
+    src_s.server_close()  # Explicitly close socket
     dest_s.shutdown()
     dest_s.server_close()
-    if src_t: src_t.join(timeout=2)
-    if dest_t: dest_t.join(timeout=2)
+    if src_t:
+        src_t.join(timeout=2)
+    if dest_t:
+        dest_t.join(timeout=2)
 
 
 @pytest.fixture
