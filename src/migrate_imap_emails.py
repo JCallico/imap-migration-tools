@@ -458,18 +458,11 @@ def process_batch(
                 safe_print(f"[{folder_name}] ERROR: Source connection/folder lost for UID {uid_str}")
                 return False, 0
 
-            if not gmail_mode:
-                dest, dest_ok = imap_session.ensure_folder_session(dest, dest_conf, folder_name, readonly=False)
-                thread_local.dest = dest
-                if not dest_ok:
-                    safe_print(f"[{folder_name}] ERROR: Dest connection/folder lost for UID {uid_str}")
-                    return False, 0
-            else:
-                dest = imap_session.ensure_connection(dest, dest_conf)
-                thread_local.dest = dest
-                if not dest:
-                    safe_print(f"[{folder_name}] ERROR: Dest connection lost for UID {uid_str}")
-                    return False, 0
+            dest = imap_session.ensure_connection(dest, dest_conf)
+            thread_local.dest = dest
+            if not dest:
+                safe_print(f"[{folder_name}] ERROR: Dest connection lost for UID {uid_str}")
+                return False, 0
 
             success, src, dest, deleted = process_single_uid(
                 src,
