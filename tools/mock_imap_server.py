@@ -15,7 +15,15 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
     def handle(self):
         self.wfile.write(b"* OK [CAPABILITY IMAP4rev1] Mock IMAP Server Ready\r\n")
         self.selected_folder = None
-        self.current_folders = self.server.folders
+        
+        # Check if server has folders, if not, initialize
+        if hasattr(self.server, "folders"):
+            self.current_folders = self.server.folders
+        else:
+             # Just in case it's used standalone without the threaded wrapper
+             self.current_folders = {"INBOX": []}
+        
+        self.retry_state = {} # key -> count
 
         while True:
             try:
@@ -30,9 +38,71 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                 tag = parts[0]
                 cmd = parts[1].upper()
                 args = parts[2] if len(parts) > 2 else ""
+                
+                # Check for RETRY_N injection in args (for testing imap_retry)
+                # Pattern: RETRY_N where N is integer
+                import re
+                retry_match = re.search(r'RETRY_(\d+)', args)
+                if retry_match:
+                    count = int(retry_match.group(1))
+                    # Create a unique key for this command invocation context
+                    # Just using command + args is roughly sufficient
+                    key = f"{cmd}_{args}"
+                    current_fails = self.retry_state.get(key, 0)
+                    
+                    if current_fails < count:
+                        # Logic Fix: Only increment if we are going to fail
+                        self.retry_state[key] = current_fails + 1
+                        self.send_response(tag, "NO [UNAVAILABLE] Server Busy (Simulated)")
+                        continue
+                    # Else fall through to normal command processing
 
                 if cmd == "LOGIN":
                     self.send_response(tag, "OK LOGIN completed")
+                
+                elif cmd == "APPEND":
+                    # Check for literal size
+                    import re
+                    size_match = re.search(r'\{(\d+)\}$', args)
+                    data = b""
+                    if size_match:
+                        size = int(size_match.group(1))
+                        # Send continuation
+                        self.wfile.write(b"+\r\n")
+                        self.wfile.flush()
+                        # Read data
+                        data = self.rfile.read(size)
+                        
+                    # Extract mailbox name to store the message
+                    # Simplistic parsing: check for quoted or unquoted first argument
+                    mailbox = "INBOX" # Default fallback
+                    clean_args = args.lstrip()
+                    if clean_args.startswith('"'):
+                        end_quote = clean_args.find('"', 1)
+                        if end_quote != -1:
+                            mailbox = clean_args[1:end_quote]
+                    else:
+                        mailbox = clean_args.split(" ")[0]
+                    
+                    if mailbox not in self.current_folders:
+                        self.current_folders[mailbox] = []
+
+                    # Parse flags if present: look for (...)
+                    msg_flags = set()
+                    flag_match = re.search(r'\(([^)]+)\)', args)
+                    if flag_match:
+                        # e.g. (\Seen \Deleted)
+                        flag_content = flag_match.group(1)
+                        msg_flags = set(flag_content.split())
+                    
+                    # Store message
+                    new_uid = len(self.current_folders[mailbox]) + 1
+                    msg_obj = {"uid": new_uid, "flags": msg_flags, "content": data}
+                    self.current_folders[mailbox].append(msg_obj)
+
+                    # Always succeed for test if we passed retry logic
+                    self.wfile.write(tag.encode() + b" OK [APPENDUID 1 100] APPEND completed\r\n")
+                    self.wfile.flush()
 
                 elif cmd == "LOGOUT":
                     self.send_response(tag, "OK LOGOUT completed")
@@ -46,7 +116,11 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                     # Minimal XOAUTH2 support for tests.
                     self.wfile.write(b"+ \r\n")
                     _ = self.rfile.readline()
+                    # Also consume potential retry line? No.
                     self.send_response(tag, "OK AUTHENTICATE completed")
+                
+                elif cmd == "NOOP":
+                     self.send_response(tag, "OK NOOP completed")
 
                 elif cmd == "LIST":
                     for folder in self.current_folders:
@@ -55,23 +129,40 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
 
                 elif cmd == "SELECT":
                     folder = args.strip().strip('"')
-                    if folder in self.current_folders:
+                    
+                    # For retry testing: if folder starts with NO, fail immediately
+                    if folder.startswith("NO"):
+                         # e.g. "NO [UNAVAILABLE]"
+                         self.send_response(tag, folder)
+                         continue
+                    
+                    # Allow RETRY_N folders to succeed if they passed the retry intercept logic
+                    is_retry_folder = "RETRY_" in folder
+
+                    if folder in self.current_folders or is_retry_folder:
                         self.selected_folder = folder
-                        count = len(self.current_folders[folder])
+                        count = len(self.current_folders.get(folder, [])) # Default empty for retry folders
                         self.wfile.write(f"* {count} EXISTS\r\n".encode())
                         self.wfile.write(f"* {count} RECENT\r\n".encode())
                         self.wfile.write(b"* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\n")
                         self.wfile.write(b"* OK [UIDVALIDITY 1] UIDs valid\r\n")
                         self.send_response(tag, "OK [READ-WRITE] SELECT completed")
+                    elif folder == "EMPTY":
+                       # Special case for "empty_data" test in retry
+                       self.wfile.write(b"* 0 EXISTS\r\n")
+                       self.send_response(tag, "OK SELECT completed")
                     else:
                         self.send_response(tag, "NO [NONEXISTENT] Folder not found")
 
                 elif cmd == "EXAMINE":
                     # EXAMINE is like SELECT but read-only
                     folder = args.strip().strip('"')
-                    if folder in self.current_folders:
+                    
+                    is_retry_folder = "RETRY_" in folder
+
+                    if folder in self.current_folders or is_retry_folder:
                         self.selected_folder = folder
-                        count = len(self.current_folders[folder])
+                        count = len(self.current_folders.get(folder, []))
                         self.wfile.write(f"* {count} EXISTS\r\n".encode())
                         self.wfile.write(f"* {count} RECENT\r\n".encode())
                         self.wfile.write(b"* FLAGS (\\Seen \\Answered \\Flagged \\Deleted \\Draft)\r\n")
@@ -412,7 +503,10 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                 else:
                     self.send_response(tag, "BAD Command not recognized")
 
-            except Exception:
+            except Exception as e:
+                print(f"MockServer EXCEPTION: {e}")
+                import traceback
+                traceback.print_exc()
                 break
 
     def send_response(self, tag, message):
@@ -438,9 +532,19 @@ class MockIMAPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
             self.folders = {"INBOX": []}
 
 
-def start_server_thread(port=10143, initial_folders=None):
+def start_server_thread(port=0, initial_folders=None):
+    # Use port 0 to let OS select free port
+    if isinstance(port, dict):
+         # Handle legacy call where port was inadvertently passed as dict
+         initial_folders = port
+         port = 0
+         
     server = MockIMAPServer(("localhost", port), MockIMAPHandler, initial_folders)
+    
+    # Get the actual port if 0 was used
+    actual_port = server.server_address[1]
+    
     t = threading.Thread(target=server.serve_forever)
     t.daemon = True
     t.start()
-    return t, server
+    return server, actual_port

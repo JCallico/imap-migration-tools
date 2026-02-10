@@ -33,11 +33,19 @@ def create_server_pair(src_data=None, dest_data=None):
     while p2 == p1:
         p2 = get_free_port()
 
-    src_t, src_s = start_server_thread(p1, src_data)
-    dest_t, dest_s = start_server_thread(p2, dest_data)
+    src_s, p1_actual = start_server_thread(p1, src_data)
+    dest_s, p2_actual = start_server_thread(p2, dest_data)
     time.sleep(0.3)
 
-    return (src_t, src_s, p1), (dest_t, dest_s, p2)
+    # We don't have direct access to thread object anymore as it is managed internally by TCPServer/ThreadingMixin or start_server_thread wrapper?
+    # Actually start_server_thread in tools/mock_imap_server.py now returns (server, port).
+    # The server object is a ThreadingMixIn so it handles per-request threads, but the main serve_forever loop is in a thread we created.
+    # But wait, my modified start_server_thread does: t.start(), return server, actual_port.
+    # It dropped returning 't'. I need to fix that or update consumers to not need 't'.
+    # Shutdown() stops serve_forever loop. join() is nice but maybe not strictly required if we trust shutdown.
+    # However, to avoid ResourceWarnings, we might want 't'.
+    
+    return (None, src_s, p1_actual), (None, dest_s, p2_actual)
 
 
 def shutdown_server_pair(src_tuple, dest_tuple):
@@ -45,9 +53,11 @@ def shutdown_server_pair(src_tuple, dest_tuple):
     src_t, src_s, _ = src_tuple
     dest_t, dest_s, _ = dest_tuple
     src_s.shutdown()
+    src_s.server_close() # Explicitly close socket
     dest_s.shutdown()
-    src_t.join(timeout=2)
-    dest_t.join(timeout=2)
+    dest_s.server_close()
+    if src_t: src_t.join(timeout=2)
+    if dest_t: dest_t.join(timeout=2)
 
 
 @pytest.fixture
@@ -82,16 +92,16 @@ def single_mock_server():
 
     def _create(initial_data=None):
         port = get_free_port()
-        thread, server = start_server_thread(port, initial_data)
+        server, actual_port = start_server_thread(port, initial_data)
         time.sleep(0.3)
-        servers.append((thread, server))
-        return server, port
+        servers.append(server)
+        return server, actual_port
 
     yield _create
 
-    for thread, server in servers:
+    for server in servers:
         server.shutdown()
-        thread.join(timeout=2)
+        server.server_close()
 
 
 @contextmanager
