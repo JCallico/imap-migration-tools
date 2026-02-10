@@ -462,28 +462,6 @@ def parse_message_id_and_subject_from_bytes(raw_message):
         return None, "(No Subject)"
 
 
-def message_exists_in_folder(dest_conn, msg_id):
-    """
-    Checks if a message with the given Message-ID exists in the CURRENTLY SELECTED folder of dest_conn.
-    Only considers non-deleted messages (UNDELETED) so that messages pending expunge
-    don't block uploads of fresh copies.
-    Returns True if found, False otherwise.
-    """
-    if not msg_id:
-        return False
-
-    clean_id = msg_id.replace('"', '\\"')
-    try:
-        typ, data = dest_conn.search(None, f'UNDELETED (HEADER Message-ID "{clean_id}")')
-        if typ != "OK":
-            return False
-
-        dest_ids = data[0].split()
-        return len(dest_ids) > 0
-    except Exception:
-        return False
-
-
 def get_message_ids_in_folder(imap_conn):
     """
     Fetches all Message-IDs from the currently selected folder.

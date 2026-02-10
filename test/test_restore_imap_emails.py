@@ -509,43 +509,10 @@ class TestRestoreE2EHelpers:
             "INBOX",
             b"Subject: Upload\r\nMessage-ID: <up@test>\r\n\r\nBody",
             '"15-Jan-2024 10:30:00 +0000"',
-            "<up@test>",
         )
 
         assert result == restore_imap_emails.UploadResult.SUCCESS
         assert len(server.folders["INBOX"]) == 1
-        conn.logout()
-
-    def test_upload_email_duplicate(self, single_mock_server):
-        dest_data = {"INBOX": [b"Subject: Dup\r\nMessage-ID: <dup@test>\r\n\r\nBody"]}
-        server, port = single_mock_server(dest_data)
-
-        conn = imaplib.IMAP4("localhost", port)
-        conn.login("user", "pass")
-
-        result = restore_imap_emails.upload_email(
-            conn,
-            "INBOX",
-            b"Subject: Dup\r\nMessage-ID: <dup@test>\r\n\r\nBody",
-            '"15-Jan-2024 10:30:00 +0000"',
-            "<dup@test>",
-            check_duplicate=True,
-        )
-
-        assert result == restore_imap_emails.UploadResult.ALREADY_EXISTS
-        assert len(server.folders["INBOX"]) == 1
-        conn.logout()
-
-    def test_email_exists_in_folder(self, single_mock_server):
-        dest_data = {"INBOX": [b"Subject: Exists\r\nMessage-ID: <exists@test>\r\n\r\nBody"]}
-        _server, port = single_mock_server(dest_data)
-
-        conn = imaplib.IMAP4("localhost", port)
-        conn.login("user", "pass")
-        conn.select('"INBOX"')
-
-        assert restore_imap_emails.email_exists_in_folder(conn, "<exists@test>") is True
-        assert restore_imap_emails.email_exists_in_folder(conn, "<missing@test>") is False
         conn.logout()
 
     def test_sync_flags_on_existing(self, single_mock_server):

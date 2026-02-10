@@ -155,37 +155,18 @@ def get_eml_files(folder_path):
     return eml_files
 
 
-def email_exists_in_folder(imap_conn, message_id):
-    """
-    Check if an email with the given Message-ID exists in the currently selected folder.
-    """
-    if not message_id:
-        return False
-
-    try:
-        return imap_common.message_exists_in_folder(imap_conn, message_id)
-    except Exception:
-        return False
-
-
-def upload_email(dest, folder_name, raw_content, date_str, message_id, flags=None, check_duplicate=True):
+def upload_email(dest, folder_name, raw_content, date_str, flags=None):
     """
     Upload a single email to the destination folder.
-    Returns UploadResult enum: SUCCESS, ALREADY_EXISTS, or FAILURE.
+    Returns UploadResult enum: SUCCESS or FAILURE.
+
+    Callers are expected to check for duplicates via load_folder_msg_ids()
+    before calling this function, and to ensure the folder exists.
 
     Args:
         flags: Optional string of IMAP flags like "\\Seen" for read emails.
-        check_duplicate: Whether to check for duplicates before uploading.
     """
     try:
-        # Check for duplicates if requested (requires SELECT for SEARCH)
-        if check_duplicate:
-            imap_common.ensure_folder_exists(dest, folder_name)
-            dest.select(f'"{folder_name}"')
-            if message_id and email_exists_in_folder(dest, message_id):
-                return UploadResult.ALREADY_EXISTS
-
-        # Upload with original date and flags
         success = imap_common.append_email(
             dest,
             folder_name,
@@ -313,9 +294,7 @@ def process_restore_batch(
                     target_folder,
                     raw_content,
                     date_str,
-                    message_id,
                     flags,
-                    check_duplicate=(existing_dest_msg_ids is None),
                 )
 
             # Only record progress when upload succeeds or email already exists.

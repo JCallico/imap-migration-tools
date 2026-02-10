@@ -320,48 +320,6 @@ class TestDetectTrashFolder:
         assert result is None
 
 
-class TestMessageExistsInFolder:
-    """Tests for message_exists_in_folder function."""
-
-    def test_no_message_id(self):
-        """Test returns False when message_id is None."""
-        mock_conn = Mock()
-        result = imap_common.message_exists_in_folder(mock_conn, None)
-        assert result is False
-
-    def test_search_fails(self):
-        """Test returns False when search fails."""
-        mock_conn = Mock()
-        mock_conn.search.return_value = ("NO", [])
-
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
-        assert result is False
-
-    def test_no_matches(self):
-        """Test returns False when no matches found."""
-        mock_conn = Mock()
-        mock_conn.search.return_value = ("OK", [b""])
-
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
-        assert result is False
-
-    def test_match_found(self):
-        """Test returns True when message with same ID found."""
-        mock_conn = Mock()
-        mock_conn.search.return_value = ("OK", [b"1"])
-
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
-        assert result is True
-
-    def test_search_exception(self):
-        """Test returns False when search raises an exception."""
-        mock_conn = Mock()
-        mock_conn.search.side_effect = Exception("Connection error")
-
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
-        assert result is False
-
-
 class TestExtractMessageId:
     """Tests for extract_message_id function."""
 
