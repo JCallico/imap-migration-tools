@@ -258,14 +258,16 @@ def process_single_uid(
         is_duplicate = False
 
         # Fast path: check source folder cache to skip without any IMAP ops
-        source_msg_ids = existing_dest_msg_ids_by_folder.get(folder_name) if existing_dest_msg_ids_by_folder else None
+        cached_dest_msg_ids = (
+            existing_dest_msg_ids_by_folder.get(folder_name) if existing_dest_msg_ids_by_folder else None
+        )
         cache_hit = False
-        if not full_migrate and msg_id and source_msg_ids is not None:
+        if not full_migrate and msg_id and cached_dest_msg_ids is not None:
             if existing_dest_msg_ids_lock is not None:
                 with existing_dest_msg_ids_lock:
-                    cache_hit = msg_id in source_msg_ids
+                    cache_hit = msg_id in cached_dest_msg_ids
             else:
-                cache_hit = msg_id in source_msg_ids
+                cache_hit = msg_id in cached_dest_msg_ids
 
         if cache_hit:
             is_duplicate = True
@@ -309,13 +311,13 @@ def process_single_uid(
 
         # Update cache if processed effectively (copied or duplicate)
         if msg_id:
-            source_msg_ids = (
+            cached_dest_msg_ids = (
                 existing_dest_msg_ids_by_folder.get(folder_name) if existing_dest_msg_ids_by_folder else None
             )
             restore_cache.record_progress(
                 message_id=msg_id,
                 folder_name=folder_name,
-                existing_dest_msg_ids=source_msg_ids,
+                existing_dest_msg_ids=cached_dest_msg_ids,
                 existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
                 progress_cache_path=progress_cache_path,
                 progress_cache_data=progress_cache_data,
