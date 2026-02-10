@@ -637,11 +637,12 @@ def migrate_folder(
         safe_print(f"Pre-fetching destination Message-IDs for {folder_name}...")
         dest_uid_to_msgid = imap_common.get_message_ids_in_folder(dest)
         dest_msg_ids = set(dest_uid_to_msgid.values())
-        cache_ids = existing_dest_msg_ids_by_folder.get(folder_name, set())
-        if cache_ids and not full_migrate:
-            dest_msg_ids.update(cache_ids)
-        # Seed the by-folder dict with the merged set so workers use it directly
-        existing_dest_msg_ids_by_folder[folder_name] = dest_msg_ids
+        # Update destination Message-IDs with what we processed
+        if not full_migrate:
+            existing_dest_msg_ids_by_folder.setdefault(folder_name, set()).update(dest_msg_ids)
+        else:
+            existing_dest_msg_ids_by_folder[folder_name] = dest_msg_ids
+        dest_msg_ids = existing_dest_msg_ids_by_folder[folder_name]
         safe_print(f"Found {len(dest_msg_ids)} existing messages in destination (server + cache).")
 
     # Pre-fetch source Message-IDs and filter out duplicates before processing

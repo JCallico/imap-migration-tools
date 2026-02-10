@@ -521,11 +521,13 @@ def restore_folder(
 
         safe_print(f"{len(dest_msg_ids)} existing messages in destination.")
 
-        # Merge server-fetched IDs into the shared set so batch workers can
-        # skip per-message SEARCH commands (they already know what exists).
-        if dest_msg_ids:
+        # Update destination Message-IDs with what we processed
+        if not full_restore:
             with existing_dest_msg_ids_lock:
-                existing_dest_msg_ids_by_folder[folder_name].update(dest_msg_ids)
+                existing_dest_msg_ids_by_folder.setdefault(folder_name, set()).update(dest_msg_ids)
+        else:
+            existing_dest_msg_ids_by_folder[folder_name] = dest_msg_ids
+        dest_msg_ids = existing_dest_msg_ids_by_folder[folder_name]
 
         # Pre-filter files to skip duplicates
         if dest_msg_ids:
