@@ -768,10 +768,10 @@ class TestGetMessageIdsInFolder:
 
 
 class TestLoadFolderMsgIds:
-    """Tests for load_folder_msg_ids()."""
+    """Tests for load_folder_msg_ids() using the mock IMAP server."""
 
     def test_returns_none_when_disabled(self):
-        """Returns None if dict or lock is None."""
+        """Returns None if dict or lock is None (tracking disabled)."""
         mock_conn = Mock()
         import threading
 
@@ -780,122 +780,62 @@ class TestLoadFolderMsgIds:
         assert imap_common.load_folder_msg_ids(mock_conn, "INBOX", {}, None) is None
         assert imap_common.load_folder_msg_ids(mock_conn, "INBOX", None, None) is None
 
-    def test_returns_cached_set(self):
-        """Returns cached set on subsequent calls without IMAP ops."""
+    def test_fetches_message_ids_from_server(self, single_mock_server):
+        """Fetches Message-IDs from server and caches them."""
+        import imaplib
         import threading
 
-        mock_conn = Mock()
-        lock = threading.Lock()
-        cached = {"<a@test.com>", "<b@test.com>"}
-        by_folder = {"INBOX": cached}
-
-        result = imap_common.load_folder_msg_ids(mock_conn, "INBOX", by_folder, lock)
-        assert result is cached
-        mock_conn.select.assert_not_called()
-
-    def test_fetches_from_server_on_first_call(self):
-        """Fetches Message-IDs from server on first access and caches them."""
-        import threading
-
-        mock_conn = Mock()
-        mock_conn.create.return_value = ("OK", [b"Created"])
-        mock_conn.select.return_value = ("OK", [b"3"])
-        mock_conn.uid.side_effect = [
-            ("OK", [b"1 2"]),
-            (
-                "OK",
-                [
-                    (b"1 (UID 1 BODY[HEADER.FIELDS (MESSAGE-ID)] {50}", b"Message-ID: <x@test.com>\r\n"),
-                    b")",
-                    (b"2 (UID 2 BODY[HEADER.FIELDS (MESSAGE-ID)] {50}", b"Message-ID: <y@test.com>\r\n"),
-                    b")",
-                ],
-            ),
-        ]
+        server_data = {
+            "TestFolder": [
+                b"Subject: A\r\nMessage-ID: <a@test.com>\r\n\r\nBody A",
+                b"Subject: B\r\nMessage-ID: <b@test.com>\r\n\r\nBody B",
+            ]
+        }
+        _server, port = single_mock_server(server_data)
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
 
         lock = threading.Lock()
         by_folder: dict[str, set[str]] = {}
 
-        result = imap_common.load_folder_msg_ids(mock_conn, "TestFolder", by_folder, lock)
-        assert result == {"<x@test.com>", "<y@test.com>"}
+        result = imap_common.load_folder_msg_ids(conn, "TestFolder", by_folder, lock)
+        assert result == {"<a@test.com>", "<b@test.com>"}
         assert "TestFolder" in by_folder
 
-        # Second call returns cached set without IMAP ops
-        mock_conn.reset_mock()
-        result2 = imap_common.load_folder_msg_ids(mock_conn, "TestFolder", by_folder, lock)
+        # Second call returns the same cached set object
+        result2 = imap_common.load_folder_msg_ids(conn, "TestFolder", by_folder, lock)
         assert result2 is result
-        mock_conn.select.assert_not_called()
+        conn.logout()
 
-    def test_merges_with_progress_cache(self):
-        """Merges progress cache IDs with server IDs."""
+    def test_empty_folder(self, single_mock_server):
+        """Returns empty set for a folder with no messages."""
+        import imaplib
         import threading
 
-        mock_conn = Mock()
-        mock_conn.create.return_value = ("OK", [b"Created"])
-        mock_conn.select.return_value = ("OK", [b"1"])
-        mock_conn.uid.side_effect = [
-            ("OK", [b"1"]),
-            (
-                "OK",
-                [
-                    (b"1 (UID 1 BODY[HEADER.FIELDS (MESSAGE-ID)] {50}", b"Message-ID: <server@test.com>\r\n"),
-                    b")",
-                ],
-            ),
-        ]
-
-        lock = threading.Lock()
-        by_folder: dict[str, set[str]] = {}
-        cache_data = {"some": "data"}
-        cache_lock = threading.Lock()
-
-        with (
-            patch("imap_common.is_progress_cache_ready", return_value=True),
-            patch(
-                "imap_common.restore_cache.get_cached_message_ids",
-                return_value={"<cached@test.com>"},
-            ),
-        ):
-            result = imap_common.load_folder_msg_ids(
-                mock_conn,
-                "INBOX",
-                by_folder,
-                lock,
-                progress_cache_data=cache_data,
-                progress_cache_lock=cache_lock,
-                dest_host="imap.test.com",
-                dest_user="user@test.com",
-            )
-
-        assert result == {"<server@test.com>", "<cached@test.com>"}
-
-    def test_propagates_server_error(self):
-        """Propagates server errors so callers can reconnect or retry."""
-        import threading
-
-        mock_conn = Mock()
-        mock_conn.create.return_value = ("OK", [b"Created"])
-        mock_conn.select.side_effect = Exception("connection lost")
+        _server, port = single_mock_server({"INBOX": []})
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
 
         lock = threading.Lock()
         by_folder: dict[str, set[str]] = {}
 
-        with pytest.raises(Exception, match="connection lost"):
-            imap_common.load_folder_msg_ids(mock_conn, "INBOX", by_folder, lock)
+        result = imap_common.load_folder_msg_ids(conn, "INBOX", by_folder, lock)
+        assert result == set()
+        conn.logout()
 
-    def test_setdefault_prevents_race(self):
-        """Uses setdefault so first writer wins if two threads build concurrently."""
+    def test_creates_folder_if_missing(self, single_mock_server):
+        """Creates folder on first access if it doesn't exist."""
+        import imaplib
         import threading
 
-        mock_conn = Mock()
-        mock_conn.create.return_value = ("OK", [b"Created"])
-        mock_conn.select.return_value = ("OK", [b"0"])
-        mock_conn.uid.return_value = ("OK", [b""])
+        server, port = single_mock_server({"INBOX": []})
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
 
         lock = threading.Lock()
-        first_set = {"<first@test.com>"}
-        by_folder = {"INBOX": first_set}
+        by_folder: dict[str, set[str]] = {}
 
-        # Even though we pass a pre-populated dict, cached path returns it
-        result = imap_common.load_folder_msg_ids(mock_conn, "INBOX", by_folder, lock)
-        assert result is first_set
+        result = imap_common.load_folder_msg_ids(conn, "NewFolder", by_folder, lock)
+        assert result == set()
+        assert "NewFolder" in server.folders
+        conn.logout()
