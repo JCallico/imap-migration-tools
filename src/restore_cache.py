@@ -8,7 +8,6 @@ The caller decides where the cache file lives by passing a cache directory/root.
 
 from __future__ import annotations
 
-import copy
 import json
 import os
 import re
@@ -28,18 +27,13 @@ def _safe_cache_component(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value or "")
 
 
-def _prepare_cache_for_json(cache_data: dict) -> dict:
-    """Create a deep copy of cache_data suitable for JSON serialization.
-    Removes in-memory helper fields like _ids_set that should not be persisted.
-    """
-    snapshot = copy.deepcopy(cache_data)
-    folders = snapshot.get("folders", {})
-    if isinstance(folders, dict):
-        for folder_entry in folders.values():
-            if isinstance(folder_entry, dict):
-                # Remove the in-memory set cache
-                folder_entry.pop("_ids_set", None)
-    return snapshot
+class _CacheEncoder(json.JSONEncoder):
+    """Serialize sets as lists so cache_data is always JSON-ready."""
+
+    def default(self, obj):
+        if isinstance(obj, set):
+            return list(obj)
+        return super().default(obj)
 
 
 def get_dest_index_cache_path(cache_root: str, dest_host: str, dest_user: str) -> str:
@@ -60,6 +54,10 @@ def load_dest_index_cache(cache_path: str) -> dict:
             data["folders"] = {}
         if not isinstance(data.get("_meta"), dict):
             data["_meta"] = {}
+        # Convert message_ids from JSON lists to sets for O(1) in-memory lookups.
+        for folder_entry in data["folders"].values():
+            if isinstance(folder_entry, dict) and isinstance(folder_entry.get("message_ids"), list):
+                folder_entry["message_ids"] = set(folder_entry["message_ids"])
         return data
     except FileNotFoundError:
         return {"version": RESTORE_CACHE_VERSION, "folders": {}, "_meta": {}}
@@ -71,7 +69,7 @@ def save_dest_index_cache(cache_path: str, cache_data: dict) -> bool:
     try:
         tmp_path = f"{cache_path}.tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(cache_data, f, ensure_ascii=False)
+            json.dump(cache_data, f, ensure_ascii=False, cls=_CacheEncoder)
         os.replace(tmp_path, cache_path)
         return True
     except Exception:
@@ -108,9 +106,9 @@ def get_cached_message_ids(
         if not isinstance(entry, dict):
             return set()
         ids = entry.get("message_ids")
-        if not isinstance(ids, list):
+        if not isinstance(ids, set):
             return set()
-        return {str(x) for x in ids if x}
+        return set(ids)
 
 
 def add_cached_message_id(
@@ -137,21 +135,14 @@ def add_cached_message_id(
             entry = folders[folder_name]
 
         ids = entry.get("message_ids")
-        if not isinstance(ids, list):
-            ids = []
+        if not isinstance(ids, set):
+            ids = set(ids) if isinstance(ids, list) else set()
             entry["message_ids"] = ids
 
-        # Maintain entry-level in-memory set for O(1) lookups (not persisted to JSON)
-        ids_set = entry.get("_ids_set")
-        if ids_set is None:
-            ids_set = set(ids)
-            entry["_ids_set"] = ids_set
-
-        if msg_id in ids_set:
+        if msg_id in ids:
             return False
 
-        ids.append(msg_id)
-        ids_set.add(msg_id)
+        ids.add(msg_id)
 
         meta = cache_data.setdefault("_meta", {})
         if not isinstance(meta, dict):
@@ -192,10 +183,7 @@ def maybe_save_dest_index_cache(
         meta["pending_updates"] = 0
         meta["last_saved_ts"] = now
 
-        # Prepare a clean snapshot for JSON serialization (removes in-memory helper fields)
-        snapshot = _prepare_cache_for_json(cache_data)
-
-    did_write = save_dest_index_cache(cache_path, snapshot)
+    did_write = save_dest_index_cache(cache_path, cache_data)
     if did_write and log_fn is not None:
         log_fn(f"Wrote restore cache ({pending} updates): {cache_path}")
     return did_write
