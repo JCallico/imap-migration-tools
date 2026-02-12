@@ -65,11 +65,11 @@ def load_dest_index_cache(cache_path: str) -> dict:
         return {"version": RESTORE_CACHE_VERSION, "folders": {}, "_meta": {}}
 
 
-def save_dest_index_cache(cache_path: str, cache_data: dict) -> bool:
+def save_dest_index_cache(cache_path: str, json_str: str) -> bool:
     try:
         tmp_path = f"{cache_path}.tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(cache_data, f, ensure_ascii=False, cls=_CacheEncoder)
+            f.write(json_str)
         os.replace(tmp_path, cache_path)
         return True
     except Exception:
@@ -179,13 +179,18 @@ def maybe_save_dest_index_cache(
         if not should_save:
             return False
 
-        # Update meta before writing so the on-disk file reflects the flush decision.
-        meta["pending_updates"] = 0
-        meta["last_saved_ts"] = now
+        # Serialize while holding the lock to get a consistent snapshot.
+        json_str = json.dumps(cache_data, ensure_ascii=False, cls=_CacheEncoder)
 
-    did_write = save_dest_index_cache(cache_path, cache_data)
-    if did_write and log_fn is not None:
-        log_fn(f"Wrote restore cache ({pending} updates): {cache_path}")
+    # Write to disk outside the lock so we don't block workers on I/O.
+    did_write = save_dest_index_cache(cache_path, json_str)
+    if did_write:
+        with cache_lock:
+            meta = cache_data.setdefault("_meta", {})
+            meta["pending_updates"] = max(0, int(meta.get("pending_updates") or 0) - pending)
+            meta["last_saved_ts"] = now
+        if log_fn is not None:
+            log_fn(f"Wrote restore cache ({pending} updates): {cache_path}")
     return did_write
 
 
