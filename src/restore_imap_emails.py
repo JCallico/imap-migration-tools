@@ -155,40 +155,18 @@ def get_eml_files(folder_path):
     return eml_files
 
 
-def email_exists_in_folder(imap_conn, message_id):
-    """
-    Check if an email with the given Message-ID exists in the currently selected folder.
-    """
-    if not message_id:
-        return False
-
-    try:
-        return imap_common.message_exists_in_folder(imap_conn, message_id)
-    except Exception:
-        return False
-
-
-def upload_email(dest, folder_name, raw_content, date_str, message_id, flags=None, check_duplicate=True):
+def upload_email(dest, folder_name, raw_content, date_str, flags=None):
     """
     Upload a single email to the destination folder.
-    Returns UploadResult enum: SUCCESS, ALREADY_EXISTS, or FAILURE.
+    Returns UploadResult enum: SUCCESS or FAILURE.
+
+    Callers are expected to check for duplicates via load_folder_msg_ids()
+    before calling this function, and to ensure the folder exists.
 
     Args:
         flags: Optional string of IMAP flags like "\\Seen" for read emails.
-        check_duplicate: Whether to check for duplicates before uploading.
     """
     try:
-        # Ensure folder exists
-        imap_common.ensure_folder_exists(dest, folder_name)
-
-        # Select folder
-        dest.select(f'"{folder_name}"')
-
-        # Check for duplicates if requested
-        if check_duplicate and message_id and email_exists_in_folder(dest, message_id):
-            return UploadResult.ALREADY_EXISTS
-
-        # Upload with original date and flags
         success = imap_common.append_email(
             dest,
             folder_name,
@@ -285,47 +263,39 @@ def process_restore_batch(
                 target_folder = folder_name
                 remaining_labels = labels
 
-            existing_dest_msg_ids: Optional[set[str]] = None
-            if existing_dest_msg_ids_by_folder is not None:
-                if existing_dest_msg_ids_lock is None:
-                    existing_dest_msg_ids_lock = threading.Lock()
+            existing_dest_msg_ids = imap_common.load_folder_msg_ids(
+                dest,
+                target_folder,
+                existing_dest_msg_ids_by_folder,
+                existing_dest_msg_ids_lock,
+                progress_cache_data,
+                progress_cache_lock,
+                dest_host,
+                dest_user,
+            )
 
-                with existing_dest_msg_ids_lock:
-                    existing_dest_msg_ids = existing_dest_msg_ids_by_folder.get(target_folder)
+            # Check if email already exists on destination using pre-fetched set
+            email_already_on_dest = (
+                message_id and existing_dest_msg_ids is not None and message_id in existing_dest_msg_ids
+            )
 
-                # Lazy-load per-folder progress cache (no destination scan).
-                if existing_dest_msg_ids is None:
-                    built: set[str] = set()
-                    if (
-                        imap_common.is_progress_cache_ready(progress_cache_data, progress_cache_lock)
-                        and dest_host
-                        and dest_user
-                    ):
-                        built = restore_cache.get_cached_message_ids(
-                            progress_cache_data,
-                            progress_cache_lock,
-                            dest_host,
-                            dest_user,
-                            target_folder,
-                        )
-                    with existing_dest_msg_ids_lock:
-                        existing_dest_msg_ids_by_folder.setdefault(target_folder, built)
-                        existing_dest_msg_ids = existing_dest_msg_ids_by_folder[target_folder]
-
-            # Incremental default: if we already know we processed it before, skip entirely.
-            if (
-                not full_restore
-                and message_id
-                and existing_dest_msg_ids is not None
-                and message_id in existing_dest_msg_ids
-            ):
+            # Incremental default: skip entirely if already present
+            if email_already_on_dest and not full_restore:
                 safe_print(f"[{target_folder}] SKIP (already present) | {size_str:<8} | {display_subject}")
                 continue  # Skip to next file
 
-            # Upload to target folder.
-            # Keep server-side duplicate checks enabled to avoid creating duplicates for emails
-            # that exist on the destination but are not in our local progress cache.
-            upload_result = upload_email(dest, target_folder, raw_content, date_str, message_id, flags)
+            if email_already_on_dest:
+                # Full restore: treat as existing for flag sync
+                upload_result = UploadResult.ALREADY_EXISTS
+            else:
+                # Upload — skip per-message SEARCH since we have a pre-fetched set
+                upload_result = upload_email(
+                    dest,
+                    target_folder,
+                    raw_content,
+                    date_str,
+                    flags,
+                )
 
             # Only record progress when upload succeeds or email already exists.
             # Failed uploads should not be marked as processed to allow retry on next run.
@@ -377,12 +347,24 @@ def process_restore_batch(
                         continue
 
                     try:
-                        # Ensure label folder exists
-                        imap_common.ensure_folder_exists(dest, label_folder)
+                        # Get or fetch Message-IDs for label folder (one-time server fetch per folder)
+                        label_folder_msg_ids = imap_common.load_folder_msg_ids(
+                            dest,
+                            label_folder,
+                            existing_dest_msg_ids_by_folder,
+                            existing_dest_msg_ids_lock,
+                            progress_cache_data,
+                            progress_cache_lock,
+                            dest_host,
+                            dest_user,
+                        )
 
-                        # Select and check for duplicate
-                        dest.select(f'"{label_folder}"')
-                        if not email_exists_in_folder(dest, message_id):
+                        # Check duplicate using pre-fetched set instead of per-message SEARCH
+                        label_already_exists = (
+                            label_folder_msg_ids is not None and message_id and message_id in label_folder_msg_ids
+                        )
+
+                        if not label_already_exists:
                             append_success = imap_common.append_email(
                                 dest,
                                 label_folder,
@@ -392,34 +374,6 @@ def process_restore_batch(
                                 ensure_folder=False,
                             )
                             if append_success:
-                                # Look up the correct set for label_folder
-                                label_folder_msg_ids: Optional[set[str]] = None
-                                if existing_dest_msg_ids_by_folder is not None:
-                                    with existing_dest_msg_ids_lock:
-                                        label_folder_msg_ids = existing_dest_msg_ids_by_folder.get(label_folder)
-
-                                    # Lazy-load per-folder progress cache if not yet loaded
-                                    if label_folder_msg_ids is None:
-                                        built: set[str] = set()
-                                        if (
-                                            imap_common.is_progress_cache_ready(
-                                                progress_cache_data,
-                                                progress_cache_lock,
-                                            )
-                                            and dest_host
-                                            and dest_user
-                                        ):
-                                            built = restore_cache.get_cached_message_ids(
-                                                progress_cache_data,
-                                                progress_cache_lock,
-                                                dest_host,
-                                                dest_user,
-                                                label_folder,
-                                            )
-                                        with existing_dest_msg_ids_lock:
-                                            existing_dest_msg_ids_by_folder.setdefault(label_folder, built)
-                                            label_folder_msg_ids = existing_dest_msg_ids_by_folder[label_folder]
-
                                 restore_cache.record_progress(
                                     message_id=message_id,
                                     folder_name=label_folder,
@@ -439,6 +393,8 @@ def process_restore_batch(
                         elif full_restore and apply_flags and flags:
                             imap_common.sync_flags_on_existing(dest, label_folder, message_id, flags, size)
                     except Exception as e:
+                        if imap_oauth2.is_auth_error(e):
+                            raise
                         safe_print(f"  -> Error applying label {label}: {e}")
 
         except Exception as e:
@@ -565,8 +521,16 @@ def restore_folder(
 
         safe_print(f"{len(dest_msg_ids)} existing messages in destination.")
 
-        # Pre-filter files to skip duplicates
-        if dest_msg_ids:
+        # Update destination Message-IDs with what we processed
+        if not full_restore:
+            with existing_dest_msg_ids_lock:
+                existing_dest_msg_ids_by_folder.setdefault(folder_name, set()).update(dest_msg_ids)
+        else:
+            existing_dest_msg_ids_by_folder[folder_name] = dest_msg_ids
+        dest_msg_ids = existing_dest_msg_ids_by_folder[folder_name]
+
+        # Pre-filter files to skip duplicates (skip in full_restore: need to process all for flag/label sync)
+        if dest_msg_ids and not full_restore:
             files_to_restore = pre_filter_eml_files(eml_files, dest_msg_ids)
 
     if not files_to_restore:

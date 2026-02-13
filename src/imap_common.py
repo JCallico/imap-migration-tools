@@ -463,28 +463,6 @@ def parse_message_id_and_subject_from_bytes(raw_message):
         return None, "(No Subject)"
 
 
-def message_exists_in_folder(dest_conn, msg_id):
-    """
-    Checks if a message with the given Message-ID exists in the CURRENTLY SELECTED folder of dest_conn.
-    Only considers non-deleted messages (UNDELETED) so that messages pending expunge
-    don't block uploads of fresh copies.
-    Returns True if found, False otherwise.
-    """
-    if not msg_id:
-        return False
-
-    clean_id = msg_id.replace('"', '\\"')
-    try:
-        typ, data = dest_conn.search(None, f'UNDELETED (HEADER Message-ID "{clean_id}")')
-        if typ != "OK":
-            return False
-
-        dest_ids = data[0].split()
-        return len(dest_ids) > 0
-    except Exception:
-        return False
-
-
 def get_message_ids_in_folder(imap_conn):
     """
     Fetches all Message-IDs from the currently selected folder.
@@ -704,6 +682,55 @@ def delete_orphan_emails(imap_conn, folder_name, source_msg_ids, dest_uid_to_msg
         safe_print(f"Error deleting orphans from {folder_name}: {e}")
 
     return deleted_count
+
+
+def load_folder_msg_ids(
+    imap_conn,
+    folder_name,
+    msg_ids_by_folder,
+    msg_ids_lock,
+    progress_cache_data=None,
+    progress_cache_lock=None,
+    dest_host=None,
+    dest_user=None,
+):
+    """Load Message-IDs for a folder, fetching from server if not yet cached.
+
+    On first call for a folder, SELECTs the folder and fetches all Message-IDs
+    from the server (merged with progress cache). Subsequent calls return the
+    cached set without any IMAP operations.
+
+    Returns the set of Message-IDs, or None if tracking is disabled.
+    """
+    if msg_ids_by_folder is None or msg_ids_lock is None:
+        return None
+
+    with msg_ids_lock:
+        existing = msg_ids_by_folder.get(folder_name)
+
+    if existing is not None:
+        return existing
+
+    # Build from progress cache
+    built: set[str] = set()
+    if is_progress_cache_ready(progress_cache_data, progress_cache_lock) and dest_host and dest_user:
+        built = restore_cache.get_cached_message_ids(
+            progress_cache_data,
+            progress_cache_lock,
+            dest_host,
+            dest_user,
+            folder_name,
+        )
+
+    # Fetch from server for a comprehensive set (one-time cost per folder)
+    ensure_folder_exists(imap_conn, folder_name)
+    imap_conn.select(f'"{folder_name}"')
+    server_ids = set(get_message_ids_in_folder(imap_conn).values())
+    built.update(server_ids)
+
+    with msg_ids_lock:
+        msg_ids_by_folder.setdefault(folder_name, built)
+        return msg_ids_by_folder[folder_name]
 
 
 def load_manifest(local_path, filename):

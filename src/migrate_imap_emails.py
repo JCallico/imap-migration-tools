@@ -194,7 +194,7 @@ def process_single_uid(
     label_index,
     check_duplicate,
     full_migrate: bool = False,
-    existing_dest_msg_ids: Optional[set[str]] = None,
+    existing_dest_msg_ids_by_folder: Optional[dict[str, set[str]]] = None,
     existing_dest_msg_ids_lock: Optional[threading.Lock] = None,
     progress_cache_path: Optional[str] = None,
     progress_cache_data: Optional[dict] = None,
@@ -255,28 +255,38 @@ def process_single_uid(
         else:
             target_folder = folder_name
 
-        imap_common.ensure_folder_exists(dest, target_folder)
-        dest.select(f'"{target_folder}"')
-
-        is_cached = False
         is_duplicate = False
 
-        # check cache first if available
+        # Fast path: check source folder cache to skip without any IMAP ops
+        cached_dest_msg_ids = (
+            existing_dest_msg_ids_by_folder.get(folder_name) if existing_dest_msg_ids_by_folder else None
+        )
         cache_hit = False
-        if not full_migrate and msg_id and existing_dest_msg_ids is not None:
+        if not full_migrate and msg_id and cached_dest_msg_ids is not None:
             if existing_dest_msg_ids_lock is not None:
                 with existing_dest_msg_ids_lock:
-                    cache_hit = msg_id in existing_dest_msg_ids
+                    cache_hit = msg_id in cached_dest_msg_ids
             else:
-                cache_hit = msg_id in existing_dest_msg_ids
+                cache_hit = msg_id in cached_dest_msg_ids
 
         if cache_hit:
-            is_cached = True
             is_duplicate = True
             safe_print(f"[{target_folder}] SKIP (cached) | {size_str:<8} | {subject[:40]}")
-        elif bool(msg_id and check_duplicate and imap_common.message_exists_in_folder(dest, msg_id)):
-            is_duplicate = True
-            safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {subject[:40]}")
+        elif msg_id and check_duplicate:
+            # Check target folder using pre-fetched Message-ID set (one-time fetch per folder)
+            target_msg_ids = imap_common.load_folder_msg_ids(
+                dest,
+                target_folder,
+                existing_dest_msg_ids_by_folder,
+                existing_dest_msg_ids_lock,
+                progress_cache_data,
+                progress_cache_lock,
+                dest_host,
+                dest_user,
+            )
+            if target_msg_ids is not None and msg_id in target_msg_ids:
+                is_duplicate = True
+                safe_print(f"[{target_folder}] SKIP (exists) | {size_str:<8} | {subject[:40]}")
 
         if is_duplicate:
             if preserve_flags and flags and msg_id:
@@ -301,10 +311,13 @@ def process_single_uid(
 
         # Update cache if processed effectively (copied or duplicate)
         if msg_id:
+            cached_dest_msg_ids = (
+                existing_dest_msg_ids_by_folder.get(folder_name) if existing_dest_msg_ids_by_folder else None
+            )
             restore_cache.record_progress(
                 message_id=msg_id,
                 folder_name=folder_name,
-                existing_dest_msg_ids=existing_dest_msg_ids,
+                existing_dest_msg_ids=cached_dest_msg_ids,
                 existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
                 progress_cache_path=progress_cache_path,
                 progress_cache_data=progress_cache_data,
@@ -327,9 +340,22 @@ def process_single_uid(
                 ):
                     continue
                 try:
-                    imap_common.ensure_folder_exists(dest, label_folder)
-                    dest.select(f'"{label_folder}"')
-                    if not imap_common.message_exists_in_folder(dest, msg_id):
+                    # Get or fetch Message-IDs for label folder (one-time server fetch per folder)
+                    label_folder_msg_ids = imap_common.load_folder_msg_ids(
+                        dest,
+                        label_folder,
+                        existing_dest_msg_ids_by_folder,
+                        existing_dest_msg_ids_lock,
+                        progress_cache_data,
+                        progress_cache_lock,
+                        dest_host,
+                        dest_user,
+                    )
+
+                    # Check duplicate using pre-fetched set instead of per-message SEARCH
+                    label_already_exists = label_folder_msg_ids is not None and msg_id in label_folder_msg_ids
+
+                    if not label_already_exists:
                         valid_flags = f"({flags})" if (preserve_flags and flags) else None
                         if imap_common.append_email(
                             dest,
@@ -339,6 +365,10 @@ def process_single_uid(
                             valid_flags,
                             ensure_folder=False,
                         ):
+                            # Update in-memory set so subsequent emails see this one
+                            if label_folder_msg_ids is not None and existing_dest_msg_ids_lock is not None:
+                                with existing_dest_msg_ids_lock:
+                                    label_folder_msg_ids.add(msg_id)
                             safe_print(f"  -> Applied label: {label}")
                             if preserve_flags and flags:
                                 for flag in flags.split():
@@ -348,6 +378,8 @@ def process_single_uid(
                     elif preserve_flags and flags:
                         imap_common.sync_flags_on_existing(dest, label_folder, msg_id, flags, size)
                 except Exception as e:
+                    if imap_oauth2.is_auth_error(e):
+                        raise
                     safe_print(f"  -> Error applying label {label}: {e}")
 
         deleted = 0
@@ -383,7 +415,7 @@ def process_batch(
     label_index=None,
     check_duplicate=True,
     full_migrate=False,
-    existing_dest_msg_ids: Optional[set[str]] = None,
+    existing_dest_msg_ids_by_folder: Optional[dict[str, set[str]]] = None,
     existing_dest_msg_ids_lock: Optional[threading.Lock] = None,
     progress_cache_path: Optional[str] = None,
     progress_cache_data: Optional[dict] = None,
@@ -400,14 +432,6 @@ def process_batch(
     except Exception as e:
         safe_print(f"Error selecting folder {folder_name} in worker: {e}")
         return False, 0
-
-    if not gmail_mode:
-        try:
-            imap_common.ensure_folder_exists(dest, folder_name)
-            dest.select(f'"{folder_name}"')
-        except Exception as e:
-            safe_print(f"Error selecting folder {folder_name} in worker: {e}")
-            return False, 0
 
     # Extract info for cache update if needed
     dest_host = dest_conf.get("host")
@@ -436,18 +460,11 @@ def process_batch(
                 safe_print(f"[{folder_name}] ERROR: Source connection/folder lost for UID {uid_str}")
                 return False, 0
 
-            if not gmail_mode:
-                dest, dest_ok = imap_session.ensure_folder_session(dest, dest_conf, folder_name, readonly=False)
-                thread_local.dest = dest
-                if not dest_ok:
-                    safe_print(f"[{folder_name}] ERROR: Dest connection/folder lost for UID {uid_str}")
-                    return False, 0
-            else:
-                dest = imap_session.ensure_connection(dest, dest_conf)
-                thread_local.dest = dest
-                if not dest:
-                    safe_print(f"[{folder_name}] ERROR: Dest connection lost for UID {uid_str}")
-                    return False, 0
+            dest = imap_session.ensure_connection(dest, dest_conf)
+            thread_local.dest = dest
+            if not dest:
+                safe_print(f"[{folder_name}] ERROR: Dest connection lost for UID {uid_str}")
+                return False, 0
 
             success, src, dest, deleted = process_single_uid(
                 src,
@@ -461,7 +478,7 @@ def process_batch(
                 label_index,
                 check_duplicate,
                 full_migrate,
-                existing_dest_msg_ids=existing_dest_msg_ids,
+                existing_dest_msg_ids_by_folder=existing_dest_msg_ids_by_folder,
                 existing_dest_msg_ids_lock=existing_dest_msg_ids_lock,
                 progress_cache_path=progress_cache_path,
                 progress_cache_data=progress_cache_data,
@@ -512,8 +529,8 @@ def migrate_folder(
     safe_print(f"--- Preparing Folder: {folder_name} ---")
 
     # Load cache if provided
-    existing_dest_msg_ids = None
-    existing_dest_msg_ids_lock = None
+    existing_dest_msg_ids_by_folder: Optional[dict[str, set[str]]] = {}
+    existing_dest_msg_ids_lock: Optional[threading.Lock] = threading.Lock()
     dest_host = dest_conf.get("host")
     dest_user = dest_conf.get("user")
     cache_file = progress_cache_file
@@ -532,19 +549,18 @@ def migrate_folder(
 
         if imap_common.is_progress_cache_ready(progress_cache_data, progress_cache_lock):
             try:
-                existing_dest_msg_ids = restore_cache.get_cached_message_ids(
+                cache_ids = restore_cache.get_cached_message_ids(
                     progress_cache_data,
                     progress_cache_lock,
                     dest_host,
                     dest_user,
                     folder_name,
                 )
-                existing_dest_msg_ids_lock = threading.Lock()
-                safe_print(f"Cache has {len(existing_dest_msg_ids)} Message-IDs for this folder.")
+                existing_dest_msg_ids_by_folder[folder_name] = cache_ids
+                safe_print(f"Cache has {len(cache_ids)} Message-IDs for this folder.")
             except Exception as e:
                 safe_print(f"Warning: Failed to read cache for folder '{folder_name}': {e}")
-                existing_dest_msg_ids = set()
-                existing_dest_msg_ids_lock = threading.Lock()
+                existing_dest_msg_ids_by_folder[folder_name] = set()
 
     # Maintain folder structure (skip in Gmail mode; worker will create/select target label folders)
     if not gmail_mode:
@@ -621,8 +637,12 @@ def migrate_folder(
         safe_print(f"Pre-fetching destination Message-IDs for {folder_name}...")
         dest_uid_to_msgid = imap_common.get_message_ids_in_folder(dest)
         dest_msg_ids = set(dest_uid_to_msgid.values())
-        if existing_dest_msg_ids and not full_migrate:
-            dest_msg_ids.update(existing_dest_msg_ids)
+        # Update destination Message-IDs with what we processed
+        if not full_migrate:
+            existing_dest_msg_ids_by_folder.setdefault(folder_name, set()).update(dest_msg_ids)
+        else:
+            existing_dest_msg_ids_by_folder[folder_name] = dest_msg_ids
+        dest_msg_ids = existing_dest_msg_ids_by_folder[folder_name]
         safe_print(f"Found {len(dest_msg_ids)} existing messages in destination (server + cache).")
 
     # Pre-fetch source Message-IDs and filter out duplicates before processing
@@ -671,7 +691,7 @@ def migrate_folder(
                     label_index,
                     check_duplicate,
                     full_migrate,
-                    existing_dest_msg_ids,
+                    existing_dest_msg_ids_by_folder,
                     existing_dest_msg_ids_lock,
                     cache_file,
                     progress_cache_data,

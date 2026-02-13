@@ -320,48 +320,6 @@ class TestDetectTrashFolder:
         assert result is None
 
 
-class TestMessageExistsInFolder:
-    """Tests for message_exists_in_folder function."""
-
-    def test_no_message_id(self):
-        """Test returns False when message_id is None."""
-        mock_conn = Mock()
-        result = imap_common.message_exists_in_folder(mock_conn, None)
-        assert result is False
-
-    def test_search_fails(self):
-        """Test returns False when search fails."""
-        mock_conn = Mock()
-        mock_conn.search.return_value = ("NO", [])
-
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
-        assert result is False
-
-    def test_no_matches(self):
-        """Test returns False when no matches found."""
-        mock_conn = Mock()
-        mock_conn.search.return_value = ("OK", [b""])
-
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
-        assert result is False
-
-    def test_match_found(self):
-        """Test returns True when message with same ID found."""
-        mock_conn = Mock()
-        mock_conn.search.return_value = ("OK", [b"1"])
-
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
-        assert result is True
-
-    def test_search_exception(self):
-        """Test returns False when search raises an exception."""
-        mock_conn = Mock()
-        mock_conn.search.side_effect = Exception("Connection error")
-
-        result = imap_common.message_exists_in_folder(mock_conn, "<msg-id>")
-        assert result is False
-
-
 class TestExtractMessageId:
     """Tests for extract_message_id function."""
 
@@ -807,3 +765,77 @@ class TestGetMessageIdsInFolder:
 
         result = imap_common.get_message_ids_in_folder(mock_conn)
         assert set(result.values()) == {"<valid@example.com>"}
+
+
+class TestLoadFolderMsgIds:
+    """Tests for load_folder_msg_ids() using the mock IMAP server."""
+
+    def test_returns_none_when_disabled(self):
+        """Returns None if dict or lock is None (tracking disabled)."""
+        mock_conn = Mock()
+        import threading
+
+        lock = threading.Lock()
+        assert imap_common.load_folder_msg_ids(mock_conn, "INBOX", None, lock) is None
+        assert imap_common.load_folder_msg_ids(mock_conn, "INBOX", {}, None) is None
+        assert imap_common.load_folder_msg_ids(mock_conn, "INBOX", None, None) is None
+
+    def test_fetches_message_ids_from_server(self, single_mock_server):
+        """Fetches Message-IDs from server and caches them."""
+        import imaplib
+        import threading
+
+        server_data = {
+            "TestFolder": [
+                b"Subject: A\r\nMessage-ID: <a@test.com>\r\n\r\nBody A",
+                b"Subject: B\r\nMessage-ID: <b@test.com>\r\n\r\nBody B",
+            ]
+        }
+        _server, port = single_mock_server(server_data)
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+
+        lock = threading.Lock()
+        by_folder: dict[str, set[str]] = {}
+
+        result = imap_common.load_folder_msg_ids(conn, "TestFolder", by_folder, lock)
+        assert result == {"<a@test.com>", "<b@test.com>"}
+        assert "TestFolder" in by_folder
+
+        # Second call returns the same cached set object
+        result2 = imap_common.load_folder_msg_ids(conn, "TestFolder", by_folder, lock)
+        assert result2 is result
+        conn.logout()
+
+    def test_empty_folder(self, single_mock_server):
+        """Returns empty set for a folder with no messages."""
+        import imaplib
+        import threading
+
+        _server, port = single_mock_server({"INBOX": []})
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+
+        lock = threading.Lock()
+        by_folder: dict[str, set[str]] = {}
+
+        result = imap_common.load_folder_msg_ids(conn, "INBOX", by_folder, lock)
+        assert result == set()
+        conn.logout()
+
+    def test_creates_folder_if_missing(self, single_mock_server):
+        """Creates folder on first access if it doesn't exist."""
+        import imaplib
+        import threading
+
+        server, port = single_mock_server({"INBOX": []})
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+
+        lock = threading.Lock()
+        by_folder: dict[str, set[str]] = {}
+
+        result = imap_common.load_folder_msg_ids(conn, "NewFolder", by_folder, lock)
+        assert result == set()
+        assert "NewFolder" in server.folders
+        conn.logout()
