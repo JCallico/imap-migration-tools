@@ -767,6 +767,33 @@ class TestGetMessageIdsInFolder:
         assert set(result.values()) == {"<valid@example.com>"}
 
 
+class TestGetMessageIdsExcludesDeleted:
+    """Tests that get_message_ids_in_folder excludes \\Deleted messages."""
+
+    def test_excludes_deleted_messages(self, single_mock_server):
+        """Deleted messages should not appear in the result."""
+        import imaplib
+
+        server_data = {
+            "INBOX": [
+                {"uid": 1, "flags": set(), "content": b"Message-ID: <alive@test.com>\r\n\r\nBody"},
+                {"uid": 2, "flags": {"\\Deleted"}, "content": b"Message-ID: <dead@test.com>\r\n\r\nBody"},
+                {"uid": 3, "flags": {"\\Seen"}, "content": b"Message-ID: <seen@test.com>\r\n\r\nBody"},
+            ]
+        }
+        _server, port = single_mock_server(server_data)
+        conn = imaplib.IMAP4("localhost", port)
+        conn.login("user", "pass")
+        conn.select('"INBOX"')
+
+        result = imap_common.get_message_ids_in_folder(conn)
+        msg_ids = set(result.values())
+        assert "<alive@test.com>" in msg_ids
+        assert "<seen@test.com>" in msg_ids
+        assert "<dead@test.com>" not in msg_ids
+        conn.logout()
+
+
 class TestLoadFolderMsgIds:
     """Tests for load_folder_msg_ids() using the mock IMAP server."""
 
