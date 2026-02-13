@@ -29,6 +29,10 @@ class TestIsSpecialFolder:
         """Test that Calendar is detected as special folder."""
         assert provider_exchange.is_special_folder("Calendar") is True
 
+    def test_contacts_is_special(self):
+        """Test that Contacts is detected as special folder."""
+        assert provider_exchange.is_special_folder("Contacts") is True
+
     def test_inbox_is_not_special(self):
         """Test that INBOX is not a special folder."""
         assert provider_exchange.is_special_folder("INBOX") is False
@@ -76,11 +80,12 @@ class TestExchangeConstants:
         assert "Suggested Contacts" in provider_exchange.EXCHANGE_SKIP_FOLDERS
         assert "Conversation History" in provider_exchange.EXCHANGE_SKIP_FOLDERS
         assert "Calendar" in provider_exchange.EXCHANGE_SKIP_FOLDERS
+        assert "Contacts" in provider_exchange.EXCHANGE_SKIP_FOLDERS
 
     def test_exchange_skip_folders_count(self):
         """Test that EXCHANGE_SKIP_FOLDERS has expected number of entries."""
         # This test will catch if folders are accidentally added/removed
-        assert len(provider_exchange.EXCHANGE_SKIP_FOLDERS) == 3
+        assert len(provider_exchange.EXCHANGE_SKIP_FOLDERS) == 4
 
     def test_inbox_not_in_skip_folders(self):
         """Test that INBOX is not in EXCHANGE_SKIP_FOLDERS."""

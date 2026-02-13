@@ -7,9 +7,10 @@ Constants and functions specific to Microsoft Exchange/Outlook IMAP implementati
 # Exchange/Outlook folders that typically can't be backed up via IMAP
 # These often contain proprietary data that Exchange returns as error messages
 EXCHANGE_SKIP_FOLDERS = {
-    "Suggested Contacts",
-    "Conversation History",
     "Calendar",
+    "Contacts",
+    "Conversation History",
+    "Suggested Contacts",
 }
 
 
