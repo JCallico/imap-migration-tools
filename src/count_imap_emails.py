@@ -82,8 +82,8 @@ def count_emails(imap_server, username, password=None, oauth2_token=None):
                     print(f"{display_name:<40} {'Skipped':>10}")
                     continue
 
-                # Search for all emails
-                status, data = mail.search(None, "ALL")
+                # Search for undeleted emails
+                status, data = mail.search(None, "UNDELETED")
 
                 if status == "OK":
                     # data[0] is space separated IDs

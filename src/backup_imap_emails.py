@@ -228,7 +228,7 @@ def get_message_info_in_folder_with_conf(imap_conn, folder_name, src_conf, progr
         return (message_info, imap_conn)
 
     try:
-        resp, data = imap_conn.uid("search", None, "ALL")
+        resp, data = imap_conn.uid("search", None, "UNDELETED")
         if resp != "OK" or not data or not data[0]:
             return (message_info, imap_conn)
 
@@ -606,8 +606,8 @@ def backup_folder(src_main, folder_name, local_base_path, src_conf, dest_delete=
         safe_print(f"Skipping {folder_name}: {e}")
         return
 
-    # Search all
-    resp, data = src_main.uid("search", None, "ALL")
+    # Search non-deleted
+    resp, data = src_main.uid("search", None, "UNDELETED")
     if resp != "OK":
         return
 

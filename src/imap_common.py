@@ -465,13 +465,13 @@ def parse_message_id_and_subject_from_bytes(raw_message):
 
 def get_message_ids_in_folder(imap_conn):
     """
-    Fetches all Message-IDs from the currently selected folder.
+    Fetches Message-IDs for non-deleted messages in the currently selected folder.
     Returns a dict mapping UID (bytes) -> Message-ID (str).
     UIDs without a Message-ID are not included in the result.
     Use set(result.values()) to get just the Message-ID set.
     """
     try:
-        resp, data = imap_conn.uid("search", None, "ALL")
+        resp, data = imap_conn.uid("search", None, "UNDELETED")
         if resp != "OK" or not data[0].strip():
             return {}
     except Exception as e:
@@ -604,7 +604,7 @@ def sync_flags_on_existing(imap_conn, folder_name, message_id, flags, size):
         imap_conn.select(f'"{folder_name}"')
 
         clean_id = message_id.strip("<>").replace('"', '\\"')
-        typ, data = imap_conn.search(None, f'HEADER Message-ID "{clean_id}"')
+        typ, data = imap_conn.search(None, "UNDELETED", f'HEADER Message-ID "{clean_id}"')
         if typ != "OK" or not data or not data[0]:
             return
 
