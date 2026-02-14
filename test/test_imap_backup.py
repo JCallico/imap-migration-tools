@@ -17,7 +17,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-import backup_imap_emails
+import imap_backup as backup_imap_emails
 import imap_common
 import provider_gmail
 from conftest import temp_argv, temp_env

@@ -30,11 +30,11 @@ dependencies = [
 "Bug Tracker" = "https://github.com/jcallico/imap-migration-tools/issues"
 
 [project.scripts]
-imap-backup = "backup_imap_emails:main"
-imap-restore = "restore_imap_emails:main"
-imap-migrate = "migrate_imap_emails:main"
-imap-count = "count_imap_emails:main"
-imap-compare = "compare_imap_folders:main"
+imap-backup = "imap_backup:main"
+imap-restore = "imap_restore:main"
+imap-migrate = "imap_migrate:main"
+imap-count = "imap_count:main"
+imap-compare = "imap_compare:main"
 
 [tool.setuptools.package-dir]
 "" = "src"

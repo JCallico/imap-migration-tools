@@ -11,8 +11,8 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import imap_common
+import imap_migrate as migrate_imap_emails
 import imap_session
-import migrate_imap_emails
 import restore_cache
 from conftest import make_mock_connection, temp_argv, temp_env
 

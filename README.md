@@ -16,7 +16,7 @@ This repository contains a set of Python scripts designed to migrate emails betw
 
 ### The Scripts
 
-1. **`migrate_imap_emails.py`** (The Solution)
+1. **`imap_migrate.py`** (The Solution)
    - Migrates emails folder-by-folder.
    - **Multi-threaded**: Uses a thread pool to copy messages in parallel for high speed.
   - **Smart De-duplication**: Checks if a message already exists in the destination (matching Message-ID) and skips it if found.
@@ -28,17 +28,17 @@ This repository contains a set of Python scripts designed to migrate emails betw
    - **Incremental Cache**: Supports `--migrate-cache <path>` to store a local map of processed emails, drastically speeding up subsequent runs by skipping known messages.
    - **Configurable**: Adjustable concurrency and batch sizes to respect server rate limits.
 
-2. **`compare_imap_folders.py`** (The Validator)
+2. **`imap_compare.py`** (The Validator)
    - Connects to both Source and Destination accounts.
    - Prints a side-by-side comparison table of message counts for every folder.
   - Supports comparing IMAP to a local backup folder (`.eml` files) as either the source or destination.
   - Essential for verifying that the migration was successful and that counts match.
 
-3. **`count_imap_emails.py`** (The Investigator)
+3. **`imap_count.py`** (The Investigator)
   - Counts emails in all folders for a single IMAP account (initial assessment / sizing).
   - Also supports counting a local backup folder (`.eml` files) via `--path` (or `BACKUP_LOCAL_PATH`).
 
-4. **`backup_imap_emails.py`** (The Backup)
+4. **`imap_backup.py`** (The Backup)
    - Downloads emails from an IMAP account to a local disk.
    - **Format**: Saves emails as individual `.eml` files (RFC 5322), compatible with Outlook, Thunderbird, and Apple Mail.
    - **Structure**: Replicates the IMAP folder hierarchy locally.
@@ -46,7 +46,7 @@ This repository contains a set of Python scripts designed to migrate emails betw
    - **Sync Mode**: Optionally deletes local `.eml` files that no longer exist on the server (`--dest-delete`).
    - **Gmail Labels Preservation**: Creates a `labels_manifest.json` file mapping each email's Message-ID to its Gmail labels, enabling proper restoration with labels intact.
 
-5. **`restore_imap_emails.py`** (The Restore)
+5. **`imap_restore.py`** (The Restore)
    - Uploads emails from a local backup to an IMAP server.
    - **Format**: Reads `.eml` files and uploads them preserving original dates.
    - **Structure**: Recreates the folder hierarchy on the destination server.
@@ -158,7 +158,7 @@ You can configure the scripts using **Environment Variables** (recommended for s
 
 2. **Run:**
    ```bash
-   python3 migrate_imap_emails.py
+   python3 imap_migrate.py
    ```
 
 #### Windows (PowerShell)
@@ -175,7 +175,7 @@ You can configure the scripts using **Environment Variables** (recommended for s
 
 2. **Run:**
    ```powershell
-   python migrate_imap_emails.py
+   python imap_migrate.py
    ```
 
 ### Method 2: Command Line Arguments (Overrides)
@@ -183,7 +183,7 @@ All scripts support command-line arguments which take precedence over environmen
 
 **Migration:**
 ```bash
-python3 migrate_imap_emails.py \
+python3 imap_migrate.py \
   --src-host "imap.gmail.com" \
   --src-user "me@gmail.com" \
   --src-pass "your-app-password" \
@@ -196,7 +196,7 @@ python3 migrate_imap_emails.py \
 
 **Comparison:**
 ```bash
-python3 compare_imap_folders.py \
+python3 imap_compare.py \
   --src-host "imap.gmail.com" \
   --src-user "me@gmail.com" \
   --src-pass "your-app-password" \
@@ -205,14 +205,14 @@ python3 compare_imap_folders.py \
   --dest-pass "your-app-password"
 
 # Compare IMAP source to a local backup folder
-python3 compare_imap_folders.py \
+python3 imap_compare.py \
   --src-host "imap.gmail.com" \
   --src-user "me@gmail.com" \
   --src-pass "your-app-password" \
   --dest-path "./my_backup"
 
 # Compare a local backup folder to an IMAP destination
-python3 compare_imap_folders.py \
+python3 imap_compare.py \
   --src-path "./my_backup" \
   --dest-host "imap.other.com" \
   --dest-user "you@domain.com" \
@@ -221,23 +221,23 @@ python3 compare_imap_folders.py \
 
 **Counting:**
 ```bash
-python3 count_imap_emails.py \
+python3 imap_count.py \
    --host "imap.gmail.com" \
    --user "me@gmail.com" \
    --pass "secret"
 
 # Count a local backup folder
-python3 count_imap_emails.py \
+python3 imap_count.py \
    --path "./my_backup"
 
 # Or via environment variable
 export BACKUP_LOCAL_PATH="./my_backup"
-python3 count_imap_emails.py
+python3 imap_count.py
 ```
 
 **Counting (OAuth2):**
 ```bash
-python3 count_imap_emails.py \
+python3 imap_count.py \
    --host "imap.gmail.com" \
    --user "me@gmail.com" \
    --oauth2-client-id "id" \
@@ -248,12 +248,12 @@ export IMAP_HOST="imap.gmail.com"
 export IMAP_USERNAME="me@gmail.com"
 export OAUTH2_CLIENT_ID="id"
 export OAUTH2_CLIENT_SECRET="secret"  # Required for Google
-python3 count_imap_emails.py
+python3 imap_count.py
 ```
 
 **Backup:**
 ```bash
-python3 backup_imap_emails.py \
+python3 imap_backup.py \
   --src-host "imap.gmail.com" \
   --src-user "me@gmail.com" \
   --src-pass "your-app-password" \
@@ -265,7 +265,7 @@ python3 backup_imap_emails.py \
 ### 1. Full Migration
 Migrate all folders from Source to Destination.
 ```bash
-python3 migrate_imap_emails.py \
+python3 imap_migrate.py \
   --src-host "imap.gmail.com" \
   --src-user "source@gmail.com" \
   --src-pass "source-app-password" \
@@ -278,7 +278,7 @@ python3 migrate_imap_emails.py \
 For Gmail -> Gmail migrations, `--gmail-mode` migrates only `[Gmail]/All Mail` (no duplicates) and applies labels by copying messages into label folders.
 
 ```bash
-python3 migrate_imap_emails.py \
+python3 imap_migrate.py \
   --gmail-mode \
   --src-host "imap.gmail.com" \
   --src-user "source@gmail.com" \
@@ -292,7 +292,7 @@ python3 migrate_imap_emails.py \
 Use a local cache file to remember processed emails. Use this for large migrations that may be interrupted or need to run multiple times.
 
 ```bash
-python3 migrate_imap_emails.py \
+python3 imap_migrate.py \
   --src-host "imap.source.com" \
   --src-user "source" \
   --src-pass "pass" \
@@ -310,7 +310,7 @@ Preserve IMAP flags (`\Seen`, `\Flagged`, `\Answered`, `\Draft`) during migratio
 If an email already exists on the destination (duplicate), the script can still sync missing flags on the existing message.
 
 ```bash
-python3 migrate_imap_emails.py \
+python3 imap_migrate.py \
   --preserve-flags \
   --src-host "imap.example.com" \
   --src-user "source@example.com" \
@@ -323,8 +323,8 @@ python3 migrate_imap_emails.py \
 ### 2. Single Folder Migration
 Migrate ONLY a specific folder (e.g., trying to fix just "Important" or "Sent").
 ```bash
-# Syntax: python3 migrate_imap_emails.py "[Folder Name]"
-python3 migrate_imap_emails.py \
+# Syntax: python3 imap_migrate.py "[Folder Name]"
+python3 imap_migrate.py \
   --src-host "imap.gmail.com" \
   --src-user "source@gmail.com" \
   --src-pass "source-app-password" \
@@ -338,7 +338,7 @@ python3 migrate_imap_emails.py \
 Migrate and **delete** from source immediately after verifying the copy.
 ```bash
 # Using flag
-python3 migrate_imap_emails.py \
+python3 imap_migrate.py \
   --src-host "imap.gmail.com" \
   --src-user "source@gmail.com" \
   --src-pass "source-app-password" \
@@ -348,7 +348,7 @@ python3 migrate_imap_emails.py \
   --src-delete
 
 # Or specific folder with delete
-python3 migrate_imap_emails.py \
+python3 imap_migrate.py \
   --src-host "imap.gmail.com" \
   --src-user "source@gmail.com" \
   --src-pass "source-app-password" \
@@ -365,7 +365,7 @@ Keep destination in sync by deleting emails that no longer exist in the source.
 Note: `--dest-delete` is not supported in `--gmail-mode`.
 ```bash
 # Migration: Delete destination emails not found in source
-python3 migrate_imap_emails.py \
+python3 imap_migrate.py \
   --src-host "imap.gmail.com" \
   --src-user "source@gmail.com" \
   --src-pass "source-app-password" \
@@ -375,7 +375,7 @@ python3 migrate_imap_emails.py \
   --dest-delete
 
 # Backup: Delete local .eml files not found on server
-python3 backup_imap_emails.py \
+python3 imap_backup.py \
   --src-host "imap.gmail.com" \
   --src-user "source@gmail.com" \
   --src-pass "source-app-password" \
@@ -383,7 +383,7 @@ python3 backup_imap_emails.py \
   --dest-delete
 
 # Restore: Delete server emails not found in local backup
-python3 restore_imap_emails.py \
+python3 imap_restore.py \
   --src-path "./backup" \
   --dest-host "imap.other.com" \
   --dest-user "dest@domain.com" \
@@ -396,7 +396,7 @@ python3 restore_imap_emails.py \
 ### 5. Verify Migration
 Compare counts between source and destination.
 ```bash
-python3 compare_imap_folders.py \
+python3 imap_compare.py \
   --src-host "imap.gmail.com" \
   --src-user "source@gmail.com" \
   --src-pass "source-app-password" \
@@ -405,14 +405,14 @@ python3 compare_imap_folders.py \
   --dest-pass "dest-app-password"
 
 # IMAP source -> local backup destination
-python3 compare_imap_folders.py \
+python3 imap_compare.py \
   --src-host "imap.gmail.com" \
   --src-user "source@gmail.com" \
   --src-pass "source-app-password" \
   --dest-path "./my_backup"
 
 # local backup source -> IMAP destination
-python3 compare_imap_folders.py \
+python3 imap_compare.py \
   --src-path "./my_backup" \
   --dest-host "imap.other.com" \
   --dest-user "dest@domain.com" \
@@ -430,21 +430,21 @@ INBOX                   | 1250         | 1250       | MATCH
 Download all your emails to your computer as `.eml` files.
 ```bash
 # Backup all folders from an IMAP account to a local folder
-python3 backup_imap_emails.py \
+python3 imap_backup.py \
   --src-host "imap.gmail.com" \
   --src-user "you@gmail.com" \
   --src-pass "your-app-password" \
   --dest-path "./backup_folder"
 
 # Or via command line
-python3 backup_imap_emails.py \
+python3 imap_backup.py \
   --src-host "imap.gmail.com" \
   --src-user "you@gmail.com" \
   --src-pass "your-app-password" \
   --dest-path "/Users/jdoe/Documents/Emails"
 
 # Backup single folder
-python3 backup_imap_emails.py \
+python3 imap_backup.py \
   --src-host "imap.gmail.com" \
   --src-user "you@gmail.com" \
   --src-pass "your-app-password" \
@@ -453,18 +453,18 @@ python3 backup_imap_emails.py \
 ```
 
 ### 6a. Compare IMAP vs Local Backup
-Use `compare_imap_folders.py` to validate an IMAP account against a local backup created by `backup_imap_emails.py`.
+Use `imap_compare.py` to validate an IMAP account against a local backup created by `imap_backup.py`.
 
 ```bash
 # Option 1: IMAP source -> local destination
-python3 compare_imap_folders.py \
+python3 imap_compare.py \
   --src-host "imap.gmail.com" \
   --src-user "you@gmail.com" \
   --src-pass "your-app-password" \
   --dest-path "./my_backup"
 
 # Option 2: local source -> IMAP destination
-python3 compare_imap_folders.py \
+python3 imap_compare.py \
   --src-path "./my_backup" \
   --dest-host "imap.other.com" \
   --dest-user "you@domain.com" \
@@ -479,15 +479,15 @@ export DEST_LOCAL_PATH="./my_backup"
 ```
 
 ### 6b. Count a Local Backup
-Use `count_imap_emails.py` to get per-folder counts from a local backup created by `backup_imap_emails.py`.
+Use `imap_count.py` to get per-folder counts from a local backup created by `imap_backup.py`.
 
 ```bash
 # Option 1: explicit path
-python3 count_imap_emails.py --path "./my_backup"
+python3 imap_count.py --path "./my_backup"
 
 # Option 2: environment variable
 export BACKUP_LOCAL_PATH="./my_backup"
-python3 count_imap_emails.py
+python3 imap_count.py
 ```
 
 ### 7. Gmail Backup with Labels Preservation
@@ -495,7 +495,7 @@ When backing up a Gmail account, use `--gmail-mode` for the recommended workflow
 
 ```bash
 # Recommended: Use --gmail-mode for simplest workflow
-python3 backup_imap_emails.py \
+python3 imap_backup.py \
   --src-host "imap.gmail.com" \
   --src-user "you@gmail.com" \
   --src-pass "your-app-password" \
@@ -505,7 +505,7 @@ python3 backup_imap_emails.py \
 
 This is equivalent to the more verbose:
 ```bash
-python3 backup_imap_emails.py \
+python3 imap_backup.py \
   --src-host "imap.gmail.com" \
   --src-user "you@gmail.com" \
   --src-pass "your-app-password" \
@@ -517,7 +517,7 @@ python3 backup_imap_emails.py \
 **For large accounts (100K+ emails)**, you can build the manifest first to test:
 ```bash
 # Step 1: Build manifest only (fast, no download)
-python3 backup_imap_emails.py \
+python3 imap_backup.py \
   --src-host "imap.gmail.com" \
   --src-user "you@gmail.com" \
   --src-pass "your-app-password" \
@@ -525,7 +525,7 @@ python3 backup_imap_emails.py \
   --manifest-only
 
 # Step 2: Download emails (can run later, manifest already exists)
-python3 backup_imap_emails.py \
+python3 imap_backup.py \
   --src-host "imap.gmail.com" \
   --src-user "you@gmail.com" \
   --src-pass "your-app-password" \
@@ -571,7 +571,7 @@ python3 backup_imap_emails.py \
 For non-Gmail servers, you can preserve read/starred status with `--preserve-flags`:
 
 ```bash
-python3 backup_imap_emails.py \
+python3 imap_backup.py \
   --src-host "imap.example.com" \
   --src-user "you@example.com" \
   --src-pass "your-password" \
@@ -590,14 +590,14 @@ Use `--full-restore` to force the legacy behavior (process all emails and re-syn
 
 ```bash
 # Restore all folders from backup
-python3 restore_imap_emails.py \
+python3 imap_restore.py \
   --src-path "./my_backup" \
   --dest-host "imap.gmail.com" \
   --dest-user "you@gmail.com" \
   --dest-pass "your-app-password"
 
 # Force full restore (legacy behavior)
-python3 restore_imap_emails.py \
+python3 imap_restore.py \
   --src-path "./my_backup" \
   --dest-host "imap.gmail.com" \
   --dest-user "you@gmail.com" \
@@ -605,7 +605,7 @@ python3 restore_imap_emails.py \
   --full-restore
 
 # Restore with flags (read/starred status)
-python3 restore_imap_emails.py \
+python3 imap_restore.py \
   --src-path "./my_backup" \
   --dest-host "imap.example.com" \
   --dest-user "you@example.com" \
@@ -613,7 +613,7 @@ python3 restore_imap_emails.py \
   --apply-flags
 
 # Restore a specific folder
-python3 restore_imap_emails.py \
+python3 imap_restore.py \
   --src-path "./my_backup" \
   --dest-host "imap.gmail.com" \
   --dest-user "you@gmail.com" \
@@ -625,7 +625,7 @@ python3 restore_imap_emails.py \
 Restore a Gmail backup with full label structure using `--gmail-mode`:
 
 ```bash
-python3 restore_imap_emails.py \
+python3 imap_restore.py \
   --src-path "./gmail_backup" \
   --dest-host "imap.gmail.com" \
   --dest-user "newaccount@gmail.com" \
@@ -642,7 +642,7 @@ python3 restore_imap_emails.py \
 
 **Alternatively**, restore folders individually with labels and flags applied:
 ```bash
-python3 restore_imap_emails.py \
+python3 imap_restore.py \
   --src-path "./gmail_backup" \
   --dest-host "imap.gmail.com" \
   --dest-user "newaccount@gmail.com" \
@@ -664,7 +664,7 @@ To use OAuth2, pass `--oauth2-client-id` (or `--src-oauth2-client-id`/`--dest-oa
 
 Environment variable equivalents:
 - Dual-account scripts: `SRC_OAUTH2_CLIENT_ID`, `SRC_OAUTH2_CLIENT_SECRET` and `DEST_OAUTH2_CLIENT_ID`, `DEST_OAUTH2_CLIENT_SECRET`.
-- Single-account scripts (like `count_imap_emails.py`): `OAUTH2_CLIENT_ID`, `OAUTH2_CLIENT_SECRET` (also accepts `SRC_OAUTH2_CLIENT_ID`, `SRC_OAUTH2_CLIENT_SECRET`).
+- Single-account scripts (like `imap_count.py`): `OAUTH2_CLIENT_ID`, `OAUTH2_CLIENT_SECRET` (also accepts `SRC_OAUTH2_CLIENT_ID`, `SRC_OAUTH2_CLIENT_SECRET`).
 
 ### Microsoft (Outlook / Office 365)
 
@@ -703,7 +703,7 @@ Requires the `msal` package (`pip install msal`). Uses the **device code flow** 
 pip install msal
 
 # Migration with Microsoft OAuth2 on source
-python3 migrate_imap_emails.py \
+python3 imap_migrate.py \
   --src-host "outlook.office365.com" \
   --src-user "user@contoso.com" \
   --src-oauth2-client-id "your-azure-app-client-id" \
@@ -723,7 +723,7 @@ Requires the `google-auth-oauthlib` package (`pip install google-auth-oauthlib`)
 pip install google-auth-oauthlib
 
 # Backup with Google OAuth2
-python3 backup_imap_emails.py \
+python3 imap_backup.py \
   --src-host "imap.gmail.com" \
   --src-user "you@gmail.com" \
   --src-oauth2-client-id "your-google-client-id" \
@@ -736,7 +736,7 @@ The script will open your default browser for Google sign-in. After authorizing,
 ## Troubleshooting
 
 - **"Too many simultaneous connections"**:
-  IMAP servers (especially Gmail) limit the number of active connections per IP or user (typically ~15). Since `migrate_imap_emails.py` uses multiple threads, you may hit this limit.
+  IMAP servers (especially Gmail) limit the number of active connections per IP or user (typically ~15). Since `imap_migrate.py` uses multiple threads, you may hit this limit.
   **Solution**: Reduce `MAX_WORKERS` to `4` or `2` using the environment variable.
 
 - **Authentication Errors**:
@@ -789,7 +789,7 @@ PYTHONPATH=src pytest test/ -v
 make coverage
 
 # Run a specific test file
-PYTHONPATH=src pytest test/test_migrate_imap_emails.py -v
+PYTHONPATH=src pytest test/test_imap_migrate.py -v
 
 # Run a specific test
 PYTHONPATH=src pytest test/test_imap_common.py::TestNormalizeFolderName -v
@@ -821,11 +821,11 @@ make ci
 
 | Test File | Description |
 |-----------|-------------|
-| `test_migrate_imap_emails.py` | Email migration tests (basic, duplicates, deletion, folders) |
-| `test_backup_imap_emails.py` | Backup functionality tests |
-| `test_restore_imap_emails.py` | Restore functionality tests |
-| `test_count_imap_emails.py` | Email counting tests |
-| `test_compare_imap_folders.py` | Folder comparison tests |
+| `test_imap_migrate.py` | Email migration tests (basic, duplicates, deletion, folders) |
+| `test_imap_backup.py` | Backup functionality tests |
+| `test_imap_restore.py` | Restore functionality tests |
+| `test_imap_count.py` | Email counting tests |
+| `test_imap_compare.py` | Folder comparison tests |
 | `test_imap_common.py` | Shared utility function tests |
 
 ### Continuous Integration

@@ -19,8 +19,8 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import imap_common
+import imap_restore as restore_imap_emails
 import restore_cache
-import restore_imap_emails
 from conftest import temp_argv, temp_env
 
 
