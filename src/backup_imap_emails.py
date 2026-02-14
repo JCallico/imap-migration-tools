@@ -886,8 +886,6 @@ def main():
 
     except KeyboardInterrupt:
         raise
-    # Let exceptions propagate to the main entry point handler
-    # so we get the correct exit code (1)
 
 
 if __name__ == "__main__":

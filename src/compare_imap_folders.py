@@ -309,9 +309,6 @@ def main():
         # Re-raise to be handled by the outer block, but ensure finally runs
         raise
 
-    # Let exceptions propagate to the main entry point handler
-    # so we get the correct exit code (1)
-
     finally:
         # Check source connection state and logout if possible
         if src:
