@@ -144,6 +144,7 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     # Phase 2: full parser with conditional requirements
     parser = argparse.ArgumentParser(description="Count emails in IMAP account.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 
     parser.add_argument(
         "--path",

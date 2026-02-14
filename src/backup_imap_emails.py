@@ -681,6 +681,7 @@ def backup_folder(src_main, folder_name, local_base_path, src_conf, dest_delete=
 
 def main():
     parser = argparse.ArgumentParser(description="Backup IMAP emails to local .eml files.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 
     # Source
     default_src_host = os.getenv("SRC_IMAP_HOST")

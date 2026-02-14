@@ -758,6 +758,7 @@ def migrate_folder(
 
 def main():
     parser = argparse.ArgumentParser(description="Migrate emails between IMAP accounts.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 
     # Positional arg for folder (optional) to keep backward compatibility with previous quick-fix
     parser.add_argument("folder", nargs="?", help="Specific folder to migrate (e.g. '[Gmail]/Important')")

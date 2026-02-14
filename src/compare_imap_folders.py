@@ -100,6 +100,7 @@ def main():
 
     # Phase 2: full parser with conditional requirements
     parser = argparse.ArgumentParser(description="Compare email counts between two IMAP accounts.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
     parser.add_argument(
         "--src-path",
         default=default_src_path,

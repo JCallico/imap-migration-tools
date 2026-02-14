@@ -693,6 +693,7 @@ def restore_gmail_with_labels(
 
 def main():
     parser = argparse.ArgumentParser(description="Restore IMAP emails from local .eml files.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 
     # Source (Local Path)
     env_path = os.getenv("BACKUP_LOCAL_PATH")
