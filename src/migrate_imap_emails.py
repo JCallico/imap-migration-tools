@@ -758,6 +758,7 @@ def migrate_folder(
 
 def main():
     parser = argparse.ArgumentParser(description="Migrate emails between IMAP accounts.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 
     # Positional arg for folder (optional) to keep backward compatibility with previous quick-fix
     parser.add_argument("folder", nargs="?", help="Specific folder to migrate (e.g. '[Gmail]/Important')")
@@ -1103,11 +1104,15 @@ def main():
         dest_main.logout()
 
     except KeyboardInterrupt:
+        raise
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
         safe_print("\n\nProcess terminated by user.")
         sys.exit(0)
     except Exception as e:
         safe_print(f"Fatal Error: {e}")
-
-
-if __name__ == "__main__":
-    main()
+        sys.exit(1)

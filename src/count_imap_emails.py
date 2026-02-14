@@ -144,6 +144,7 @@ def main(argv: Optional[list[str]] = None) -> None:
 
     # Phase 2: full parser with conditional requirements
     parser = argparse.ArgumentParser(description="Count emails in IMAP account.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 
     parser.add_argument(
         "--path",
@@ -236,4 +237,11 @@ def main(argv: Optional[list[str]] = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nProcess terminated by user.")
+        sys.exit(0)
+    except Exception as e:
+        print(f"Fatal Error: {e}")
+        sys.exit(1)

@@ -16,11 +16,41 @@ import urllib.parse
 from email import policy
 from email.header import decode_header
 from email.parser import BytesParser
+from importlib.metadata import PackageNotFoundError, version
 
 import imap_compress
 import imap_oauth2
 import imap_retry
 import restore_cache
+
+
+def get_version() -> str:
+    """
+    Return the package version string.
+
+    Tries to get the version from the installed package metadata.
+    If not installed, falls back to reading pyproject.toml from the project root.
+    """
+    try:
+        return version("imap-migration-tools")
+    except PackageNotFoundError:
+        # Fallback: Try to read from pyproject.toml for local development
+        try:
+            # Assuming src/imap_common.py structure
+            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            pyproject_path = os.path.join(root_dir, "pyproject.toml")
+
+            if os.path.exists(pyproject_path):
+                with open(pyproject_path, encoding="utf-8") as f:
+                    for line in f:
+                        # Looking for: version = "1.2.3"
+                        match = re.search(r'^version\s*=\s*"([^"]+)"', line.strip())
+                        if match:
+                            return match.group(1)
+        except Exception:
+            pass
+        return "0.0.0-dev"
+
 
 # Standard IMAP flags
 FLAG_SEEN = "\\Seen"

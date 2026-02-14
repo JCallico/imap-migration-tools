@@ -693,6 +693,7 @@ def restore_gmail_with_labels(
 
 def main():
     parser = argparse.ArgumentParser(description="Restore IMAP emails from local .eml files.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 
     # Source (Local Path)
     env_path = os.getenv("BACKUP_LOCAL_PATH")
@@ -959,7 +960,14 @@ def main():
         print("\nRestore completed successfully.")
 
     except KeyboardInterrupt:
-        print("\nRestore interrupted by user.")
+        raise
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nProcess terminated by user.")
         sys.exit(0)
     except Exception as e:
         print(f"Fatal Error: {e}")
@@ -967,7 +975,3 @@ def main():
 
         traceback.print_exc()
         sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

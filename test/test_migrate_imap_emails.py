@@ -357,9 +357,11 @@ class TestMigrateErrorHandling:
 
         from unittest.mock import patch
 
+        original_get_imap_connection = imap_common.get_imap_connection
+
         def side_effect(host, user, pwd, oauth2_token=None):
             if threading.current_thread() is threading.main_thread():
-                return imap_common.get_imap_connection(host, user, pwd, oauth2_token)
+                return original_get_imap_connection(host, user, pwd, oauth2_token)
             return None  # Simulate connection failure in worker
 
         env = _mock_migrate_env(p1, p2)
@@ -442,7 +444,7 @@ class TestMigrateErrorHandling:
 
         env = _mock_migrate_env(p1, p2)
         with (
-            patch.object(imaplib.IMAP4, "uid", side_effect=side_effect_uid),
+            patch.object(imaplib.IMAP4, "uid", side_effect=side_effect_uid, autospec=True),
             temp_env(env),
             temp_argv(["migrate_imap_emails.py", "INBOX"]),
         ):

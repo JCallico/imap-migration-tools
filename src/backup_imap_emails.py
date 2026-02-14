@@ -681,6 +681,7 @@ def backup_folder(src_main, folder_name, local_base_path, src_conf, dest_delete=
 
 def main():
     parser = argparse.ArgumentParser(description="Backup IMAP emails to local .eml files.")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 
     # Source
     default_src_host = os.getenv("SRC_IMAP_HOST")
@@ -885,11 +886,15 @@ def main():
             print("Use this file when restoring to reapply read/starred status to emails.")
 
     except KeyboardInterrupt:
-        print("\nBackup interrupted by user.")
-        sys.exit(0)
-    except Exception as e:
-        print(f"Fatal Error: {e}")
+        raise
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nProcess terminated by user.")
+        sys.exit(0)
+    except Exception as e:
+        print(f"Fatal Error: {e}")
+        sys.exit(1)
