@@ -67,7 +67,36 @@ This repository contains a set of Python scripts designed to migrate emails betw
 
 ### 2. Installation
 
-Clone this repository or download the script files to your local machine.
+#### Installation via PyPI (Recommended)
+You can install the tools directly from PyPI.
+
+**For macOS Users (and other externally managed environments):**
+Due to recent changes in Python environments on macOS, it is recommended to use `pipx` to install the tools globally without conflicting with system packages.
+
+1. Install `pipx` (if not already installed):
+   ```bash
+   brew install pipx
+   pipx ensurepath
+   ```
+2. Install the tools:
+   ```bash
+   pipx install imap-migration-tools
+   ```
+
+**For Standard Environments:**
+```bash
+pip install imap-migration-tools
+```
+
+Once installed via PyPI, the following commands are globally available in your terminal:
+- `imap-backup`
+- `imap-compare`
+- `imap-count`
+- `imap-migrate`
+- `imap-restore`
+
+#### Installation from Source
+Alternatively, clone this repository or download the script files to your local machine.
 
 #### macOS
 macOS often comes with Python, but it's best to install the latest version.
