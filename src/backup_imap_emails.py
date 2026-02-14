@@ -885,11 +885,17 @@ def main():
             print("Use this file when restoring to reapply read/starred status to emails.")
 
     except KeyboardInterrupt:
-        print("\nBackup interrupted by user.")
-        sys.exit(0)
-    except Exception as e:
-        print(f"Fatal Error: {e}")
+        raise
+    # Let exceptions propagate to the main entry point handler
+    # so we get the correct exit code (1)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nProcess terminated by user.")
+        sys.exit(0)
+    except Exception as e:
+        print(f"Fatal Error: {e}")
+        sys.exit(1)

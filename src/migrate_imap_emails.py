@@ -1103,11 +1103,17 @@ def main():
         dest_main.logout()
 
     except KeyboardInterrupt:
+        raise
+    # Let exceptions propagate to the main entry point handler
+    # so we get the correct exit code (1)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
         safe_print("\n\nProcess terminated by user.")
         sys.exit(0)
     except Exception as e:
         safe_print(f"Fatal Error: {e}")
-
-
-if __name__ == "__main__":
-    main()
+        sys.exit(1)

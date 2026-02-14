@@ -59,6 +59,7 @@ Examples:
 
 import argparse
 import os
+import sys
 
 import imap_common
 import imap_oauth2
@@ -304,26 +305,35 @@ def main():
         print("-" * len(header))
         print(f"{'TOTAL':<40} | {total_src:>10} | {total_dest:>10} | {total_src - total_dest:>10}")
 
-    except Exception as e:
-        print(f"\nFatal Error: {e}")
-        if "Too many simultaneous connections" in str(e):
-            print("Tip: Wait a few minutes for previous connections to timeout or check other active scripts.")
+    except KeyboardInterrupt:
+        # Re-raise to be handled by the outer block, but ensure finally runs
+        raise
+
+    # Let exceptions propagate to the main entry point handler
+    # so we get the correct exit code (1)
 
     finally:
         # Check source connection state and logout if possible
         if src:
             try:
                 src.logout()
-            except Exception:
+            except BaseException:
                 pass
 
         # Check dest connection state and logout if possible
         if dest:
             try:
                 dest.logout()
-            except Exception:
+            except BaseException:
                 pass
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nProcess terminated by user.")
+        sys.exit(0)
+    except Exception as e:
+        print(f"Fatal Error: {e}")
+        sys.exit(1)
