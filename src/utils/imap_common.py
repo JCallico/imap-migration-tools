@@ -18,10 +18,8 @@ from email.header import decode_header
 from email.parser import BytesParser
 from importlib.metadata import PackageNotFoundError, version
 
-import imap_compress
-import imap_oauth2
-import imap_retry
-import restore_cache
+from auth import imap_oauth2
+from utils import imap_compress, imap_retry, restore_cache
 
 
 def get_version() -> str:

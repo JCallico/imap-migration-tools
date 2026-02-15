@@ -10,8 +10,7 @@ Provider is auto-detected from the IMAP host string.
 import sys
 import threading
 
-import oauth2_google
-import oauth2_microsoft
+from auth import oauth2_google, oauth2_microsoft
 
 # Re-export caches for test access
 _msal_app_cache = oauth2_microsoft._msal_app_cache

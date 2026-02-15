@@ -5,8 +5,8 @@ Connection and session management for IMAP operations with OAuth2 support.
 Combines imap_common (low-level IMAP) with imap_oauth2 (token refresh).
 """
 
-import imap_common
-import imap_oauth2
+from auth import imap_oauth2
+from utils import imap_common
 
 
 def build_imap_conf(host, user, password, client_id=None, client_secret=None, label=None):

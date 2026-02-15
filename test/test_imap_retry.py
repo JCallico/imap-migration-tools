@@ -18,8 +18,8 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../tools")))
 
-import imap_retry
 from mock_imap_server import start_server_thread as start_mock_server
+from utils import imap_retry
 
 
 class TestConnectionProxy:

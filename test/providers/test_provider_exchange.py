@@ -9,9 +9,9 @@ Tests cover:
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
-import provider_exchange
+from providers import provider_exchange
 
 
 class TestIsSpecialFolder:

@@ -10,11 +10,10 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-import imap_common
-import imap_session
-import migrate_imap_emails
-import restore_cache
+import imap_migrate as migrate_imap_emails
 from conftest import make_mock_connection, temp_argv, temp_env
+from core import imap_session
+from utils import imap_common, restore_cache
 
 
 def _run_migrate(cache_dir, src_port, dest_port, full_migrate=False, extra_env=None):
@@ -168,7 +167,7 @@ class TestMigrationCache:
         dest.login("dest", "p")
 
         with (
-            patch("imap_common.get_imap_connection", make_mock_connection(p1, p2)),
+            patch("utils.imap_common.get_imap_connection", make_mock_connection(p1, p2)),
             patch.object(
                 imap_common,
                 "load_progress_cache",
@@ -215,7 +214,7 @@ class TestMigrationCache:
         dest.login("dest", "p")
 
         with (
-            patch("imap_common.get_imap_connection", make_mock_connection(p1, p2)),
+            patch("utils.imap_common.get_imap_connection", make_mock_connection(p1, p2)),
             patch.object(
                 restore_cache,
                 "get_cached_message_ids",
