@@ -58,11 +58,10 @@ from email.utils import parsedate_to_datetime
 from enum import Enum
 from typing import Optional
 
-import imap_common
-import imap_oauth2
-import imap_session
-import provider_gmail
-import restore_cache
+from auth import imap_oauth2
+from core import imap_session
+from providers import provider_gmail
+from utils import imap_common, restore_cache
 
 
 class UploadResult(Enum):

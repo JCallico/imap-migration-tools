@@ -18,10 +18,9 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-import imap_common
 import imap_restore as restore_imap_emails
-import restore_cache
 from conftest import temp_argv, temp_env
+from utils import imap_common, restore_cache
 
 
 def _mock_restore_env(port):
@@ -754,8 +753,8 @@ Body content.
 
         # Track calls to record_progress
         with (
-            patch("restore_cache.record_progress") as mock_record_progress,
-            patch("imap_common.get_imap_connection", return_value=mock_conn),
+            patch("utils.restore_cache.record_progress") as mock_record_progress,
+            patch("utils.imap_common.get_imap_connection", return_value=mock_conn),
         ):
             env = {
                 "DEST_IMAP_HOST": "localhost",

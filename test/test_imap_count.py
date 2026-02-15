@@ -16,9 +16,9 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-import imap_common
 import imap_count as count_imap_emails
 from conftest import temp_argv, temp_env
+from utils import imap_common
 
 
 def _mock_imap_env(port):

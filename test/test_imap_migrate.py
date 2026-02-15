@@ -19,9 +19,9 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
-import imap_common
 import imap_migrate as migrate_imap_emails
 from conftest import temp_argv, temp_env
+from utils import imap_common
 
 
 def _mock_migrate_env(src_port, dest_port):
@@ -368,7 +368,7 @@ class TestMigrateErrorHandling:
         with (
             temp_env(env),
             temp_argv(["migrate_imap_emails.py", "INBOX"]),
-            patch("imap_common.get_imap_connection", side_effect=side_effect),
+            patch("utils.imap_common.get_imap_connection", side_effect=side_effect),
         ):
             # Should not crash, but log error
             migrate_imap_emails.main()
@@ -465,7 +465,7 @@ class TestMigrateErrorHandling:
             "DEST_IMAP_USERNAME": "dest_user",
             "DEST_IMAP_PASSWORD": "p",
         }
-        with patch("imap_common.get_imap_connection", return_value=None), temp_env(env):
+        with patch("utils.imap_common.get_imap_connection", return_value=None), temp_env(env):
             with pytest.raises(SystemExit) as exc:
                 migrate_imap_emails.main()
         assert exc.value.code == 1
@@ -482,7 +482,7 @@ class TestMigrateErrorHandling:
         env = _mock_migrate_env(p1, p2)
         with (
             patch(
-                "imap_common.load_progress_cache",
+                "utils.imap_common.load_progress_cache",
                 lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
             ),
             temp_env(env),
@@ -509,7 +509,7 @@ class TestTrashHandling:
         env = _mock_migrate_env(p1, p2)
         env["DELETE_FROM_SOURCE"] = "true"
         with (
-            patch("imap_common.detect_trash_folder", return_value="Trash"),
+            patch("utils.imap_common.detect_trash_folder", return_value="Trash"),
             temp_env(env),
             temp_argv(["migrate_imap_emails.py"]),
         ):
@@ -531,7 +531,7 @@ class TestTrashHandling:
         env = _mock_migrate_env(p1, p2)
         env["DELETE_FROM_SOURCE"] = "true"
         with (
-            patch("imap_common.detect_trash_folder", return_value="Trash"),
+            patch("utils.imap_common.detect_trash_folder", return_value="Trash"),
             temp_env(env),
             temp_argv(["migrate_imap_emails.py", "INBOX"]),
         ):

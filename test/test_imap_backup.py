@@ -18,9 +18,9 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import imap_backup as backup_imap_emails
-import imap_common
-import provider_gmail
 from conftest import temp_argv, temp_env
+from providers import provider_gmail
+from utils import imap_common
 
 
 def _mock_imap_env(port):

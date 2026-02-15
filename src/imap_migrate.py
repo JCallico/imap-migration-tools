@@ -131,12 +131,10 @@ import sys
 import threading
 from typing import Optional
 
-import imap_common
-import imap_oauth2
-import imap_session
-import provider_exchange
-import provider_gmail
-import restore_cache
+from auth import imap_oauth2
+from core import imap_session
+from providers import provider_exchange, provider_gmail
+from utils import imap_common, restore_cache
 
 # Configuration defaults
 DELETE_FROM_SOURCE_DEFAULT = False

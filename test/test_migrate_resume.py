@@ -7,8 +7,8 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 import imap_migrate as migrate_imap_emails
-import restore_cache
 from conftest import temp_argv, temp_env
+from utils import restore_cache
 
 
 def _run_migrate(cache_dir, src_port, dest_port):

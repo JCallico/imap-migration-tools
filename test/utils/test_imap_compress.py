@@ -3,7 +3,7 @@
 import zlib
 from unittest.mock import MagicMock, patch
 
-import imap_compress
+from utils import imap_compress
 
 
 class TestCompressedSocket:
@@ -367,10 +367,10 @@ class TestEnableCompression:
 class TestIntegrationWithGetImapConnection:
     """Test that enable_compression is called during connection setup."""
 
-    @patch("imap_common.imaplib")
-    @patch("imap_compress.enable_compression")
+    @patch("utils.imap_common.imaplib")
+    @patch("utils.imap_compress.enable_compression")
     def test_compression_attempted_after_login(self, mock_compress, mock_imaplib):
-        import imap_common
+        from utils import imap_common
 
         mock_conn = MagicMock()
         mock_imaplib.IMAP4_SSL.return_value = mock_conn
@@ -380,10 +380,10 @@ class TestIntegrationWithGetImapConnection:
         mock_conn.login.assert_called_once()
         mock_compress.assert_called_once_with(mock_conn, log_fn=imap_common.safe_print)
 
-    @patch("imap_common.imaplib")
-    @patch("imap_compress.enable_compression")
+    @patch("utils.imap_common.imaplib")
+    @patch("utils.imap_compress.enable_compression")
     def test_compression_attempted_after_oauth2(self, mock_compress, mock_imaplib):
-        import imap_common
+        from utils import imap_common
 
         mock_conn = MagicMock()
         mock_imaplib.IMAP4_SSL.return_value = mock_conn

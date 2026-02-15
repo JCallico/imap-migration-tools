@@ -4,8 +4,8 @@ Gmail-Specific IMAP Utilities
 Constants and functions specific to Gmail/Google Workspace IMAP implementation.
 """
 
-import imap_common
-import imap_oauth2
+from auth import imap_oauth2
+from utils import imap_common
 
 # Gmail system folders
 GMAIL_ALL_MAIL = "[Gmail]/All Mail"

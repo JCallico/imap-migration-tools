@@ -47,8 +47,8 @@ import os
 import sys
 from typing import Optional
 
-import imap_common
-import imap_oauth2
+from auth import imap_oauth2
+from utils import imap_common
 
 
 def count_emails(imap_server, username, password=None, oauth2_token=None):

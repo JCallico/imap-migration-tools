@@ -14,9 +14,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
-import oauth2_microsoft
+from auth import oauth2_microsoft
 from conftest import temp_env
 from mock_oauth_server import MOCK_TENANT_ID
 

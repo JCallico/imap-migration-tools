@@ -61,8 +61,8 @@ import argparse
 import os
 import sys
 
-import imap_common
-import imap_oauth2
+from auth import imap_oauth2
+from utils import imap_common
 
 
 def get_email_count(conn, folder_name):

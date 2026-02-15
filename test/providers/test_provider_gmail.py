@@ -12,9 +12,9 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
-import provider_gmail
+from providers import provider_gmail
 
 
 class TestIsLabelFolder:
@@ -181,7 +181,7 @@ class TestBuildGmailLabelIndex:
         def mock_safe_print(msg):
             pass
 
-        import imap_common
+        from utils import imap_common
 
         with (
             patch.object(imap_common, "list_selectable_folders", mock_list_folders),
@@ -221,7 +221,7 @@ class TestBuildGmailLabelIndex:
         def mock_safe_print(msg):
             pass
 
-        import imap_common
+        from utils import imap_common
 
         with (
             patch.object(imap_common, "list_selectable_folders", mock_list_folders),
@@ -251,7 +251,7 @@ class TestBuildGmailLabelIndex:
         def mock_safe_print(msg):
             pass
 
-        import imap_common
+        from utils import imap_common
 
         with (
             patch.object(imap_common, "list_selectable_folders", mock_list_folders),
