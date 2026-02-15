@@ -153,5 +153,5 @@ jobs:
 
       - name: Check imports
         run: |
-          cd src && python -c "import imap_common; import migrate_imap_emails; import backup_imap_emails; import restore_imap_emails; import count_imap_emails; import compare_imap_folders"
+          cd src && python -c "import utils.imap_common; import migrate_imap_emails; import backup_imap_emails; import restore_imap_emails; import count_imap_emails; import compare_imap_folders"
           echo "All imports successful"
