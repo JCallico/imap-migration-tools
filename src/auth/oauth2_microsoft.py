@@ -75,6 +75,16 @@ def discover_tenant(email):
     if domain in _tenant_cache:
         return _tenant_cache[domain]
 
+    # Personal Microsoft accounts (live.com identity provider) live in the
+    # "consumers" tenant. Auto-discovery via login.microsoftonline.com for
+    # these domains returns a Microsoft-internal work/school tenant that
+    # rejects personal accounts with AADSTS50020. Short-circuit here.
+    if domain in ("hotmail.com", "outlook.com", "live.com", "msn.com",
+                  "hotmail.co.uk", "outlook.co.uk", "live.co.uk",
+                  "hotmail.fr", "outlook.fr", "hotmail.de", "outlook.de"):
+        _tenant_cache[domain] = "consumers"
+        return "consumers"
+
     domain_quoted = urllib.parse.quote(domain, safe=".-")
     path = f"/{domain_quoted}/.well-known/openid-configuration"
 
@@ -120,7 +130,10 @@ def acquire_token(client_id, email):
         authority = f"{authority_base.rstrip('/')}/{tenant_id}"
     else:
         authority = f"https://login.microsoftonline.com/{tenant_id}"
-    scopes = ["https://outlook.office365.com/IMAP.AccessAsUser.All"]
+    # Personal accounts (consumers tenant) require the outlook.office.com
+    # resource URL, not outlook.office365.com, or AADSTS70011 fires.
+    resource_host = "outlook.office.com" if tenant_id == "consumers" else "outlook.office365.com"
+    scopes = [f"https://{resource_host}/IMAP.AccessAsUser.All"]
 
     # Reuse cached MSAL app so acquire_token_silent can access refresh tokens
     cache_key = (client_id, tenant_id)
