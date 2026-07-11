@@ -120,18 +120,26 @@ def _load_cache(cache_path, msal_module):
 
 
 def _save_cache(cache, cache_path):
-    """Persist the cache to disk if it changed, with restrictive permissions."""
+    """Persist the cache to disk if it changed, with restrictive permissions.
+
+    On POSIX, the file is created with mode 0600 atomically (via os.open with
+    the O_CREAT flag + mode arg), so refresh-token bytes never touch a
+    world-readable inode. Windows ignores the mode arg — its ACL model is
+    handled separately and defaults to inheriting the parent directory ACL,
+    which is typically the user's profile directory.
+    """
     if not cache.has_state_changed:
         return
     try:
-        with open(cache_path, "w", encoding="utf-8") as f:
+        # os.open with O_CREAT|O_WRONLY|O_TRUNC and mode 0o600 ensures POSIX
+        # never sees a world-readable moment between file creation and chmod.
+        fd = os.open(
+            cache_path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(cache.serialize())
-        # Restrict permissions on POSIX. Windows uses ACLs; chmod is a no-op
-        # there but harmless.
-        try:
-            os.chmod(cache_path, 0o600)
-        except OSError:
-            pass
     except OSError as e:
         print(f"Warning: Could not save MSAL token cache to {cache_path}: {e}")
 
