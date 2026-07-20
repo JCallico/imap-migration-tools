@@ -61,6 +61,9 @@ This repository contains a set of Python scripts designed to migrate emails betw
 - **No external installations required for basic (password) authentication.**
   The scripts use only the Python Standard Library for standard IMAP login.
 
+-  **Optional:** To use a `.env` file, install the dotenv package as well:
+  - **`pip install python-dotenv`
+
 - **Optional: OAuth2 authentication** requires one additional package depending on your provider:
   - **Microsoft (Outlook/Office 365):** `pip install msal`
   - **Google (Gmail):** `pip install google-auth-oauthlib`
@@ -178,7 +181,36 @@ You can configure the scripts using **Environment Variables** (recommended for s
    python imap_migrate.py
    ```
 
-### Method 2: Command Line Arguments (Overrides)
+### Method 2: `.env` File
+
+Rather than setting environment variables directly, you can use a `.env` file. A template containing supported configuration options is provided in `.env.example`.
+
+1. **Create a `.env` file:**
+   ```bash
+   cp .env.example .env
+   ```
+
+   On Windows (PowerShell):
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+
+2. **Edit `.env`** and update the values for your environment.
+
+3. **Run:**
+   ```bash
+   python3 imap_migrate.py
+   ```
+
+   On Windows (PowerShell):
+   ```powershell
+   python imap_migrate.py
+   ```
+
+> **Note:** If a `.env` file is present, it will be loaded automatically at startup. `.env.example` is provided as a template and should be copied rather than modified directly.
+
+
+### Method 3: Command Line Arguments (Overrides)
 All scripts support command-line arguments which take precedence over environment variables.
 
 **Migration:**

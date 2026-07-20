@@ -63,6 +63,7 @@ import sys
 
 from auth import imap_oauth2
 from utils import imap_common
+from utils.dotenv_loader import load_dotenv
 
 
 def get_email_count(conn, folder_name):
@@ -86,6 +87,7 @@ def get_email_count(conn, folder_name):
 
 
 def main():
+    load_dotenv()
     default_src_path = os.getenv("SRC_LOCAL_PATH")
     default_dest_path = os.getenv("DEST_LOCAL_PATH")
 

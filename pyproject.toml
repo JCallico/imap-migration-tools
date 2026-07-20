@@ -25,6 +25,9 @@ dependencies = [
     "msal",
 ]
 
+[project.optional-dependencies]
+dotenv = ["python-dotenv>=1.2.1"]
+
 [project.urls]
 "Homepage" = "https://github.com/jcallico/imap-migration-tools"
 "Bug Tracker" = "https://github.com/jcallico/imap-migration-tools/issues"
