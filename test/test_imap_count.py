@@ -29,6 +29,22 @@ def _mock_imap_env(port):
     }
 
 
+@pytest.fixture
+def dotenv_file(tmp_path):
+    """Create a .env file and run the test from its directory."""
+    original_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        def write(values):
+            (tmp_path / ".env").write_text(
+                "\n".join(f'{name}="{value}"' for name, value in values.items()), encoding="utf-8"
+            )
+
+        yield write
+    finally:
+        os.chdir(original_cwd)
+
+
 class TestEmailCounting:
     """Tests for email counting functionality."""
 
@@ -271,6 +287,16 @@ class TestMainFunction:
 
         captured = capsys.readouterr()
         assert "INBOX" in captured.out
+
+    def test_main_uses_dotenv_configuration(self, single_mock_server, capsys, dotenv_file):
+        """End-to-end: .env credentials drive IMAP counting."""
+        _, port = single_mock_server({"INBOX": [b"Subject: Dotenv\r\n\r\nBody"]})
+
+        dotenv_file(_mock_imap_env(port))
+        with temp_env({}), temp_argv(["count_imap_emails.py"]):
+            count_imap_emails.main()
+
+        assert "INBOX" in capsys.readouterr().out
 
     def test_missing_credentials(self, capsys):
         """Test that missing auth is rejected by argparse (neither password nor OAuth2 client-id)."""

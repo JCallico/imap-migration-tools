@@ -135,7 +135,7 @@ from auth import imap_oauth2
 from core import imap_session
 from providers import provider_exchange, provider_gmail
 from utils import imap_common, restore_cache
-from utils.dotenv_loader import load_dotenv
+from utils.dotenv import load_dotenv
 
 # Configuration defaults
 DELETE_FROM_SOURCE_DEFAULT = False
@@ -756,13 +756,14 @@ def migrate_folder(
 
 
 def main():
+    # Loading environment variables from .env file
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="Migrate emails between IMAP accounts.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 
     # Positional arg for folder (optional) to keep backward compatibility with previous quick-fix
     parser.add_argument("folder", nargs="?", help="Specific folder to migrate (e.g. '[Gmail]/Important')")
-
-    load_dotenv()
 
     # Source args
     default_src_host = os.getenv("SRC_IMAP_HOST")

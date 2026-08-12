@@ -37,6 +37,22 @@ def _mock_migrate_env(src_port, dest_port):
     }
 
 
+@pytest.fixture
+def dotenv_file(tmp_path):
+    """Create a .env file and run the test from its directory."""
+    original_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        def write(values):
+            (tmp_path / ".env").write_text(
+                "\n".join(f'{name}="{value}"' for name, value in values.items()), encoding="utf-8"
+            )
+
+        yield write
+    finally:
+        os.chdir(original_cwd)
+
+
 class TestBasicMigration:
     """Tests for basic migration functionality."""
 
@@ -72,6 +88,17 @@ class TestBasicMigration:
             migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 3
+
+    def test_migration_uses_dotenv_configuration(self, mock_server_factory, dotenv_file):
+        """End-to-end: .env credentials migrate a message to the destination."""
+        src_data = {"INBOX": [b"Subject: Dotenv\r\nMessage-ID: <dotenv@test>\r\n\r\nBody"]}
+        _, dest_server, src_port, dest_port = mock_server_factory(src_data, {"INBOX": []})
+
+        dotenv_file(_mock_migrate_env(src_port, dest_port))
+        with temp_env({}), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX"]) == 1
 
 
 class TestDuplicateHandling:

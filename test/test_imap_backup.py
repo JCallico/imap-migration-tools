@@ -33,6 +33,22 @@ def _mock_imap_env(port):
     }
 
 
+@pytest.fixture
+def dotenv_file(tmp_path):
+    """Create a .env file and run the test from its directory."""
+    original_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        def write(values):
+            (tmp_path / ".env").write_text(
+                "\n".join(f'{name}="{value}"' for name, value in values.items()), encoding="utf-8"
+            )
+
+        yield write
+    finally:
+        os.chdir(original_cwd)
+
+
 class TestBackupBasic:
     """Tests for basic backup functionality."""
 
@@ -74,6 +90,36 @@ class TestBackupBasic:
         inbox_path = tmp_path / "INBOX"
         eml_files = list(inbox_path.glob("*.eml"))
         assert len(eml_files) == 3
+
+    def test_backup_uses_dotenv_configuration(self, single_mock_server, tmp_path, dotenv_file):
+        """End-to-end: .env credentials and backup path produce a local backup."""
+        src_data = {"INBOX": [b"Subject: Dotenv\r\nMessage-ID: <dotenv@test>\r\n\r\nBody"]}
+        _, port = single_mock_server(src_data)
+        backup_path = tmp_path / "dotenv-backup"
+
+        dotenv_file({**_mock_imap_env(port), "BACKUP_LOCAL_PATH": str(backup_path)})
+        with temp_env({}), temp_argv(["backup_imap_emails.py"]):
+            backup_imap_emails.main()
+
+        assert len(list((backup_path / "INBOX").glob("*.eml"))) == 1
+
+    def test_backup_prefers_existing_os_environment(self, single_mock_server, tmp_path, dotenv_file):
+        """End-to-end: an OS value overrides the same value in .env."""
+        src_data = {"INBOX": [b"Subject: OS wins\r\nMessage-ID: <os@test>\r\n\r\nBody"]}
+        _, port = single_mock_server(src_data)
+        backup_path = tmp_path / "os-precedence-backup"
+
+        dotenv_file(
+            {
+                **_mock_imap_env(port),
+                "SRC_IMAP_HOST": "imap://localhost:1",
+                "BACKUP_LOCAL_PATH": str(backup_path),
+            }
+        )
+        with temp_env({"SRC_IMAP_HOST": f"imap://localhost:{port}"}), temp_argv(["backup_imap_emails.py"]):
+            backup_imap_emails.main()
+
+        assert len(list((backup_path / "INBOX").glob("*.eml"))) == 1
 
 
 class TestIncrementalBackup:

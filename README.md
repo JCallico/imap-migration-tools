@@ -61,8 +61,8 @@ This repository contains a set of Python scripts designed to migrate emails betw
 - **No external installations required for basic (password) authentication.**
   The scripts use only the Python Standard Library for standard IMAP login.
 
--  **Optional:** To use a `.env` file, install the dotenv package as well:
-  - **`pip install python-dotenv`
+- **Optional:** To use a `.env` file, install the `python-dotenv` package as well:
+  - `pip install python-dotenv`
 
 - **Optional: OAuth2 authentication** requires one additional package depending on your provider:
   - **Microsoft (Outlook/Office 365):** `pip install msal`
@@ -81,14 +81,19 @@ Due to recent changes in Python environments on macOS, it is recommended to use 
    brew install pipx
    pipx ensurepath
    ```
-2. Install the tools:
+2. Install the tools, including the optional `.env` support:
    ```bash
-   pipx install imap-migration-tools
+   pipx install "imap-migration-tools[dotenv]"
+   ```
+
+   If the tools are already installed, add `.env` support with:
+   ```bash
+   pipx inject imap-migration-tools python-dotenv
    ```
 
 **For Standard Environments:**
 ```bash
-pip install imap-migration-tools
+pip install "imap-migration-tools[dotenv]"
 ```
 
 Once installed via PyPI, the following commands are globally available in your terminal:
@@ -183,7 +188,7 @@ You can configure the scripts using **Environment Variables** (recommended for s
 
 ### Method 2: `.env` File
 
-Rather than setting environment variables directly, you can use a `.env` file. A template containing supported configuration options is provided in `.env.example`.
+Rather than setting environment variables directly, you can use a `.env` file. A template containing all supported configuration options is provided in `.env.example`.
 
 1. **Create a `.env` file:**
    ```bash
@@ -208,6 +213,13 @@ Rather than setting environment variables directly, you can use a `.env` file. A
    ```
 
 > **Note:** If a `.env` file is present, it will be loaded automatically at startup. `.env.example` is provided as a template and should be copied rather than modified directly.
+
+Configuration values are applied in this order, with earlier entries taking precedence:
+
+1. Command-line arguments
+2. Existing OS environment variables (such as values from your shell, CI system, or secret manager)
+3. Values in `.env`
+4. Script defaults
 
 
 ### Method 3: Command Line Arguments (Overrides)
