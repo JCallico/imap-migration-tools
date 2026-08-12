@@ -135,6 +135,7 @@ from auth import imap_oauth2
 from core import imap_session
 from providers import provider_exchange, provider_gmail
 from utils import imap_common, restore_cache
+from utils.dotenv_loader import load_dotenv
 
 # Configuration defaults
 DELETE_FROM_SOURCE_DEFAULT = False
@@ -760,6 +761,8 @@ def main():
 
     # Positional arg for folder (optional) to keep backward compatibility with previous quick-fix
     parser.add_argument("folder", nargs="?", help="Specific folder to migrate (e.g. '[Gmail]/Important')")
+
+    load_dotenv()
 
     # Source args
     default_src_host = os.getenv("SRC_IMAP_HOST")

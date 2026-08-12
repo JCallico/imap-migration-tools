@@ -47,6 +47,7 @@ import os
 import sys
 from typing import Optional
 
+from utils.dotenv_loader import load_dotenv
 from auth import imap_oauth2
 from utils import imap_common
 
@@ -135,6 +136,7 @@ def count_local_emails(local_path: str) -> None:
 
 
 def main(argv: Optional[list[str]] = None) -> None:
+    load_dotenv()
     # Phase 1: determine whether we're in local mode (--path)
     default_path = os.getenv("BACKUP_LOCAL_PATH") or os.getenv("SRC_LOCAL_PATH")
     pre_parser = argparse.ArgumentParser(add_help=False)
