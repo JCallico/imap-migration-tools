@@ -41,12 +41,14 @@ Tests use local mock IMAP servers and bind loopback ports. In restricted environ
 
 ## Verification before handoff
 
-Run the focused tests for changed code first, then the full suite when practical. Always run:
+Run the focused tests for changed code first, then the full suite when practical. Before every commit, always run:
 
 ```bash
 .venv/bin/python -m ruff check src/ tools/ test/
 .venv/bin/python -m ruff format --check src/ tools/ test/
 git diff --check
 ```
+
+If the formatter check reports files, run `ruff format` on those files, then rerun the complete check sequence. Do not rely on `ruff check` alone: it does not enforce the CI formatter check.
 
 For user-facing changes, verify the relevant README examples and the `.env.example` template match the implementation.
