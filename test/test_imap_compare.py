@@ -33,6 +33,22 @@ def _mock_compare_env(src_port, dest_port):
     }
 
 
+@pytest.fixture
+def dotenv_file(tmp_path):
+    """Create a .env file and run the test from its directory."""
+    original_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        def write(values):
+            (tmp_path / ".env").write_text(
+                "\n".join(f'{name}="{value}"' for name, value in values.items()), encoding="utf-8"
+            )
+
+        yield write
+    finally:
+        os.chdir(original_cwd)
+
+
 class TestFolderComparison:
     """Tests for folder comparison functionality."""
 
@@ -70,6 +86,17 @@ class TestFolderComparison:
         # Source has 3, dest has 1
         assert "3" in captured.out
         assert "1" in captured.out
+
+    def test_compare_uses_dotenv_configuration(self, mock_server_factory, capsys, dotenv_file):
+        """End-to-end: .env credentials drive a successful account comparison."""
+        data = {"INBOX": [b"Subject: Dotenv\r\n\r\nBody"]}
+        _, _, src_port, dest_port = mock_server_factory(data, data.copy())
+
+        dotenv_file(_mock_compare_env(src_port, dest_port))
+        with temp_env({}), temp_argv(["compare_imap_folders.py"]):
+            compare_imap_folders.main()
+
+        assert "INBOX" in capsys.readouterr().out
 
     def test_folder_missing_on_destination(self, mock_server_factory, capsys):
         """Test when a folder exists on source but not destination."""

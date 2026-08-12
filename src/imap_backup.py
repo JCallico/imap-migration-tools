@@ -60,6 +60,7 @@ from auth import imap_oauth2
 from core import imap_session
 from providers import provider_exchange, provider_gmail
 from utils import imap_common
+from utils.dotenv import load_dotenv
 
 # Defaults
 MAX_WORKERS = 10
@@ -679,6 +680,9 @@ def backup_folder(src_main, folder_name, local_base_path, src_conf, dest_delete=
 
 
 def main():
+    # Loading environment variables from .env file
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="Backup IMAP emails to local .eml files.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 

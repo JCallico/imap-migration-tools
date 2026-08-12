@@ -33,6 +33,22 @@ def _mock_restore_env(port):
     }
 
 
+@pytest.fixture
+def dotenv_file(tmp_path):
+    """Create a .env file and run the test from its directory."""
+    original_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        def write(values):
+            (tmp_path / ".env").write_text(
+                "\n".join(f'{name}="{value}"' for name, value in values.items()), encoding="utf-8"
+            )
+
+        yield write
+    finally:
+        os.chdir(original_cwd)
+
+
 class TestLoadLabelsManifest:
     """Tests for loading labels manifest."""
 
@@ -257,6 +273,21 @@ Body content.
         env = _mock_restore_env(port)
         with temp_env(env), temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path), "INBOX"]):
             restore_imap_emails.main()
+
+    def test_restore_uses_dotenv_configuration(self, single_mock_server, tmp_path, dotenv_file):
+        """End-to-end: .env settings restore a local message to IMAP."""
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+        (inbox / "1_Dotenv.eml").write_bytes(
+            b"Subject: Dotenv\r\nMessage-ID: <dotenv@test>\r\n\r\nBody"
+        )
+        server, port = single_mock_server({"INBOX": []})
+
+        dotenv_file({**_mock_restore_env(port), "BACKUP_LOCAL_PATH": str(tmp_path)})
+        with temp_env({}), temp_argv(["restore_imap_emails.py", "INBOX"]):
+            restore_imap_emails.main()
+
+        assert len(server.folders["INBOX"]) == 1
 
     def test_restore_all_folders_scans_backup(self, single_mock_server, tmp_path):
         """End-to-end: restore all folders from a backup tree."""

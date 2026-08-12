@@ -62,6 +62,7 @@ from auth import imap_oauth2
 from core import imap_session
 from providers import provider_gmail
 from utils import imap_common, restore_cache
+from utils.dotenv import load_dotenv
 
 
 class UploadResult(Enum):
@@ -691,6 +692,9 @@ def restore_gmail_with_labels(
 
 
 def main():
+    # Loading environment variables from .env file
+    load_dotenv()
+
     parser = argparse.ArgumentParser(description="Restore IMAP emails from local .eml files.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 
