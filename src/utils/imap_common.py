@@ -275,7 +275,41 @@ def get_imap_connection_from_conf(conf):
             "oauth2": dict or None  # Contains provider, client_id, email, client_secret
         }
     """
-    return get_imap_connection(conf["host"], conf["user"], conf.get("password"), conf.get("oauth2_token"))
+    conn = get_imap_connection(conf["host"], conf["user"], conf.get("password"), conf.get("oauth2_token"))
+    if conn and hasattr(conn, "configure_folder_mapping"):
+        conn.configure_folder_mapping(conf.get("folder_prefix", ""), conf.get("folder_sep", "/"))
+    return conn
+
+
+def detect_dest_namespace(imap_conn):
+    """Return the destination personal namespace prefix and separator.
+
+    Servers without RFC 2342 NAMESPACE support use the conventional empty
+    prefix and slash separator.
+    """
+    try:
+        typ, data = imap_conn.namespace()
+        if typ != "OK" or not data or not data[0]:
+            return "", "/"
+
+        response = data[0].decode("utf-8", errors="replace") if isinstance(data[0], bytes) else str(data[0])
+        match = re.match(
+            r'^\s*\(\s*\(\s*"(?P<prefix>(?:\\.|[^"])*)"\s+'
+            r'(?:(?:"(?P<sep>(?:\\.|[^"])*)")|NIL)',
+            response,
+            re.IGNORECASE,
+        )
+        if not match:
+            return "", "/"
+
+        def unescape(value):
+            return re.sub(r"\\(.)", r"\1", value) if value is not None else None
+
+        prefix = unescape(match.group("prefix")) or ""
+        separator = unescape(match.group("sep")) or "/"
+        return prefix, separator
+    except Exception:
+        return "", "/"
 
 
 def get_imap_connection(host, user, password=None, oauth2_token=None):

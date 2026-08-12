@@ -221,6 +221,11 @@ Configuration values are applied in this order, with earlier entries taking prec
 3. Values in `.env`
 4. Script defaults
 
+Destination namespace prefixes are detected automatically through the IMAP
+`NAMESPACE` command. If a server does not advertise its namespace correctly,
+set `DEST_FOLDER_PREFIX` and `DEST_FOLDER_SEP` explicitly (for example,
+`INBOX.` and `.` for a typical cPanel/Dovecot configuration).
+
 
 ### Method 3: Command Line Arguments (Overrides)
 All scripts support command-line arguments which take precedence over environment variables.

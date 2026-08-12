@@ -12,6 +12,7 @@ Tests cover:
 import imaplib
 import os
 import sys
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -186,3 +187,47 @@ class TestConnectionProxy:
     def test_initial_wait_negative_raises(self):
         with pytest.raises(ValueError, match="initial_wait must be >= 0"):
             imap_retry.ConnectionProxy(None, initial_wait=-1)
+
+    def test_destination_namespace_maps_mailbox_commands(self):
+        conn = Mock()
+        conn.create.return_value = ("OK", [b""])
+        conn.select.return_value = ("OK", [b""])
+        conn.append.return_value = ("OK", [b""])
+        proxy = imap_retry.ConnectionProxy(conn, folder_prefix="INBOX.", folder_sep=".")
+
+        proxy.create('"Parent/Child"')
+        proxy.select('"Parent/Child"')
+        proxy.append('"Parent/Child"', None, None, b"message")
+
+        assert conn.create.call_args_list == [call('"INBOX.Parent.Child"')]
+        assert conn.select.call_args_list == [call('"INBOX.Parent.Child"')]
+        assert conn.append.call_args_list == [call('"INBOX.Parent.Child"', None, None, b"message")]
+
+    def test_destination_namespace_does_not_rewrite_inbox_or_existing_prefix(self):
+        conn = Mock()
+        conn.select.return_value = ("OK", [b""])
+        proxy = imap_retry.ConnectionProxy(conn)
+        proxy.configure_folder_mapping("INBOX.", ".")
+
+        proxy.select('"INBOX"')
+        proxy.select('"INBOX.Sent"')
+
+        assert conn.select.call_args_list == [call('"INBOX"'), call('"INBOX.Sent"')]
+
+    def test_default_proxy_does_not_rewrite_mailboxes(self):
+        conn = Mock()
+        conn.select.return_value = ("OK", [b""])
+        proxy = imap_retry.ConnectionProxy(conn)
+
+        proxy.select('"Parent/Child"')
+
+        conn.select.assert_called_once_with('"Parent/Child"')
+
+    def test_mapping_preserves_non_string_values_and_forwards_status(self):
+        conn = Mock()
+        conn.status.return_value = ("OK", [b'"INBOX.Sent" (MESSAGES 1)'])
+        proxy = imap_retry.ConnectionProxy(conn, folder_prefix="INBOX.", folder_sep=".")
+
+        assert proxy._map_folder(None) is None
+        assert proxy.status('"Sent"', "(MESSAGES)") == ("OK", [b'"INBOX.Sent" (MESSAGES 1)'])
+        conn.status.assert_called_once_with('"INBOX.Sent"', "(MESSAGES)")

@@ -119,6 +119,22 @@ class TestFolderComparison:
         assert "Archive" in captured.out
         assert "N/A" in captured.out
 
+    def test_destination_namespace_prefix_is_used(self, mock_server_factory, capsys):
+        """Comparison selects the destination's mapped mailbox name."""
+        src_data = {"INBOX": [], "Sent": [b"Subject: Sent\r\n\r\nBody"]}
+        dest_data = {"INBOX": [], "INBOX.Sent": [b"Subject: Sent\r\n\r\nBody"]}
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+        dest_server.namespace_prefix = "INBOX."
+        dest_server.namespace_separator = "."
+
+        env = _mock_compare_env(p1, p2)
+        with temp_env(env), temp_argv(["compare_imap_folders.py"]):
+            compare_imap_folders.main()
+
+        sent_row = next(line for line in capsys.readouterr().out.splitlines() if line.startswith("Sent"))
+        assert "N/A" not in sent_row
+        assert sent_row.count("1") == 2
+
 
 class TestEmptyFolders:
     """Tests for empty folder handling."""
