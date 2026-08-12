@@ -222,3 +222,12 @@ class TestConnectionProxy:
         proxy.select('"Parent/Child"')
 
         conn.select.assert_called_once_with('"Parent/Child"')
+
+    def test_mapping_preserves_non_string_values_and_forwards_status(self):
+        conn = Mock()
+        conn.status.return_value = ("OK", [b'"INBOX.Sent" (MESSAGES 1)'])
+        proxy = imap_retry.ConnectionProxy(conn, folder_prefix="INBOX.", folder_sep=".")
+
+        assert proxy._map_folder(None) is None
+        assert proxy.status('"Sent"', "(MESSAGES)") == ("OK", [b'"INBOX.Sent" (MESSAGES 1)'])
+        conn.status.assert_called_once_with('"INBOX.Sent"', "(MESSAGES)")
