@@ -1001,6 +1001,18 @@ def main():
         if not dest_main:
             sys.exit(1)
 
+        detected_prefix, detected_sep = imap_common.detect_dest_namespace(dest_main)
+        dest_prefix = os.getenv("DEST_FOLDER_PREFIX")
+        dest_sep = os.getenv("DEST_FOLDER_SEP")
+        dest_conf["folder_prefix"] = dest_prefix or detected_prefix
+        dest_conf["folder_sep"] = dest_sep or detected_sep
+        dest_main.configure_folder_mapping(dest_conf["folder_prefix"], dest_conf["folder_sep"])
+        if dest_conf["folder_prefix"]:
+            safe_print(
+                f"Destination namespace detected: prefix '{dest_conf['folder_prefix']}', "
+                f"separator '{dest_conf['folder_sep']}'"
+            )
+
         label_index = None
         if gmail_mode and preserve_labels:
             safe_print("Gmail mode enabled: building label index from source...")

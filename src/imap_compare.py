@@ -258,6 +258,13 @@ def main():
             dest = imap_common.get_imap_connection(args.dest_host, args.dest_user, args.dest_pass, dest_oauth2_token)
             if not dest:
                 return
+            detected_prefix, detected_sep = imap_common.detect_dest_namespace(dest)
+            dest_prefix = os.getenv("DEST_FOLDER_PREFIX")
+            dest_sep = os.getenv("DEST_FOLDER_SEP")
+            dest.configure_folder_mapping(
+                dest_prefix or detected_prefix,
+                dest_sep or detected_sep,
+            )
 
         # List Source Folders
         print("Listing folders in Source...")

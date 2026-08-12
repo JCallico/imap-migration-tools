@@ -118,13 +118,47 @@ class TestGetImapConnection:
         captured = capsys.readouterr()
         assert "Invalid IMAP host" in captured.out
 
-        # No scheme (urllib fails to parse scheme if missing :// or just host)
-        # But our code checks "://" in host. If not, it assumes basic host.
-        # So we test a case where "://" is present but scheme is empty?
-        # "://hostname" parses scheme as empty string.
+        # A malformed URL with an empty scheme is also invalid.
         imap_common.get_imap_connection("://mail.example.com", "user", "pass")
         captured = capsys.readouterr()
         assert "Invalid IMAP host" in captured.out
+
+
+class TestDetectDestinationNamespace:
+    @pytest.mark.parametrize(
+        ("response", "expected"),
+        [
+            ([b'(("INBOX." ".")) NIL NIL'], ("INBOX.", ".")),
+            ([b'(("" "/")) NIL NIL'], ("", "/")),
+            ([b'(("INBOX/" "/")) (("Other Users/" "/")) NIL'], ("INBOX/", "/")),
+            ([b'NIL (("Other Users/" "/")) (("Shared/" "/"))'], ("", "/")),
+        ],
+    )
+    def test_parses_personal_namespace(self, response, expected):
+        conn = Mock()
+        conn.namespace.return_value = ("OK", response)
+
+        assert imap_common.detect_dest_namespace(conn) == expected
+
+    @pytest.mark.parametrize(
+        "result",
+        [
+            ("BAD", [b"NAMESPACE not supported"]),
+            ("OK", []),
+            ("OK", [b"not a namespace response"]),
+        ],
+    )
+    def test_falls_back_when_namespace_is_unavailable(self, result):
+        conn = Mock()
+        conn.namespace.return_value = result
+
+        assert imap_common.detect_dest_namespace(conn) == ("", "/")
+
+    def test_falls_back_when_namespace_command_raises(self):
+        conn = Mock()
+        conn.namespace.side_effect = RuntimeError("unsupported")
+
+        assert imap_common.detect_dest_namespace(conn) == ("", "/")
 
 
 class TestNormalizeFolderName:

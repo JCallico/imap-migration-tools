@@ -207,6 +207,45 @@ class TestFolderHandling:
         assert "Sent" in dest_server.folders
         assert "Drafts" in dest_server.folders
 
+    def test_destination_namespace_prefix_is_detected_and_applied(self, mock_server_factory):
+        """Destination personal namespaces are applied to non-INBOX folders."""
+        message = b"Subject: Namespaced\r\nMessage-ID: <namespace@test>\r\n\r\nBody"
+        src_data = {"INBOX": [], "Parent/Child": [message]}
+        dest_data = {"INBOX": []}
+
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+        dest_server.namespace_prefix = "INBOX."
+        dest_server.namespace_separator = "."
+
+        env = _mock_migrate_env(p1, p2)
+        with temp_env(env), temp_argv(["migrate_imap_emails.py"]):
+            migrate_imap_emails.main()
+
+        assert "Parent/Child" not in dest_server.folders
+        assert "INBOX.Parent.Child" in dest_server.folders
+        assert len(dest_server.folders["INBOX.Parent.Child"]) == 1
+
+    def test_destination_namespace_can_be_configured_explicitly(self, mock_server_factory):
+        """Environment overrides support servers without NAMESPACE."""
+        message = b"Subject: Override\r\nMessage-ID: <override@test>\r\n\r\nBody"
+        src_data = {"INBOX": [], "Sent": [message]}
+        dest_data = {"INBOX": []}
+
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+        dest_server.namespace_prefix = "INBOX."
+        dest_server.namespace_separator = "."
+        dest_server.namespace_supported = False
+
+        env = {
+            **_mock_migrate_env(p1, p2),
+            "DEST_FOLDER_PREFIX": "INBOX.",
+            "DEST_FOLDER_SEP": ".",
+        }
+        with temp_env(env), temp_argv(["migrate_imap_emails.py"]):
+            migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX.Sent"]) == 1
+
     def test_empty_folder_handling(self, mock_server_factory):
         """Test that empty folders are handled gracefully."""
         src_data = {"INBOX": [], "Empty": []}

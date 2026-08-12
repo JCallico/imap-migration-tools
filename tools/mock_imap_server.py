@@ -60,6 +60,15 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                 if cmd == "LOGIN":
                     self.send_response(tag, "OK LOGIN completed")
 
+                elif cmd == "NAMESPACE":
+                    prefix = getattr(self.server, "namespace_prefix", None)
+                    separator = getattr(self.server, "namespace_separator", "/")
+                    if prefix is None or not getattr(self.server, "namespace_supported", True):
+                        self.send_response(tag, "BAD NAMESPACE not supported")
+                    else:
+                        self.wfile.write(f'* NAMESPACE (("{prefix}" "{separator}")) NIL NIL\r\n'.encode())
+                        self.send_response(tag, "OK NAMESPACE completed")
+
                 elif cmd == "APPEND":
                     # Check for literal size
                     import re
@@ -84,6 +93,15 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                             mailbox = clean_args[1:end_quote]
                     else:
                         mailbox = clean_args.split(" ")[0]
+
+                    prefix = getattr(self.server, "namespace_prefix", None)
+                    if prefix and mailbox.upper() != "INBOX" and not mailbox.startswith(prefix):
+                        self.send_response(
+                            tag,
+                            "NO Client tried to access nonexistent namespace. "
+                            f"(Mailbox name should probably be prefixed with: {prefix})",
+                        )
+                        continue
 
                     if mailbox not in self.current_folders:
                         self.current_folders[mailbox] = []
@@ -131,6 +149,15 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
                 elif cmd == "SELECT":
                     folder = args.strip().strip('"')
 
+                    prefix = getattr(self.server, "namespace_prefix", None)
+                    if prefix and folder.upper() != "INBOX" and not folder.startswith(prefix):
+                        self.send_response(
+                            tag,
+                            "NO Client tried to access nonexistent namespace. "
+                            f"(Mailbox name should probably be prefixed with: {prefix})",
+                        )
+                        continue
+
                     # For retry testing: if folder starts with NO, fail immediately
                     if folder.startswith("NO"):
                         # e.g. "NO [UNAVAILABLE]"
@@ -174,6 +201,14 @@ class MockIMAPHandler(socketserver.StreamRequestHandler):
 
                 elif cmd == "CREATE":
                     folder = args.strip().strip('"')
+                    prefix = getattr(self.server, "namespace_prefix", None)
+                    if prefix and folder.upper() != "INBOX" and not folder.startswith(prefix):
+                        self.send_response(
+                            tag,
+                            "NO Client tried to access nonexistent namespace. "
+                            f"(Mailbox name should probably be prefixed with: {prefix})",
+                        )
+                        continue
                     if folder not in self.current_folders:
                         self.current_folders[folder] = []
                     self.send_response(tag, "OK CREATE completed")

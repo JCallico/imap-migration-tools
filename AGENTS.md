@@ -41,6 +41,8 @@ Tests use local mock IMAP servers and bind loopback ports. In restricted environ
 
 ## Verification before handoff
 
+Do not stage or commit changes automatically. Only create a commit when the user explicitly asks for one.
+
 Run the focused tests for changed code first, then the full suite when practical. Before every commit, always run:
 
 ```bash
