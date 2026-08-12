@@ -39,6 +39,7 @@ def dotenv_file(tmp_path):
     original_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
+
         def write(values):
             (tmp_path / ".env").write_text(
                 "\n".join(f'{name}="{value}"' for name, value in values.items()), encoding="utf-8"
@@ -278,9 +279,7 @@ Body content.
         """End-to-end: .env settings restore a local message to IMAP."""
         inbox = tmp_path / "INBOX"
         inbox.mkdir()
-        (inbox / "1_Dotenv.eml").write_bytes(
-            b"Subject: Dotenv\r\nMessage-ID: <dotenv@test>\r\n\r\nBody"
-        )
+        (inbox / "1_Dotenv.eml").write_bytes(b"Subject: Dotenv\r\nMessage-ID: <dotenv@test>\r\n\r\nBody")
         server, port = single_mock_server({"INBOX": []})
 
         dotenv_file({**_mock_restore_env(port), "BACKUP_LOCAL_PATH": str(tmp_path)})

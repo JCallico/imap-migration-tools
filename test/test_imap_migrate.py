@@ -43,6 +43,7 @@ def dotenv_file(tmp_path):
     original_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
+
         def write(values):
             (tmp_path / ".env").write_text(
                 "\n".join(f'{name}="{value}"' for name, value in values.items()), encoding="utf-8"
