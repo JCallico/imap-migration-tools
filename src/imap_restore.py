@@ -757,6 +757,12 @@ def main():
         dest="dest_client_secret",
         help=argparse.SUPPRESS,
     )
+    parser.add_argument(
+        "--dest-account-type",
+        choices=("auto", "personal", "work"),
+        default=os.getenv("DEST_ACCOUNT_TYPE", "auto"),
+        help="Destination OAuth provider account type (auto, personal, or work; or DEST_ACCOUNT_TYPE)",
+    )
 
     # Config
     parser.add_argument(
@@ -823,7 +829,13 @@ def main():
 
     # Build connection config (acquires OAuth2 token if configured)
     dest_conf = imap_session.build_imap_conf(
-        args.dest_host, args.dest_user, args.dest_pass, args.dest_client_id, args.dest_client_secret, "destination"
+        args.dest_host,
+        args.dest_user,
+        args.dest_pass,
+        args.dest_client_id,
+        args.dest_client_secret,
+        args.dest_account_type,
+        "destination",
     )
 
     # Expand path

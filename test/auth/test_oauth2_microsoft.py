@@ -20,6 +20,20 @@ from auth import oauth2_microsoft
 from conftest import temp_env
 from mock_oauth_server import MOCK_TENANT_ID
 
+EXPECTED_PERSONAL_MICROSOFT_DOMAINS = {
+    "hotmail.com",
+    "outlook.com",
+    "live.com",
+    "msn.com",
+    "hotmail.co.uk",
+    "outlook.co.uk",
+    "live.co.uk",
+    "hotmail.fr",
+    "outlook.fr",
+    "hotmail.de",
+    "outlook.de",
+}
+
 
 @pytest.fixture(autouse=True)
 def clear_caches():
@@ -110,6 +124,59 @@ class TestDiscoverTenant:
             result = oauth2_microsoft.discover_tenant("user@example.org")
 
         assert result == MOCK_TENANT_ID
+
+    def test_personal_domain_allowlist_matches_expected_domains(self):
+        assert oauth2_microsoft.PERSONAL_MICROSOFT_DOMAINS == EXPECTED_PERSONAL_MICROSOFT_DOMAINS
+
+    @pytest.mark.parametrize("domain", sorted(EXPECTED_PERSONAL_MICROSOFT_DOMAINS))
+    def test_auto_recognizes_known_personal_domains(self, domain):
+        assert oauth2_microsoft.discover_tenant(f"user@{domain}") == "consumers"
+
+    def test_auto_does_not_classify_unknown_domain_as_personal(self, mock_oauth_server):
+        with temp_env({"OAUTH2_MICROSOFT_DISCOVERY_URL": mock_oauth_server}):
+            result = oauth2_microsoft.discover_tenant("user@not-personal.example", "auto")
+
+        assert result == MOCK_TENANT_ID
+
+    def test_personal_supports_non_microsoft_email_without_discovery(self):
+        with temp_env({"OAUTH2_MICROSOFT_DISCOVERY_URL": "http://127.0.0.1:1"}):
+            result = oauth2_microsoft.discover_tenant("user@example.org", "personal")
+
+        assert result == "consumers"
+
+    def test_work_forces_real_discovery_for_known_personal_domain(self, mock_oauth_server):
+        with temp_env({"OAUTH2_MICROSOFT_DISCOVERY_URL": mock_oauth_server}):
+            result = oauth2_microsoft.discover_tenant("user@hotmail.com", "work")
+
+        assert result == MOCK_TENANT_ID
+
+    def test_work_override_is_not_polluted_by_auto_cache(self, mock_oauth_server):
+        assert oauth2_microsoft.discover_tenant("user@hotmail.com", "auto") == "consumers"
+
+        with temp_env({"OAUTH2_MICROSOFT_DISCOVERY_URL": mock_oauth_server}):
+            result = oauth2_microsoft.discover_tenant("user@hotmail.com", "work")
+
+        assert result == MOCK_TENANT_ID
+
+    def test_invalid_account_type_is_rejected(self):
+        with pytest.raises(ValueError, match="Invalid Microsoft account type"):
+            oauth2_microsoft.discover_tenant("user@example.org", "unknown")
+
+
+class TestImapScopes:
+    @pytest.mark.parametrize(
+        ("tenant", "expected_scope"),
+        [
+            ("consumers", "https://outlook.office.com/IMAP.AccessAsUser.All"),
+            (
+                "9188040d-6c67-4c5b-b112-36a304b66dad",
+                "https://outlook.office.com/IMAP.AccessAsUser.All",
+            ),
+            ("tenant-123", "https://outlook.office365.com/IMAP.AccessAsUser.All"),
+        ],
+    )
+    def test_tenant_selects_expected_scope(self, tenant, expected_scope):
+        assert oauth2_microsoft.get_imap_scopes(tenant) == [expected_scope]
 
 
 class TestAcquireToken:

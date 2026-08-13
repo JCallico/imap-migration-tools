@@ -9,7 +9,7 @@ from auth import imap_oauth2
 from utils import imap_common
 
 
-def build_imap_conf(host, user, password, client_id=None, client_secret=None, label=None):
+def build_imap_conf(host, user, password, client_id=None, client_secret=None, account_type="auto", label=None):
     """
     Build a standard IMAP connection config dict.
 
@@ -22,6 +22,7 @@ def build_imap_conf(host, user, password, client_id=None, client_secret=None, la
         password: IMAP password (used for password auth or as fallback)
         client_id: OAuth2 client ID (triggers OAuth2 flow if provided)
         client_secret: OAuth2 client secret (required for Google)
+        account_type: Provider account type (currently auto, personal, or work for Microsoft)
         label: Optional context label for status messages (e.g. "source", "destination")
 
     Returns:
@@ -32,12 +33,20 @@ def build_imap_conf(host, user, password, client_id=None, client_secret=None, la
     oauth2_info = None
 
     if client_id:
-        oauth2_token, oauth2_provider = imap_oauth2.acquire_token(host, client_id, user, client_secret, label)
+        oauth2_token, oauth2_provider = imap_oauth2.acquire_token(
+            host,
+            client_id,
+            user,
+            client_secret,
+            label,
+            account_type=account_type,
+        )
         oauth2_info = {
             "provider": oauth2_provider,
             "client_id": client_id,
             "email": user,
             "client_secret": client_secret,
+            "account_type": account_type,
         }
 
     return {

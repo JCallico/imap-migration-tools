@@ -722,6 +722,12 @@ def main():
         dest="src_client_secret",
         help="OAuth2 Client Secret (if required) (or SRC_OAUTH2_CLIENT_SECRET)",
     )
+    parser.add_argument(
+        "--src-account-type",
+        choices=("auto", "personal", "work"),
+        default=os.getenv("SRC_ACCOUNT_TYPE", "auto"),
+        help="Source OAuth provider account type (auto, personal, or work; or SRC_ACCOUNT_TYPE)",
+    )
 
     # Destination (Local Path)
     env_path = os.getenv("BACKUP_LOCAL_PATH")
@@ -785,7 +791,12 @@ def main():
 
     # Build connection config (acquires OAuth2 token if configured)
     src_conf = imap_session.build_imap_conf(
-        args.src_host, args.src_user, args.src_pass, args.src_client_id, args.src_client_secret
+        args.src_host,
+        args.src_user,
+        args.src_pass,
+        args.src_client_id,
+        args.src_client_secret,
+        account_type=args.src_account_type,
     )
 
     # Expand path (~/...)

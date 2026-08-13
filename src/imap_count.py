@@ -200,6 +200,12 @@ def main(argv: Optional[list[str]] = None) -> None:
         help="OAuth2 Client Secret (if required) (or OAUTH2_CLIENT_SECRET / SRC_OAUTH2_CLIENT_SECRET)",
     )
     parser.add_argument(
+        "--account-type",
+        choices=("auto", "personal", "work"),
+        default=os.getenv("ACCOUNT_TYPE", "auto"),
+        help="OAuth provider account type (auto, personal, or work; or ACCOUNT_TYPE)",
+    )
+    parser.add_argument(
         "--client-secret",
         default=os.getenv("OAUTH2_CLIENT_SECRET") or os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
         dest="client_secret",
@@ -228,7 +234,11 @@ def main(argv: Optional[list[str]] = None) -> None:
     oauth2_provider = None
     if args.client_id:
         oauth2_token, oauth2_provider = imap_oauth2.acquire_token(
-            IMAP_SERVER, args.client_id, USERNAME, args.client_secret
+            IMAP_SERVER,
+            args.client_id,
+            USERNAME,
+            args.client_secret,
+            account_type=args.account_type,
         )
 
     print("\n--- Configuration Summary ---")

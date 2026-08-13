@@ -17,7 +17,31 @@ import urllib.parse
 
 # Module-level caches
 _msal_app_cache = {}  # (client_id, tenant_id) -> PublicClientApplication
-_tenant_cache = {}  # domain -> tenant_id
+_tenant_cache = {}  # (domain, account_type) -> tenant_id
+
+MICROSOFT_ACCOUNT_TYPES = ("auto", "personal", "work")
+PERSONAL_MICROSOFT_DOMAINS = frozenset(
+    {
+        "hotmail.com",
+        "outlook.com",
+        "live.com",
+        "msn.com",
+        "hotmail.co.uk",
+        "outlook.co.uk",
+        "live.co.uk",
+        "hotmail.fr",
+        "outlook.fr",
+        "hotmail.de",
+        "outlook.de",
+    }
+)
+CONSUMER_TENANTS = frozenset({"consumers", "9188040d-6c67-4c5b-b112-36a304b66dad"})
+
+
+def get_imap_scopes(tenant_id):
+    """Return the delegated IMAP scope appropriate for a Microsoft tenant."""
+    resource_host = "outlook.office.com" if tenant_id.lower() in CONSUMER_TENANTS else "outlook.office365.com"
+    return [f"https://{resource_host}/IMAP.AccessAsUser.All"]
 
 
 def _fetch_json_https(host, path, timeout=10):
@@ -59,21 +83,37 @@ def _fetch_json_https(host, path, timeout=10):
     return json.loads(body.decode("utf-8"))
 
 
-def discover_tenant(email):
+def discover_tenant(email, account_type="auto"):
     """
     Auto-discovers the Microsoft tenant ID from an email address domain.
     Uses the OpenID Connect discovery endpoint (no authentication required).
     Results are cached per domain to avoid repeated network requests.
     Returns the tenant ID string or None if discovery fails.
     """
+    account_type = account_type.strip().lower()
+    if account_type not in MICROSOFT_ACCOUNT_TYPES:
+        choices = ", ".join(MICROSOFT_ACCOUNT_TYPES)
+        raise ValueError(f"Invalid Microsoft account type '{account_type}'; expected one of: {choices}")
+
+    if account_type == "personal":
+        return "consumers"
+
     domain = email.split("@")[-1].strip().lower()
     if not domain:
         print("Error: Could not discover Microsoft tenant: missing email domain")
         return None
 
-    # Return cached tenant if available
-    if domain in _tenant_cache:
-        return _tenant_cache[domain]
+    cache_key = (domain, account_type)
+    if cache_key in _tenant_cache:
+        return _tenant_cache[cache_key]
+
+    # Personal Microsoft accounts (live.com identity provider) live in the
+    # "consumers" tenant. Auto-discovery via login.microsoftonline.com for
+    # these domains returns a Microsoft-internal work/school tenant that
+    # rejects personal accounts with AADSTS50020. Short-circuit here.
+    if account_type == "auto" and domain in PERSONAL_MICROSOFT_DOMAINS:
+        _tenant_cache[cache_key] = "consumers"
+        return "consumers"
 
     domain_quoted = urllib.parse.quote(domain, safe=".-")
     path = f"/{domain_quoted}/.well-known/openid-configuration"
@@ -89,14 +129,14 @@ def discover_tenant(email):
     match = re.search(r"/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", issuer)
     if match:
         tenant_id = match.group(1)
-        _tenant_cache[domain] = tenant_id
+        _tenant_cache[cache_key] = tenant_id
         return tenant_id
 
     print(f"Error: Could not extract tenant ID from issuer: {issuer}")
     return None
 
 
-def acquire_token(client_id, email):
+def acquire_token(client_id, email, account_type="auto"):
     """
     Acquires a Microsoft OAuth2 access token using the MSAL device code flow.
     Auto-discovers tenant ID from the email domain.
@@ -105,7 +145,7 @@ def acquire_token(client_id, email):
     On subsequent calls, silently refreshes the token using the cached MSAL app
     (which holds the refresh token in its in-memory cache).
     """
-    tenant_id = discover_tenant(email)
+    tenant_id = discover_tenant(email, account_type)
     if not tenant_id:
         return None
 
@@ -120,7 +160,9 @@ def acquire_token(client_id, email):
         authority = f"{authority_base.rstrip('/')}/{tenant_id}"
     else:
         authority = f"https://login.microsoftonline.com/{tenant_id}"
-    scopes = ["https://outlook.office365.com/IMAP.AccessAsUser.All"]
+    # Personal accounts (consumers tenant) require the outlook.office.com
+    # resource URL, not outlook.office365.com, or AADSTS70011 fires.
+    scopes = get_imap_scopes(tenant_id)
 
     # Reuse cached MSAL app so acquire_token_silent can access refresh tokens
     cache_key = (client_id, tenant_id)

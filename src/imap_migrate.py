@@ -798,6 +798,12 @@ def main():
         dest="src_client_secret",
         help="Source OAuth2 Client Secret (if required) (or SRC_OAUTH2_CLIENT_SECRET)",
     )
+    parser.add_argument(
+        "--src-account-type",
+        choices=("auto", "personal", "work"),
+        default=os.getenv("SRC_ACCOUNT_TYPE", "auto"),
+        help="Source OAuth provider account type (auto, personal, or work; or SRC_ACCOUNT_TYPE)",
+    )
 
     # Dest args
     default_dest_host = os.getenv("DEST_IMAP_HOST")
@@ -847,6 +853,12 @@ def main():
         default=os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
         dest="dest_client_secret",
         help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--dest-account-type",
+        choices=("auto", "personal", "work"),
+        default=os.getenv("DEST_ACCOUNT_TYPE", "auto"),
+        help="Destination OAuth provider account type (auto, personal, or work; or DEST_ACCOUNT_TYPE)",
     )
 
     # Options
@@ -941,10 +953,22 @@ def main():
 
     # Build connection configs (acquires OAuth2 tokens if configured)
     src_conf = imap_session.build_imap_conf(
-        SRC_HOST, SRC_USER, SRC_PASS, args.src_client_id, args.src_client_secret, "source"
+        SRC_HOST,
+        SRC_USER,
+        SRC_PASS,
+        args.src_client_id,
+        args.src_client_secret,
+        args.src_account_type,
+        "source",
     )
     dest_conf = imap_session.build_imap_conf(
-        DEST_HOST, DEST_USER, DEST_PASS, args.dest_client_id, args.dest_client_secret, "destination"
+        DEST_HOST,
+        DEST_USER,
+        DEST_PASS,
+        args.dest_client_id,
+        args.dest_client_secret,
+        args.dest_account_type,
+        "destination",
     )
 
     print("\n--- Configuration Summary ---")

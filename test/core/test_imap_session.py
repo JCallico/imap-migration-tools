@@ -44,7 +44,14 @@ class TestBuildImapConf:
                 label="source",
             )
 
-        mock_acquire.assert_called_once_with("outlook.office365.com", "cid", "user@example.com", "csecret", "source")
+        mock_acquire.assert_called_once_with(
+            "outlook.office365.com",
+            "cid",
+            "user@example.com",
+            "csecret",
+            "source",
+            account_type="auto",
+        )
         assert conf["host"] == "outlook.office365.com"
         assert conf["user"] == "user@example.com"
         assert conf["password"] == "pass"
@@ -54,6 +61,7 @@ class TestBuildImapConf:
             "client_id": "cid",
             "email": "user@example.com",
             "client_secret": "csecret",
+            "account_type": "auto",
         }
 
     def test_no_client_id_skips_oauth2(self):
@@ -87,7 +95,34 @@ class TestBuildImapConf:
                 "imap.gmail.com", "user@gmail.com", "pass", client_id="cid", client_secret="sec", label="destination"
             )
 
-        mock_acquire.assert_called_once_with("imap.gmail.com", "cid", "user@gmail.com", "sec", "destination")
+        mock_acquire.assert_called_once_with(
+            "imap.gmail.com",
+            "cid",
+            "user@gmail.com",
+            "sec",
+            "destination",
+            account_type="auto",
+        )
+
+    def test_account_type_is_forwarded_and_stored(self):
+        with patch.object(imap_session.imap_oauth2, "acquire_token", return_value=("tok", "microsoft")) as mock_acquire:
+            conf = imap_session.build_imap_conf(
+                "outlook.office365.com",
+                "user@example.com",
+                None,
+                client_id="cid",
+                account_type="personal",
+            )
+
+        mock_acquire.assert_called_once_with(
+            "outlook.office365.com",
+            "cid",
+            "user@example.com",
+            None,
+            None,
+            account_type="personal",
+        )
+        assert conf["oauth2"]["account_type"] == "personal"
 
 
 class TestEnsureConnection:
