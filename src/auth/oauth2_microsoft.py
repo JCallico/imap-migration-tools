@@ -136,14 +136,65 @@ def discover_tenant(email, account_type="auto"):
     return None
 
 
+def _msal_cache_path_for(email):
+    """
+    Per-account MSAL token cache path.
+    Contains refresh tokens — permissions restricted to owner (POSIX).
+    Environment override: OAUTH2_MICROSOFT_CACHE_DIR.
+    """
+    cache_dir = os.getenv("OAUTH2_MICROSOFT_CACHE_DIR") or os.path.expanduser("~")
+    safe = re.sub(r"[^a-zA-Z0-9]", "_", email.lower())
+    return os.path.join(cache_dir, f".msal-imap-migrate-{safe}.json")
+
+
+def _load_cache(cache_path, msal_module):
+    """Load a SerializableTokenCache from disk, if it exists."""
+    cache = msal_module.SerializableTokenCache()
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r", encoding="utf-8") as f:
+                cache.deserialize(f.read())
+        except (OSError, ValueError) as e:
+            print(f"Warning: Could not load MSAL token cache from {cache_path}: {e}")
+    return cache
+
+
+def _save_cache(cache, cache_path):
+    """Persist the cache to disk if it changed, with restrictive permissions.
+
+    On POSIX, the file is created with mode 0600 atomically (via os.open with
+    the O_CREAT flag + mode arg), so refresh-token bytes never touch a
+    world-readable inode. Windows ignores the mode arg — its ACL model is
+    handled separately and defaults to inheriting the parent directory ACL,
+    which is typically the user's profile directory.
+    """
+    if not cache.has_state_changed:
+        return
+    try:
+        # os.open with O_CREAT|O_WRONLY|O_TRUNC and mode 0o600 ensures POSIX
+        # never sees a world-readable moment between file creation and chmod.
+        fd = os.open(
+            cache_path,
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
+        )
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(cache.serialize())
+    except OSError as e:
+        print(f"Warning: Could not save MSAL token cache to {cache_path}: {e}")
+
+
 def acquire_token(client_id, email, account_type="auto"):
     """
     Acquires a Microsoft OAuth2 access token using the MSAL device code flow.
     Auto-discovers tenant ID from the email domain.
     Requires the 'msal' package: pip install msal
 
-    On subsequent calls, silently refreshes the token using the cached MSAL app
-    (which holds the refresh token in its in-memory cache).
+    The token cache is persisted to disk (per email, in the user's home dir
+    by default; override with OAUTH2_MICROSOFT_CACHE_DIR). After the first
+    interactive device-code approval, subsequent process invocations reuse
+    the refresh token silently — enabling cron use. Cache files contain
+    refresh tokens (secrets) and are written with mode 0600 on POSIX.
     """
     tenant_id = discover_tenant(email, account_type)
     if not tenant_id:
@@ -164,13 +215,18 @@ def acquire_token(client_id, email, account_type="auto"):
     # resource URL, not outlook.office365.com, or AADSTS70011 fires.
     scopes = get_imap_scopes(tenant_id)
 
-    # Reuse cached MSAL app so acquire_token_silent can access refresh tokens
-    cache_key = (client_id, tenant_id)
+    # Load persistent cache — enables non-interactive cron use.
+    cache_path = _msal_cache_path_for(email)
+    cache = _load_cache(cache_path, msal)
+
+    # Reuse cached MSAL app so acquire_token_silent can access refresh tokens.
+    # Include email in the key so different accounts don't share app state.
+    cache_key = (client_id, tenant_id, email)
     if cache_key in _msal_app_cache:
         app = _msal_app_cache[cache_key]
     else:
         print(f"Discovered Microsoft tenant: {tenant_id}")
-        app = msal.PublicClientApplication(client_id, authority=authority)
+        app = msal.PublicClientApplication(client_id, authority=authority, token_cache=cache)
         _msal_app_cache[cache_key] = app
 
     # Try cached/refreshed token first (handles refresh tokens automatically)
@@ -178,6 +234,7 @@ def acquire_token(client_id, email, account_type="auto"):
     if accounts:
         result = app.acquire_token_silent(scopes, account=accounts[0])
         if result and "access_token" in result:
+            _save_cache(cache, cache_path)  # persist any refresh-token rotation
             return result["access_token"]
 
     # Fall back to device code flow (first call or if refresh fails)
@@ -190,6 +247,7 @@ def acquire_token(client_id, email, account_type="auto"):
     result = app.acquire_token_by_device_flow(flow)
 
     if "access_token" in result:
+        _save_cache(cache, cache_path)  # persist newly-acquired refresh token
         return result["access_token"]
 
     print(f"Error: Could not acquire token: {result.get('error_description', 'Unknown error')}")
