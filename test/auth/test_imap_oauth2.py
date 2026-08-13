@@ -108,6 +108,17 @@ class TestAcquireOauth2TokenForProvider:
         assert "Unknown OAuth2 provider" in captured.out
 
 
+class TestCompatibilityHelpers:
+    def test_microsoft_token_helper_forwards_account_type(self):
+        with patch.object(oauth2_microsoft, "acquire_token", return_value="ms_token") as acquire:
+            result = imap_oauth2.acquire_microsoft_oauth2_token(
+                "client-id", "user@example.com", account_type="personal"
+            )
+
+        assert result == "ms_token"
+        acquire.assert_called_once_with("client-id", "user@example.com", "personal")
+
+
 class TestRefreshOauth2Token:
     """Tests for thread-safe refresh_oauth2_token function."""
 
