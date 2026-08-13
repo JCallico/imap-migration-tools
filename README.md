@@ -763,6 +763,39 @@ python3 imap_migrate.py \
 
 The script will print a device code and URL. Open the URL in a browser, enter the code, and sign in to authorize access.
 
+#### Personal and work Microsoft accounts
+
+Microsoft account type is detected automatically for common Hotmail, Outlook,
+Live, and MSN domains. If the email address does not identify the account type
+correctly, select it explicitly without needing to know Microsoft's tenant
+names:
+
+```bash
+# Single-account command
+python3 imap_count.py \
+  --host "outlook.office365.com" \
+  --user "user@example.com" \
+  --oauth2-client-id "your-application-client-id" \
+  --account-type personal
+
+# Dual-account command
+python3 imap_migrate.py \
+  --src-host "outlook.office365.com" \
+  --src-user "user@example.com" \
+  --src-oauth2-client-id "your-application-client-id" \
+  --src-account-type personal \
+  --dest-host "imap.other.com" \
+  --dest-user "user@other.com" \
+  --dest-pass "password"
+```
+
+Accepted values are `auto` (default), `personal`, and `work`. Environment
+equivalents are `ACCOUNT_TYPE` for `imap_count.py`, and
+`SRC_ACCOUNT_TYPE` / `DEST_ACCOUNT_TYPE` for dual-account
+commands. `personal` supports Microsoft accounts registered with any email
+domain; `work` forces the existing organizational tenant discovery even for a
+normally personal domain such as `hotmail.com`.
+
 ### Google (Gmail)
 
 Requires the `google-auth-oauthlib` package (`pip install google-auth-oauthlib`). Uses the **installed app flow** — opens a browser window for consent. Both `--oauth2-client-id` and `--oauth2-client-secret` are required.

@@ -72,7 +72,16 @@ class TestAcquireOauth2TokenForProvider:
             result = imap_oauth2.acquire_oauth2_token_for_provider("microsoft", "cid", "user@test.com")
 
         assert result == "ms_token"
-        mock_ms.assert_called_once_with("cid", "user@test.com")
+        mock_ms.assert_called_once_with("cid", "user@test.com", "auto")
+
+    def test_dispatches_account_type(self):
+        with patch.object(oauth2_microsoft, "acquire_token", return_value="ms_token") as mock_ms:
+            result = imap_oauth2.acquire_oauth2_token_for_provider(
+                "microsoft", "cid", "user@example.com", account_type="personal"
+            )
+
+        assert result == "ms_token"
+        mock_ms.assert_called_once_with("cid", "user@example.com", "personal")
 
     def test_dispatch_to_google(self):
         """Test dispatches to Google when provider is 'google'."""
@@ -122,7 +131,7 @@ class TestRefreshOauth2Token:
 
         assert result == "new_token"
         assert conf["oauth2_token"] == "new_token"
-        mock_acquire.assert_called_once_with("microsoft", "client-id", "user@test.com", None)
+        mock_acquire.assert_called_once_with("microsoft", "client-id", "user@test.com", None, account_type="auto")
 
     def test_skips_refresh_when_token_already_updated(self):
         """Test that refresh is skipped if another thread already updated the token."""
@@ -202,7 +211,7 @@ class TestRefreshOauth2Token:
         call_count = {"value": 0}
         barrier = threading.Barrier(3)  # 3 threads
 
-        def slow_acquire(provider, client_id, email, client_secret):
+        def slow_acquire(provider, client_id, email, client_secret, account_type="auto"):
             call_count["value"] += 1
             time.sleep(0.05)  # Simulate network delay
             return "fresh_token"
@@ -391,7 +400,7 @@ class TestAcquireToken:
         with patch.object(imap_oauth2, "acquire_oauth2_token_for_provider", return_value="tok") as mock_acq:
             imap_oauth2.acquire_token("imap.gmail.com", "cid", "user@gmail.com", client_secret="my_secret")
 
-        mock_acq.assert_called_once_with("google", "cid", "user@gmail.com", "my_secret")
+        mock_acq.assert_called_once_with("google", "cid", "user@gmail.com", "my_secret", account_type="auto")
 
 
 class TestAuthDescription:

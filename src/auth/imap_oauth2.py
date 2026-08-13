@@ -71,12 +71,12 @@ def discover_microsoft_tenant(email):
     return oauth2_microsoft.discover_tenant(email)
 
 
-def acquire_microsoft_oauth2_token(client_id, email):
+def acquire_microsoft_oauth2_token(client_id, email, account_type="auto"):
     """
     Acquires a Microsoft OAuth2 access token using the MSAL device code flow.
     Delegates to oauth2_microsoft module.
     """
-    return oauth2_microsoft.acquire_token(client_id, email)
+    return oauth2_microsoft.acquire_token(client_id, email, account_type)
 
 
 def acquire_google_oauth2_token(client_id, client_secret):
@@ -87,7 +87,7 @@ def acquire_google_oauth2_token(client_id, client_secret):
     return oauth2_google.acquire_token(client_id, client_secret)
 
 
-def acquire_oauth2_token_for_provider(provider, client_id, email, client_secret=None):
+def acquire_oauth2_token_for_provider(provider, client_id, email, client_secret=None, account_type="auto"):
     """
     Acquires an OAuth2 token for the specified provider.
 
@@ -98,7 +98,7 @@ def acquire_oauth2_token_for_provider(provider, client_id, email, client_secret=
         client_secret: Required for Google, not needed for Microsoft
     """
     if provider == "microsoft":
-        return oauth2_microsoft.acquire_token(client_id, email)
+        return oauth2_microsoft.acquire_token(client_id, email, account_type)
     elif provider == "google":
         if not client_secret:
             print(
@@ -113,7 +113,7 @@ def acquire_oauth2_token_for_provider(provider, client_id, email, client_secret=
         return None
 
 
-def acquire_token(host, client_id, email, client_secret=None, label=None):
+def acquire_token(host, client_id, email, client_secret=None, label=None, account_type="auto"):
     """
     Detect the OAuth2 provider from the host and acquire a token.
 
@@ -137,7 +137,7 @@ def acquire_token(host, client_id, email, client_secret=None, label=None):
         print(f"Acquiring OAuth2 token for {label} ({provider})...")
     else:
         print(f"Acquiring OAuth2 token ({provider})...")
-    token = acquire_oauth2_token_for_provider(provider, client_id, email, client_secret)
+    token = acquire_oauth2_token_for_provider(provider, client_id, email, client_secret, account_type=account_type)
     if not token:
         if label:
             print(f"Error: Failed to acquire OAuth2 token for {label}.")
@@ -194,7 +194,11 @@ def refresh_oauth2_token(conf, old_token):
             return conf["oauth2_token"]
 
         new_token = acquire_oauth2_token_for_provider(
-            oauth2["provider"], oauth2["client_id"], oauth2["email"], oauth2.get("client_secret")
+            oauth2["provider"],
+            oauth2["client_id"],
+            oauth2["email"],
+            oauth2.get("client_secret"),
+            account_type=oauth2.get("account_type", "auto"),
         )
         if new_token:
             conf["oauth2_token"] = new_token
