@@ -4,7 +4,7 @@ Microsoft OAuth2 Token Acquisition
 OAuth2 token acquisition for Microsoft/Outlook IMAP using MSAL device code flow.
 Supports auto-discovery of tenant ID from email domain.
 
-Requires the 'msal' package: pip install msal
+Requires the 'msal' and 'msal-extensions' packages.
 """
 
 import http.client
@@ -15,8 +15,8 @@ import ssl
 import sys
 import urllib.parse
 
-# Module-level caches
-_msal_app_cache = {}  # (client_id, tenant_id) -> PublicClientApplication
+from auth.oauth2_cache import oauth2_cache
+
 _tenant_cache = {}  # (domain, account_type) -> tenant_id
 
 MICROSOFT_ACCOUNT_TYPES = ("auto", "personal", "work")
@@ -140,19 +140,21 @@ def acquire_token(client_id, email, account_type="auto"):
     """
     Acquires a Microsoft OAuth2 access token using the MSAL device code flow.
     Auto-discovers tenant ID from the email domain.
-    Requires the 'msal' package: pip install msal
+    Requires the 'msal' and 'msal-extensions' packages.
 
-    On subsequent calls, silently refreshes the token using the cached MSAL app
-    (which holds the refresh token in its in-memory cache).
+    MSAL Extensions persists the per-account token cache with platform
+    encryption, cross-process locking, and automatic reload. Override the
+    cache directory with OAUTH2_CACHE_DIR.
     """
     tenant_id = discover_tenant(email, account_type)
     if not tenant_id:
         return None
+    print(f"Discovered Microsoft tenant: {tenant_id}")
 
     try:
         import msal
     except ImportError:
-        print("Error: 'msal' package is required for Microsoft OAuth2. Install it with: pip install msal")
+        print("Error: Microsoft OAuth2 requires: pip install msal")
         sys.exit(1)
 
     authority_base = os.getenv("OAUTH2_MICROSOFT_AUTHORITY_BASE_URL")
@@ -164,30 +166,32 @@ def acquire_token(client_id, email, account_type="auto"):
     # resource URL, not outlook.office365.com, or AADSTS70011 fires.
     scopes = get_imap_scopes(tenant_id)
 
-    # Reuse cached MSAL app so acquire_token_silent can access refresh tokens
-    cache_key = (client_id, tenant_id)
-    if cache_key in _msal_app_cache:
-        app = _msal_app_cache[cache_key]
-    else:
-        print(f"Discovered Microsoft tenant: {tenant_id}")
-        app = msal.PublicClientApplication(client_id, authority=authority)
-        _msal_app_cache[cache_key] = app
+    normalized_email = email.strip().casefold()
+    application_cache_key = (client_id, authority, normalized_email)
+    msal_application = oauth2_cache.get("microsoft_application", application_cache_key)
+    if msal_application is None:
+        persistent_token_cache = oauth2_cache.create_token_cache("microsoft", client_id, tenant_id, normalized_email)
+        app_options = {"authority": authority}
+        if persistent_token_cache is not None:
+            app_options["token_cache"] = persistent_token_cache
+        msal_application = msal.PublicClientApplication(client_id, **app_options)
+        oauth2_cache.set("microsoft_application", application_cache_key, msal_application)
 
     # Try cached/refreshed token first (handles refresh tokens automatically)
-    accounts = app.get_accounts()
+    accounts = msal_application.get_accounts(username=normalized_email)
     if accounts:
-        result = app.acquire_token_silent(scopes, account=accounts[0])
+        result = msal_application.acquire_token_silent(scopes, account=accounts[0])
         if result and "access_token" in result:
             return result["access_token"]
 
     # Fall back to device code flow (first call or if refresh fails)
-    flow = app.initiate_device_flow(scopes=scopes)
+    flow = msal_application.initiate_device_flow(scopes=scopes)
     if "user_code" not in flow:
         print(f"Error: Could not initiate device flow: {flow.get('error_description', 'Unknown error')}")
         return None
 
     print(flow["message"])
-    result = app.acquire_token_by_device_flow(flow)
+    result = msal_application.acquire_token_by_device_flow(flow)
 
     if "access_token" in result:
         return result["access_token"]

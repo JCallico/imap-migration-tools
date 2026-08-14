@@ -17,17 +17,16 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
 from auth import imap_oauth2, oauth2_google, oauth2_microsoft
+from auth.oauth2_cache import oauth2_cache
 
 
 @pytest.fixture(autouse=True)
 def clear_oauth2_caches():
     """Clear module-level OAuth2 caches between tests."""
-    imap_oauth2._msal_app_cache.clear()
-    imap_oauth2._google_creds_cache.clear()
+    oauth2_cache.clear_memory()
     imap_oauth2._tenant_cache.clear()
     yield
-    imap_oauth2._msal_app_cache.clear()
-    imap_oauth2._google_creds_cache.clear()
+    oauth2_cache.clear_memory()
     imap_oauth2._tenant_cache.clear()
 
 
@@ -89,7 +88,7 @@ class TestAcquireOauth2TokenForProvider:
             result = imap_oauth2.acquire_oauth2_token_for_provider("google", "cid", "user@gmail.com", "secret")
 
         assert result == "g_token"
-        mock_g.assert_called_once_with("cid", "secret")
+        mock_g.assert_called_once_with("cid", "secret", "user@gmail.com")
 
     def test_google_requires_client_secret(self, capsys):
         """Test returns None when Google is selected without client_secret."""
@@ -117,6 +116,13 @@ class TestCompatibilityHelpers:
 
         assert result == "ms_token"
         acquire.assert_called_once_with("client-id", "user@example.com", "personal")
+
+    def test_google_token_helper_forwards_account_identity(self):
+        with patch.object(oauth2_google, "acquire_token", return_value="google-token") as acquire:
+            result = imap_oauth2.acquire_google_oauth2_token("client-id", "client-secret", email="user@gmail.com")
+
+        assert result == "google-token"
+        acquire.assert_called_once_with("client-id", "client-secret", "user@gmail.com")
 
 
 class TestRefreshOauth2Token:

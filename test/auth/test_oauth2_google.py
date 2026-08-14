@@ -6,6 +6,7 @@ Tests cover:
 - Credentials caching and silent token refresh
 """
 
+import json
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -15,14 +16,16 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
 from auth import oauth2_google
+from auth.oauth2_cache import oauth2_cache
 
 
 @pytest.fixture(autouse=True)
-def clear_caches():
+def clear_caches(monkeypatch):
     """Clear module-level caches between tests."""
-    oauth2_google._creds_cache.clear()
+    monkeypatch.setenv("OAUTH2_CACHE_ENABLED", "false")
+    oauth2_cache.clear_memory()
     yield
-    oauth2_google._creds_cache.clear()
+    oauth2_cache.clear_memory()
 
 
 class TestAcquireToken:
@@ -89,7 +92,7 @@ class TestAcquireToken:
         with patch.dict("sys.modules", {"google_auth_oauthlib": MagicMock(), "google_auth_oauthlib.flow": mock_module}):
             oauth2_google.acquire_token("client-id", "client-secret")
 
-        assert ("client-id", "client-secret") in oauth2_google._creds_cache
+        assert oauth2_cache.get("google_credentials", ("client-id", "default")) is mock_credentials
 
     def test_cached_credentials_refreshed_on_second_call(self):
         """Test second call refreshes cached credentials without opening browser."""
@@ -97,23 +100,56 @@ class TestAcquireToken:
         mock_creds = MagicMock()
         mock_creds.refresh_token = "refresh_tok"
         mock_creds.token = "refreshed_google_token"
-        oauth2_google._creds_cache[("client-id", "client-secret")] = mock_creds
+        oauth2_cache.set("google_credentials", ("client-id", "default"), mock_creds)
 
-        mock_request_module = MagicMock()
-        with patch.dict(
-            "sys.modules",
-            {
-                "google": MagicMock(),
-                "google.auth": MagicMock(),
-                "google.auth.transport": MagicMock(),
-                "google.auth.transport.requests": mock_request_module,
-            },
-        ):
+        with patch("google.auth.transport.requests.Request"):
             result = oauth2_google.acquire_token("client-id", "client-secret")
 
         assert result == "refreshed_google_token"
         # Verify refresh was called
         mock_creds.refresh.assert_called_once()
+
+    def test_persistent_credentials_are_restored_and_refreshed(self):
+        mock_creds = MagicMock()
+        mock_creds.refresh_token = "refresh-token"
+        mock_creds.token = "refreshed-token"
+        mock_creds.to_json.return_value = '{"updated":true}'
+        serialized = json.dumps(
+            {
+                "client_id": "client-id",
+                "client_secret": "client-secret",
+                "refresh_token": "refresh-token",
+                "token_uri": "https://oauth2.googleapis.com/token",
+            }
+        )
+
+        with (
+            patch.object(oauth2_google.oauth2_cache, "load", return_value=serialized),
+            patch.object(oauth2_google.oauth2_cache, "save", return_value=True) as save,
+            patch("google.oauth2.credentials.Credentials.from_authorized_user_info", return_value=mock_creds),
+            patch("google.auth.transport.requests.Request"),
+        ):
+            result = oauth2_google.acquire_token("client-id", "client-secret", "User@Gmail.com")
+
+        assert result == "refreshed-token"
+        assert oauth2_google.oauth2_cache.get("google_credentials", ("client-id", "user@gmail.com")) is mock_creds
+        save.assert_called_once_with("google", '{"updated":true}', "client-id", "user@gmail.com")
+
+    def test_invalid_persistent_credentials_fall_back_to_browser(self, capsys):
+        mock_credentials = MagicMock()
+        mock_credentials.token = "browser-token"
+        mock_flow = MagicMock()
+        mock_flow.run_local_server.return_value = mock_credentials
+
+        with (
+            patch.object(oauth2_google.oauth2_cache, "load", return_value="not-json"),
+            patch.object(oauth2_google.oauth2_cache, "save", return_value=True),
+            patch("google_auth_oauthlib.flow.InstalledAppFlow.from_client_config", return_value=mock_flow),
+        ):
+            result = oauth2_google.acquire_token("client-id", "client-secret", "user@gmail.com")
+
+        assert result == "browser-token"
+        assert "Could not restore cached Google credentials" in capsys.readouterr().out
 
     def test_falls_back_to_browser_if_refresh_fails(self):
         """Test falls back to full auth flow if cached token refresh fails."""
@@ -121,7 +157,7 @@ class TestAcquireToken:
         mock_creds = MagicMock()
         mock_creds.refresh_token = "refresh_tok"
         mock_creds.refresh.side_effect = Exception("Refresh failed")
-        oauth2_google._creds_cache[("client-id", "client-secret")] = mock_creds
+        oauth2_cache.set("google_credentials", ("client-id", "default"), mock_creds)
 
         # Set up the full auth flow
         mock_credentials = MagicMock()
@@ -146,7 +182,7 @@ class TestAcquireToken:
         # Pre-populate cache with credentials that have no refresh token
         mock_creds = MagicMock()
         mock_creds.refresh_token = None
-        oauth2_google._creds_cache[("client-id", "client-secret")] = mock_creds
+        oauth2_cache.set("google_credentials", ("client-id", "default"), mock_creds)
 
         # Set up the full auth flow
         mock_credentials = MagicMock()
