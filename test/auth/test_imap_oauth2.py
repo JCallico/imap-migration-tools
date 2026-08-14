@@ -117,6 +117,13 @@ class TestCompatibilityHelpers:
         assert result == "ms_token"
         acquire.assert_called_once_with("client-id", "user@example.com", "personal")
 
+    def test_google_token_helper_forwards_account_identity(self):
+        with patch.object(oauth2_google, "acquire_token", return_value="google-token") as acquire:
+            result = imap_oauth2.acquire_google_oauth2_token("client-id", "client-secret", email="user@gmail.com")
+
+        assert result == "google-token"
+        acquire.assert_called_once_with("client-id", "client-secret", "user@gmail.com")
+
 
 class TestRefreshOauth2Token:
     """Tests for thread-safe refresh_oauth2_token function."""
