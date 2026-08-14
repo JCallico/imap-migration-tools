@@ -17,6 +17,7 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
 from auth import oauth2_microsoft
+from auth.oauth2_cache import oauth2_cache
 from conftest import temp_env
 from mock_oauth_server import MOCK_TENANT_ID
 
@@ -38,10 +39,10 @@ EXPECTED_PERSONAL_MICROSOFT_DOMAINS = {
 @pytest.fixture(autouse=True)
 def clear_caches():
     """Clear module-level caches between tests."""
-    oauth2_microsoft._msal_app_cache.clear()
+    oauth2_cache.clear_memory()
     oauth2_microsoft._tenant_cache.clear()
     yield
-    oauth2_microsoft._msal_app_cache.clear()
+    oauth2_cache.clear_memory()
     oauth2_microsoft._tenant_cache.clear()
 
 
@@ -182,6 +183,12 @@ class TestImapScopes:
 class TestAcquireToken:
     """Tests for acquire_token function."""
 
+    @pytest.fixture(autouse=True)
+    def disable_persistent_cache(self):
+        """Keep mocked acquisition tests isolated from the user's credential store."""
+        with temp_env({"OAUTH2_CACHE_ENABLED": "false"}):
+            yield
+
     def test_successful_token(self):
         """Test successful token acquisition with auto-discovery."""
         with patch.object(oauth2_microsoft, "discover_tenant", return_value="tenant-123"):
@@ -212,7 +219,12 @@ class TestAcquireToken:
             mock_msal.PublicClientApplication.return_value = mock_app
 
             with patch.dict("sys.modules", {"msal": mock_msal}):
-                with temp_env({"OAUTH2_MICROSOFT_AUTHORITY_BASE_URL": custom_base}):
+                with temp_env(
+                    {
+                        "OAUTH2_MICROSOFT_AUTHORITY_BASE_URL": custom_base,
+                        "OAUTH2_CACHE_ENABLED": "false",
+                    }
+                ):
                     oauth2_microsoft.acquire_token("client-id", "user@test.com")
 
             mock_msal.PublicClientApplication.assert_called_with("client-id", authority=expected_authority)
@@ -238,9 +250,43 @@ class TestAcquireToken:
                 result = oauth2_microsoft.acquire_token("client-id", "user@test.com")
 
             assert result == "cached_token"
+            mock_app.get_accounts.assert_called_once_with(username="user@test.com")
 
-    def test_msal_app_cached_on_first_call(self):
-        """Test MSAL app is cached after first call."""
+    def test_persistent_token_cache_is_attached_to_new_application(self, tmp_path):
+        with patch.object(oauth2_microsoft, "discover_tenant", return_value="tenant-123"):
+            mock_msal = MagicMock()
+            mock_app = MagicMock()
+            mock_app.get_accounts.return_value = []
+            mock_app.initiate_device_flow.return_value = {"user_code": "ABC", "message": "Go to..."}
+            mock_app.acquire_token_by_device_flow.return_value = {"access_token": "token"}
+            mock_msal.PublicClientApplication.return_value = mock_app
+            persistent_token_cache = object()
+
+            with (
+                patch.dict("sys.modules", {"msal": mock_msal}),
+                patch.object(
+                    oauth2_cache,
+                    "create_token_cache",
+                    return_value=persistent_token_cache,
+                ) as create_token_cache,
+            ):
+                with temp_env(
+                    {
+                        "OAUTH2_CACHE_ENABLED": "true",
+                        "OAUTH2_CACHE_DIR": str(tmp_path),
+                    }
+                ):
+                    oauth2_microsoft.acquire_token("client-id", "User@Test.com")
+
+            create_token_cache.assert_called_once_with("microsoft", "client-id", "tenant-123", "user@test.com")
+            mock_msal.PublicClientApplication.assert_called_once_with(
+                "client-id",
+                authority="https://login.microsoftonline.com/tenant-123",
+                token_cache=persistent_token_cache,
+            )
+
+    def test_msal_application_cached_on_first_call(self):
+        """Test the MSAL application is cached after the first call."""
         with patch.object(oauth2_microsoft, "discover_tenant", return_value="tenant-123"):
             mock_msal = MagicMock()
             mock_app = MagicMock()
@@ -252,10 +298,12 @@ class TestAcquireToken:
             with patch.dict("sys.modules", {"msal": mock_msal}):
                 oauth2_microsoft.acquire_token("client-id", "user@test.com")
 
-            assert ("client-id", "tenant-123") in oauth2_microsoft._msal_app_cache
+            expected_authority = "https://login.microsoftonline.com/tenant-123"
+            application_cache_key = ("client-id", expected_authority, "user@test.com")
+            assert oauth2_cache.get("microsoft_application", application_cache_key) is mock_app
 
-    def test_cached_app_reused_on_second_call(self):
-        """Test second call reuses cached MSAL app instead of creating new one."""
+    def test_cached_application_reused_on_second_call(self):
+        """Test the second call reuses the cached MSAL application."""
         with patch.object(oauth2_microsoft, "discover_tenant", return_value="tenant-123"):
             mock_msal = MagicMock()
             mock_app = MagicMock()
@@ -299,6 +347,20 @@ class TestAcquireToken:
                 result = oauth2_microsoft.acquire_token("client-id", "user@test.com")
 
             assert result is None
+
+    def test_device_flow_initialization_failure(self, capsys):
+        with patch.object(oauth2_microsoft, "discover_tenant", return_value="tenant-123"):
+            mock_msal = MagicMock()
+            mock_app = MagicMock()
+            mock_app.get_accounts.return_value = []
+            mock_app.initiate_device_flow.return_value = {"error_description": "device flow unavailable"}
+            mock_msal.PublicClientApplication.return_value = mock_app
+
+            with patch.dict("sys.modules", {"msal": mock_msal}):
+                result = oauth2_microsoft.acquire_token("client-id", "user@test.com")
+
+        assert result is None
+        assert "device flow unavailable" in capsys.readouterr().out
 
 
 class TestFetchJsonHttps:

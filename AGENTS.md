@@ -9,6 +9,14 @@
 
 ## Development workflow
 
+Before implementing a new feature, investigate whether a maintained library
+already provides the complete feature or important building blocks. Present
+the user with the viable options before implementation: add a dependency and
+use the existing library, or implement the behavior from scratch, including
+the relevant maintenance, security, and portability tradeoffs. Prefer an
+established library for security- and data-sensitive concerns such as
+authentication, encryption, caching, and database access.
+
 Use Python 3.9+ and run commands from the repository root. The source tree is not installed during tests, so include `PYTHONPATH=src` when invoking pytest directly.
 
 ```bash

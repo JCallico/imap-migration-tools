@@ -17,17 +17,16 @@ import pytest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
 from auth import imap_oauth2, oauth2_google, oauth2_microsoft
+from auth.oauth2_cache import oauth2_cache
 
 
 @pytest.fixture(autouse=True)
 def clear_oauth2_caches():
     """Clear module-level OAuth2 caches between tests."""
-    imap_oauth2._msal_app_cache.clear()
-    imap_oauth2._google_creds_cache.clear()
+    oauth2_cache.clear_memory()
     imap_oauth2._tenant_cache.clear()
     yield
-    imap_oauth2._msal_app_cache.clear()
-    imap_oauth2._google_creds_cache.clear()
+    oauth2_cache.clear_memory()
     imap_oauth2._tenant_cache.clear()
 
 
@@ -89,7 +88,7 @@ class TestAcquireOauth2TokenForProvider:
             result = imap_oauth2.acquire_oauth2_token_for_provider("google", "cid", "user@gmail.com", "secret")
 
         assert result == "g_token"
-        mock_g.assert_called_once_with("cid", "secret")
+        mock_g.assert_called_once_with("cid", "secret", "user@gmail.com")
 
     def test_google_requires_client_secret(self, capsys):
         """Test returns None when Google is selected without client_secret."""

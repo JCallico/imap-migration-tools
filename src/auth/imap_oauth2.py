@@ -13,8 +13,6 @@ import threading
 from auth import oauth2_google, oauth2_microsoft
 
 # Re-export caches for test access
-_msal_app_cache = oauth2_microsoft._msal_app_cache
-_google_creds_cache = oauth2_google._creds_cache
 _tenant_cache = oauth2_microsoft._tenant_cache
 
 # Thread-safe token refresh
@@ -79,12 +77,12 @@ def acquire_microsoft_oauth2_token(client_id, email, account_type="auto"):
     return oauth2_microsoft.acquire_token(client_id, email, account_type)
 
 
-def acquire_google_oauth2_token(client_id, client_secret):
+def acquire_google_oauth2_token(client_id, client_secret, email=None):
     """
     Acquires a Google OAuth2 access token using the installed app flow.
     Delegates to oauth2_google module.
     """
-    return oauth2_google.acquire_token(client_id, client_secret)
+    return oauth2_google.acquire_token(client_id, client_secret, email)
 
 
 def acquire_oauth2_token_for_provider(provider, client_id, email, client_secret=None, account_type="auto"):
@@ -107,7 +105,7 @@ def acquire_oauth2_token_for_provider(provider, client_id, email, client_secret=
                 "or set OAUTH2_CLIENT_SECRET / SRC_OAUTH2_CLIENT_SECRET / DEST_OAUTH2_CLIENT_SECRET."
             )
             return None
-        return oauth2_google.acquire_token(client_id, client_secret)
+        return oauth2_google.acquire_token(client_id, client_secret, email)
     else:
         print(f"Error: Unknown OAuth2 provider: {provider}")
         return None

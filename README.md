@@ -64,8 +64,8 @@ This repository contains a set of Python scripts designed to migrate emails betw
 - **Optional:** To use a `.env` file, install the `python-dotenv` package as well:
   - `pip install python-dotenv`
 
-- **Optional: OAuth2 authentication** requires one additional package depending on your provider:
-  - **Microsoft (Outlook/Office 365):** `pip install msal`
+- **Optional: OAuth2 authentication** requires provider-specific packages:
+  - **Microsoft (Outlook/Office 365):** `pip install msal msal-extensions`
   - **Google (Gmail):** `pip install google-auth-oauthlib`
 
 ### 2. Installation
@@ -715,9 +715,17 @@ Environment variable equivalents:
 - Dual-account scripts: `SRC_OAUTH2_CLIENT_ID`, `SRC_OAUTH2_CLIENT_SECRET` and `DEST_OAUTH2_CLIENT_ID`, `DEST_OAUTH2_CLIENT_SECRET`.
 - Single-account scripts (like `imap_count.py`): `OAUTH2_CLIENT_ID`, `OAUTH2_CLIENT_SECRET` (also accepts `SRC_OAUTH2_CLIENT_ID`, `SRC_OAUTH2_CLIENT_SECRET`).
 
+Microsoft and Google authentication share an encrypted persistent token cache
+implemented with MSAL Extensions. Cache entries are isolated by provider,
+client, and account, and concurrent access is protected by locking. Set
+`OAUTH2_CACHE_DIR` to override its location, or
+`OAUTH2_CACHE_ENABLED=false` to disable persistent token caching. Tokens are
+never persisted in plaintext. If platform encryption is unavailable,
+authentication continues with an in-memory cache for the current process only.
+
 ### Microsoft (Outlook / Office 365)
 
-Requires the `msal` package (`pip install msal`). Uses the **device code flow** — no browser redirect needed. The tenant ID is auto-discovered from the user's email domain.
+Requires `msal` and `msal-extensions` (`pip install msal msal-extensions`). Uses the **device code flow** — no browser redirect needed. The tenant ID is auto-discovered from the user's email domain.
 
 #### Creating an App Registration in Microsoft Entra
 
@@ -748,8 +756,12 @@ Requires the `msal` package (`pip install msal`). Uses the **device code flow** 
 #### Usage
 
 ```bash
-# Install dependency
-pip install msal
+# Install dependencies
+pip install msal msal-extensions
+
+# Enable the encrypted persistent token cache and optionally choose its location
+export OAUTH2_CACHE_ENABLED="true"
+export OAUTH2_CACHE_DIR="/path/to/private/oauth2-cache"
 
 # Migration with Microsoft OAuth2 on source
 python3 imap_migrate.py \
