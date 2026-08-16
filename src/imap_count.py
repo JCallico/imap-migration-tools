@@ -87,8 +87,8 @@ def count_emails(imap_server, username, password=None, oauth2_token=None):
                 status, data = mail.search(None, "ALL")
 
                 if status == "OK":
-                    # data[0] is space separated IDs
-                    email_ids = data[0].split()
+                    # Some servers return [None] for a successful search in an empty mailbox.
+                    email_ids = data[0].split() if data and data[0] else []
                     count = len(email_ids)
                     print(f"{display_name:<40} {count:>10}")
                     total_all_folders += count

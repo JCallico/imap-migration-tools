@@ -100,6 +100,29 @@ class TestEmailCounting:
         captured = capsys.readouterr()
         assert "0" in captured.out
 
+    def test_empty_search_payload_counts_as_zero(self, monkeypatch, capsys):
+        """Treat a successful SEARCH response with no payload as an empty folder."""
+
+        class FakeConn:
+            def select(self, _folder, readonly=False):
+                return "OK", [b"0"]
+
+            def search(self, _charset, _criteria):
+                return "OK", [None]
+
+            def logout(self):
+                return "BYE", [b"Logged out"]
+
+        monkeypatch.setattr(imap_common, "get_imap_connection", lambda *_args: FakeConn())
+        monkeypatch.setattr(imap_common, "list_selectable_folders", lambda _conn: ["Empty"])
+
+        count_imap_emails.count_emails("imap.example.com", "user", "password")
+
+        captured = capsys.readouterr()
+        assert "Empty" in captured.out
+        assert "TOTAL" in captured.out
+        assert "An error occurred" not in captured.out
+
 
 class TestLocalEmailCounting:
     """Tests for counting emails from a local backup folder."""
