@@ -101,6 +101,23 @@ class TestBasicMigration:
 
         assert len(dest_server.folders["INBOX"]) == 1
 
+    def test_explicit_passwords_override_dotenv_oauth(self, mock_server_factory, dotenv_file):
+        """Explicit passwords select basic authentication for both migration accounts."""
+        src_data = {"INBOX": [b"Subject: Password\r\nMessage-ID: <password@test>\r\n\r\nBody"]}
+        _, dest_server, src_port, dest_port = mock_server_factory(src_data, {"INBOX": []})
+        dotenv_file(
+            {
+                **_mock_migrate_env(src_port, dest_port),
+                "SRC_OAUTH2_CLIENT_ID": "inherited-source-oauth",
+                "DEST_OAUTH2_CLIENT_ID": "inherited-destination-oauth",
+            }
+        )
+
+        with temp_env({}), temp_argv(["migrate_imap_emails.py", "--src-pass", "p", "--dest-pass", "p", "INBOX"]):
+            migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX"]) == 1
+
 
 class TestDuplicateHandling:
     """Tests for duplicate detection and skipping."""

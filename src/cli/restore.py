@@ -3,6 +3,7 @@
 import argparse
 import os
 
+from cli.common import resolve_authentication
 from utils import imap_common
 
 
@@ -35,21 +36,21 @@ def parse_arguments(argv=None):
         required=not bool(default_dest_user),
         help="Destination Username (or DEST_IMAP_USERNAME)",
     )
-    dest_auth = parser.add_mutually_exclusive_group(required=not bool(default_dest_pass or default_dest_client_id))
+    dest_auth = parser.add_mutually_exclusive_group()
     dest_auth.add_argument(
         "--dest-pass",
-        default=default_dest_pass,
+        default=argparse.SUPPRESS,
         help="Destination Password (or DEST_IMAP_PASSWORD)",
     )
     dest_auth.add_argument(
         "--dest-oauth2-client-id",
-        default=default_dest_client_id,
+        default=argparse.SUPPRESS,
         dest="dest_client_id",
         help="Destination OAuth2 Client ID (or DEST_OAUTH2_CLIENT_ID)",
     )
     dest_auth.add_argument(
         "--dest-client-id",
-        default=default_dest_client_id,
+        default=argparse.SUPPRESS,
         dest="dest_client_id",
         help=argparse.SUPPRESS,
     )
@@ -109,4 +110,15 @@ def parse_arguments(argv=None):
         help="Delete emails from destination that don't exist in local backup (sync mode)",
     )
     parser.add_argument("folder", nargs="?", help="Specific folder to restore")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    resolve_authentication(
+        parser,
+        args,
+        password_dest="dest_pass",
+        client_id_dest="dest_client_id",
+        default_password=default_dest_pass,
+        default_client_id=default_dest_client_id,
+        password_option="--dest-pass",
+        oauth_option="--dest-oauth2-client-id",
+    )
+    return args

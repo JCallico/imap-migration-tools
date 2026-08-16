@@ -322,6 +322,16 @@ class TestMainFunction:
 
         assert "INBOX" in capsys.readouterr().out
 
+    def test_explicit_password_overrides_dotenv_oauth(self, single_mock_server, capsys, dotenv_file):
+        """An explicit password prevents an inherited OAuth client ID from selecting OAuth."""
+        _, port = single_mock_server({"INBOX": [b"Subject: Password\r\n\r\nBody"]})
+        dotenv_file({**_mock_imap_env(port), "OAUTH2_CLIENT_ID": "inherited-oauth-client"})
+
+        with temp_env({}):
+            count_imap_emails.main(["--pass", "pass"])
+
+        assert "INBOX" in capsys.readouterr().out
+
     def test_explicit_imap_arguments_override_dotenv_local_path(
         self, single_mock_server, tmp_path, capsys, dotenv_file
     ):

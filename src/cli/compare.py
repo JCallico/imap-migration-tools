@@ -3,6 +3,7 @@
 import argparse
 import os
 
+from cli.common import resolve_authentication
 from utils import imap_common
 
 
@@ -106,14 +107,10 @@ def parse_arguments(argv=None):
     args.dest_path = getattr(args, "dest_path", default_dest_path if dest_is_local else None)
     args.src_host = getattr(args, "src_host", default_src_host)
     args.src_user = getattr(args, "src_user", default_src_user)
-    args.src_pass = getattr(args, "src_pass", default_src_pass)
-    args.src_client_id = getattr(args, "src_client_id", default_src_client_id)
     args.src_client_secret = getattr(args, "src_client_secret", default_src_client_secret)
     args.src_account_type = getattr(args, "src_account_type", default_src_account_type)
     args.dest_host = getattr(args, "dest_host", default_dest_host)
     args.dest_user = getattr(args, "dest_user", default_dest_user)
-    args.dest_pass = getattr(args, "dest_pass", default_dest_pass)
-    args.dest_client_id = getattr(args, "dest_client_id", default_dest_client_id)
     args.dest_client_secret = getattr(args, "dest_client_secret", default_dest_client_secret)
     args.dest_account_type = getattr(args, "dest_account_type", default_dest_account_type)
 
@@ -122,18 +119,34 @@ def parse_arguments(argv=None):
     if dest_is_local and not args.dest_path:
         parser.error("--dest-path must specify a non-empty local backup root")
     if not src_is_local:
+        resolve_authentication(
+            parser,
+            args,
+            password_dest="src_pass",
+            client_id_dest="src_client_id",
+            default_password=default_src_pass,
+            default_client_id=default_src_client_id,
+            password_option="--src-pass",
+            oauth_option="--src-oauth2-client-id",
+        )
         if not args.src_host:
             parser.error("--src-host is required when SRC_IMAP_HOST is not set")
         if not args.src_user:
             parser.error("--src-user is required when SRC_IMAP_USERNAME is not set")
-        if not args.src_pass and not args.src_client_id:
-            parser.error("one of --src-pass or --src-oauth2-client-id is required for an IMAP source")
     if not dest_is_local:
+        resolve_authentication(
+            parser,
+            args,
+            password_dest="dest_pass",
+            client_id_dest="dest_client_id",
+            default_password=default_dest_pass,
+            default_client_id=default_dest_client_id,
+            password_option="--dest-pass",
+            oauth_option="--dest-oauth2-client-id",
+        )
         if not args.dest_host:
             parser.error("--dest-host is required when DEST_IMAP_HOST is not set")
         if not args.dest_user:
             parser.error("--dest-user is required when DEST_IMAP_USERNAME is not set")
-        if not args.dest_pass and not args.dest_client_id:
-            parser.error("one of --dest-pass or --dest-oauth2-client-id is required for an IMAP destination")
 
     return args, src_is_local, dest_is_local

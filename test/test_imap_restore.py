@@ -288,6 +288,25 @@ Body content.
 
         assert len(server.folders["INBOX"]) == 1
 
+    def test_explicit_password_overrides_dotenv_oauth(self, single_mock_server, tmp_path, dotenv_file):
+        """An explicit destination password prevents inherited OAuth selection."""
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+        (inbox / "1_Password.eml").write_bytes(b"Subject: Password\r\nMessage-ID: <password@test>\r\n\r\nBody")
+        server, port = single_mock_server({"INBOX": []})
+        dotenv_file(
+            {
+                **_mock_restore_env(port),
+                "DEST_OAUTH2_CLIENT_ID": "inherited-oauth-client",
+                "BACKUP_LOCAL_PATH": str(tmp_path),
+            }
+        )
+
+        with temp_env({}), temp_argv(["restore_imap_emails.py", "--dest-pass", "p", "INBOX"]):
+            restore_imap_emails.main()
+
+        assert len(server.folders["INBOX"]) == 1
+
     def test_restore_all_folders_scans_backup(self, single_mock_server, tmp_path):
         """End-to-end: restore all folders from a backup tree."""
         inbox = tmp_path / "INBOX"

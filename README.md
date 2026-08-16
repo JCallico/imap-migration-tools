@@ -227,6 +227,11 @@ operating mode. In `imap_count.py`, `--path` selects local mode, while explicit 
 same rule is applied independently to the source and destination. Do not combine an explicit path with explicit IMAP
 connection arguments for the same side.
 
+Password and OAuth settings are treated as one authentication choice. An explicit password option selects password
+authentication and ignores an OAuth client ID inherited from the environment or `.env`; an explicit OAuth client ID
+likewise ignores an inherited password. When neither method is selected on the command line, environment configuration
+is used. If both methods are configured in the environment, OAuth remains the default for backward compatibility.
+
 Destination namespace prefixes are detected automatically through the IMAP
 `NAMESPACE` command. If a server does not advertise its namespace correctly,
 set `DEST_FOLDER_PREFIX` and `DEST_FOLDER_SEP` explicitly (for example,

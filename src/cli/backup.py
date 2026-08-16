@@ -3,6 +3,7 @@
 import argparse
 import os
 
+from cli.common import resolve_authentication
 from utils import imap_common
 
 
@@ -27,11 +28,11 @@ def parse_arguments(argv=None):
         required=not bool(default_src_user),
         help="Source Username (or SRC_IMAP_USERNAME)",
     )
-    auth_group = parser.add_mutually_exclusive_group(required=not bool(default_src_pass or default_src_client_id))
-    auth_group.add_argument("--src-pass", default=default_src_pass, help="Source Password (or SRC_IMAP_PASSWORD)")
+    auth_group = parser.add_mutually_exclusive_group()
+    auth_group.add_argument("--src-pass", default=argparse.SUPPRESS, help="Source Password (or SRC_IMAP_PASSWORD)")
     auth_group.add_argument(
         "--src-oauth2-client-id",
-        default=default_src_client_id,
+        default=argparse.SUPPRESS,
         dest="src_client_id",
         help="OAuth2 Client ID (or SRC_OAUTH2_CLIENT_ID)",
     )
@@ -88,4 +89,15 @@ def parse_arguments(argv=None):
         help="Delete local .eml files that no longer exist on the IMAP server (sync mode)",
     )
     parser.add_argument("folder", nargs="?", help="Specific folder to backup")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    resolve_authentication(
+        parser,
+        args,
+        password_dest="src_pass",
+        client_id_dest="src_client_id",
+        default_password=default_src_pass,
+        default_client_id=default_src_client_id,
+        password_option="--src-pass",
+        oauth_option="--src-oauth2-client-id",
+    )
+    return args

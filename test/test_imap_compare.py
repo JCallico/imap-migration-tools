@@ -99,6 +99,23 @@ class TestFolderComparison:
 
         assert "INBOX" in capsys.readouterr().out
 
+    def test_explicit_passwords_override_dotenv_oauth(self, mock_server_factory, capsys, dotenv_file):
+        """Explicit passwords select basic authentication for both comparison accounts."""
+        data = {"INBOX": [b"Subject: Password\r\n\r\nBody"]}
+        _, _, src_port, dest_port = mock_server_factory(data, data.copy())
+        dotenv_file(
+            {
+                **_mock_compare_env(src_port, dest_port),
+                "SRC_OAUTH2_CLIENT_ID": "inherited-source-oauth",
+                "DEST_OAUTH2_CLIENT_ID": "inherited-destination-oauth",
+            }
+        )
+
+        with temp_env({}), temp_argv(["compare_imap_folders.py", "--src-pass", "p", "--dest-pass", "p"]):
+            compare_imap_folders.main()
+
+        assert "INBOX" in capsys.readouterr().out
+
     def test_explicit_imap_arguments_override_dotenv_local_paths(
         self, mock_server_factory, tmp_path, capsys, dotenv_file
     ):

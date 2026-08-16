@@ -104,6 +104,23 @@ class TestBackupBasic:
 
         assert len(list((backup_path / "INBOX").glob("*.eml"))) == 1
 
+    def test_explicit_password_overrides_dotenv_oauth(self, single_mock_server, tmp_path, dotenv_file):
+        """An explicit password prevents an inherited OAuth client ID from selecting OAuth."""
+        _, port = single_mock_server({"INBOX": [b"Subject: Password\r\nMessage-ID: <password@test>\r\n\r\nBody"]})
+        backup_path = tmp_path / "password-backup"
+        dotenv_file(
+            {
+                **_mock_imap_env(port),
+                "SRC_OAUTH2_CLIENT_ID": "inherited-oauth-client",
+                "BACKUP_LOCAL_PATH": str(backup_path),
+            }
+        )
+
+        with temp_env({}), temp_argv(["backup_imap_emails.py", "--src-pass", "p"]):
+            backup_imap_emails.main()
+
+        assert len(list((backup_path / "INBOX").glob("*.eml"))) == 1
+
     def test_backup_prefers_existing_os_environment(self, single_mock_server, tmp_path, dotenv_file):
         """End-to-end: an OS value overrides the same value in .env."""
         src_data = {"INBOX": [b"Subject: OS wins\r\nMessage-ID: <os@test>\r\n\r\nBody"]}
