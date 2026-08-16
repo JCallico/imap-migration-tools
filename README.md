@@ -221,6 +221,12 @@ Configuration values are applied in this order, with earlier entries taking prec
 3. Values in `.env`
 4. Script defaults
 
+For commands that support both IMAP and local paths, explicitly supplied command-line arguments also select the
+operating mode. In `imap_count.py`, `--path` selects local mode, while explicit IMAP connection arguments such as
+`--host` select IMAP mode even if `BACKUP_LOCAL_PATH` or `SRC_LOCAL_PATH` is configured. In `imap_compare.py`, the
+same rule is applied independently to the source and destination. Do not combine an explicit path with explicit IMAP
+connection arguments for the same side.
+
 Destination namespace prefixes are detected automatically through the IMAP
 `NAMESPACE` command. If a server does not advertise its namespace correctly,
 set `DEST_FOLDER_PREFIX` and `DEST_FOLDER_SEP` explicitly (for example,

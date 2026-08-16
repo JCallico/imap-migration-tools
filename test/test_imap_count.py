@@ -322,6 +322,51 @@ class TestMainFunction:
 
         assert "INBOX" in capsys.readouterr().out
 
+    def test_explicit_imap_arguments_override_dotenv_local_path(
+        self, single_mock_server, tmp_path, capsys, dotenv_file
+    ):
+        """Explicit IMAP configuration selects IMAP mode over a .env local path."""
+        _, port = single_mock_server({"INBOX": [b"Subject: IMAP wins\r\n\r\nBody"]})
+        local_path = tmp_path / "local-backup"
+        local_path.mkdir()
+        dotenv_file({"BACKUP_LOCAL_PATH": str(local_path)})
+
+        with temp_env({}):
+            count_imap_emails.main(
+                [
+                    f"--ho=imap://localhost:{port}",
+                    "--user",
+                    "user",
+                    "--pass",
+                    "pass",
+                ]
+            )
+
+        captured = capsys.readouterr().out
+        assert f"Host            : imap://localhost:{port}" in captured
+        assert "INBOX" in captured
+        assert "Local Path" not in captured
+
+    def test_explicit_path_and_imap_arguments_are_rejected(self, tmp_path, capsys):
+        """Conflicting explicit mode selectors produce an actionable parser error."""
+        with temp_env({}):
+            with pytest.raises(SystemExit) as exc_info:
+                count_imap_emails.main(
+                    [
+                        "--path",
+                        str(tmp_path),
+                        "--host",
+                        "imap.example.com",
+                        "--user",
+                        "user",
+                        "--pass",
+                        "pass",
+                    ]
+                )
+
+        assert exc_info.value.code == 2
+        assert "cannot be combined" in capsys.readouterr().err
+
     def test_missing_credentials(self, capsys):
         """Test that missing auth is rejected by argparse (neither password nor OAuth2 client-id)."""
         with temp_env({}), temp_argv(["count_imap_emails.py", "--host", "localhost", "--user", "user"]):
