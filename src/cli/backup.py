@@ -60,31 +60,31 @@ def parse_arguments(argv=None):
     parser.add_argument("--batch", type=int, default=int(os.getenv("BATCH_SIZE", 10)), help="Emails per batch")
     parser.add_argument(
         "--preserve-labels",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("PRESERVE_LABELS", "false").lower() == "true",
         help="Gmail only: Create a labels_manifest.json mapping Message-IDs to labels for restoration",
     )
     parser.add_argument(
         "--preserve-flags",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("PRESERVE_FLAGS", "false").lower() == "true",
         help="Preserve IMAP flags (read/unread, starred, answered, draft) in manifest for restoration",
     )
     parser.add_argument(
         "--manifest-only",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("MANIFEST_ONLY", "false").lower() == "true",
         help="Gmail only: Build the labels manifest and exit without downloading emails",
     )
     parser.add_argument(
         "--gmail-mode",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("GMAIL_MODE", "false").lower() == "true",
         help="Gmail backup mode: Build labels manifest and backup [Gmail]/All Mail only (recommended)",
     )
     parser.add_argument(
         "--dest-delete",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("DEST_DELETE", "false").lower() == "true",
         help="Delete local .eml files that no longer exist on the IMAP server (sync mode)",
     )

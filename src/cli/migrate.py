@@ -105,13 +105,13 @@ def parse_arguments(argv=None):
     parser.add_argument(
         "--src-delete",
         dest="delete",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("DELETE_FROM_SOURCE", "false").lower() == "true",
         help="Delete from source after migration (move semantics)",
     )
     parser.add_argument(
         "--dest-delete",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("DEST_DELETE", "false").lower() == "true",
         help="Delete emails from destination that don't exist in source (sync mode)",
     )
@@ -121,19 +121,19 @@ def parse_arguments(argv=None):
     parser.add_argument("--batch", type=int, default=int(os.getenv("BATCH_SIZE", 10)), help="Batch size per thread")
     parser.add_argument(
         "--preserve-labels",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("PRESERVE_LABELS", "false").lower() == "true",
         help="Preserve Gmail labels during migration",
     )
     parser.add_argument(
         "--preserve-flags",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("PRESERVE_FLAGS", "false").lower() == "true",
         help="Preserve IMAP flags during migration",
     )
     parser.add_argument(
         "--gmail-mode",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("GMAIL_MODE", "false").lower() == "true",
         help="Gmail migration mode",
     )

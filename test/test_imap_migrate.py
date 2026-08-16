@@ -187,6 +187,19 @@ class TestDeleteFromSource:
         assert len(dest_server.folders["INBOX"]) == 1
         assert len(src_server.folders["INBOX"]) == 1
 
+    def test_no_src_delete_overrides_enabled_env_var(self, mock_server_factory):
+        """An explicit negative flag keeps source mail despite an enabled environment setting."""
+        src_data = {"INBOX": [b"Subject: Keep\r\nMessage-ID: <keep-negative>\r\n\r\nC"]}
+        src_server, dest_server, p1, p2 = mock_server_factory(src_data, {"INBOX": []})
+        env = _mock_migrate_env(p1, p2)
+        env["DELETE_FROM_SOURCE"] = "true"
+
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "--no-src-delete", "INBOX"]):
+            migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX"]) == 1
+        assert len(src_server.folders["INBOX"]) == 1
+
 
 class TestFolderHandling:
     """Tests for folder creation and multi-folder migration."""
@@ -783,6 +796,19 @@ class TestDestDeleteFunctionality:
         assert len(dest_server.folders["INBOX"]) == 1
         remaining_content = dest_server.folders["INBOX"][0]["content"]
         assert b"Message-ID: <keep@test>" in remaining_content
+
+    def test_no_dest_delete_overrides_enabled_env_var(self, mock_server_factory):
+        """An explicit negative flag keeps destination orphans despite the environment setting."""
+        src_data = {"INBOX": [b"Subject: Source\r\nMessage-ID: <source-negative@test>\r\n\r\nBody"]}
+        dest_data = {"INBOX": [b"Subject: Orphan\r\nMessage-ID: <orphan-negative@test>\r\n\r\nBody"]}
+        _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
+        env = _mock_migrate_env(p1, p2)
+        env["DEST_DELETE"] = "true"
+
+        with temp_env(env), temp_argv(["migrate_imap_emails.py", "--no-dest-delete", "INBOX"]):
+            migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX"]) == 2
 
     def test_dest_delete_disabled_keeps_extra_emails(self, mock_server_factory):
         """Test that without --dest-delete, extra dest emails are kept."""

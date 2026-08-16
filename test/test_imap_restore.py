@@ -761,6 +761,20 @@ class TestDestDeleteRestoreFunctionality:
 
         assert len(server.folders["INBOX"]) == 0
 
+    def test_no_dest_delete_overrides_enabled_env_var(self, single_mock_server, tmp_path):
+        """An explicit negative flag prevents destination deletion requested by the environment."""
+        message = b"Subject: Keep\r\nMessage-ID: <keep@test>\r\n\r\nBody"
+        server, port = single_mock_server({"INBOX": [message]})
+        backup_root = tmp_path / "backup"
+        (backup_root / "INBOX").mkdir(parents=True)
+        env = _mock_restore_env(port)
+        env.update({"BACKUP_LOCAL_PATH": str(backup_root), "DEST_DELETE": "true"})
+
+        with temp_env(env), temp_argv(["restore_imap_emails.py", "--no-dest-delete", "INBOX"]):
+            restore_imap_emails.main()
+
+        assert len(server.folders["INBOX"]) == 1
+
 
 class TestAppendEmailReturnValueChecking:
     """Tests that verify append_email return values are checked before recording progress."""

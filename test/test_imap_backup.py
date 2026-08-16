@@ -627,3 +627,19 @@ class TestDestDeleteBackupEnvVar:
             backup_imap_emails.main()
 
         assert not orphan.exists()
+
+    def test_no_dest_delete_overrides_enabled_env_var(self, single_mock_server, tmp_path):
+        """An explicit negative flag prevents deletion requested by the environment."""
+        _, port = single_mock_server({"INBOX": []})
+        backup_root = tmp_path / "backup"
+        inbox_path = backup_root / "INBOX"
+        inbox_path.mkdir(parents=True)
+        orphan = inbox_path / "1_Orphan.eml"
+        orphan.write_bytes(b"Subject: Keep\r\nMessage-ID: <keep@test>\r\n\r\nBody")
+        env = _mock_imap_env(port)
+        env.update({"BACKUP_LOCAL_PATH": str(backup_root), "DEST_DELETE": "true"})
+
+        with temp_env(env), temp_argv(["backup_imap_emails.py", "--no-dest-delete"]):
+            backup_imap_emails.main()
+
+        assert orphan.exists()

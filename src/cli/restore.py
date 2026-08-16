@@ -81,31 +81,31 @@ def parse_arguments(argv=None):
     parser.add_argument("--batch", type=int, default=int(os.getenv("BATCH_SIZE", 10)), help="Emails per batch")
     parser.add_argument(
         "--apply-labels",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("APPLY_LABELS", "false").lower() == "true",
         help="Apply Gmail labels from labels_manifest.json",
     )
     parser.add_argument(
         "--apply-flags",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("APPLY_FLAGS", "false").lower() == "true",
         help="Apply IMAP flags (read/starred/answered/draft) from manifest",
     )
     parser.add_argument(
         "--gmail-mode",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("GMAIL_MODE", "false").lower() == "true",
         help="Gmail restore mode: Upload to INBOX and apply labels + flags from manifest",
     )
     parser.add_argument(
         "--full-restore",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("FULL_RESTORE", "false").lower() == "true",
         help="Force full restore (legacy): process all emails and sync labels/flags for already-present messages.",
     )
     parser.add_argument(
         "--dest-delete",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=os.getenv("DEST_DELETE", "false").lower() == "true",
         help="Delete emails from destination that don't exist in local backup (sync mode)",
     )

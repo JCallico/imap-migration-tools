@@ -232,6 +232,11 @@ authentication and ignores an OAuth client ID inherited from the environment or 
 likewise ignores an inherited password. When neither method is selected on the command line, environment configuration
 is used. If both methods are configured in the environment, OAuth remains the default for backward compatibility.
 
+Environment-backed boolean options can be overridden in either direction on the command line. Each positive option has
+a corresponding `--no-...` form, such as `--dest-delete` / `--no-dest-delete`, `--gmail-mode` / `--no-gmail-mode`,
+and `--src-delete` / `--no-src-delete`. This makes it possible to disable a setting enabled by the OS environment or
+`.env` for one invocation. The same pattern applies to label, flag, manifest, and full-restore options.
+
 Destination namespace prefixes are detected automatically through the IMAP
 `NAMESPACE` command. If a server does not advertise its namespace correctly,
 set `DEST_FOLDER_PREFIX` and `DEST_FOLDER_SEP` explicitly (for example,
@@ -317,7 +322,8 @@ python3 imap_backup.py \
   --src-host "imap.gmail.com" \
   --src-user "me@gmail.com" \
   --src-pass "your-app-password" \
-  --dest-path "./my_backup"
+  --dest-path "./my_backup" \
+  --preserve-flags
 ```
 
 ## Usage Examples
@@ -419,6 +425,20 @@ python3 imap_migrate.py \
   --src-delete
 ```
 
+If `DELETE_FROM_SOURCE=true` is configured in the environment or `.env`, force copy semantics for one run with
+`--no-src-delete`:
+
+```bash
+python3 imap_migrate.py \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-host "imap.other.com" \
+  --dest-user "dest@domain.com" \
+  --dest-pass "dest-app-password" \
+  --no-src-delete
+```
+
 ### 4. Sync Mode (Delete from Destination)
 Keep destination in sync by deleting emails that no longer exist in the source.
 
@@ -449,6 +469,18 @@ python3 imap_restore.py \
   --dest-user "dest@domain.com" \
   --dest-pass "dest-app-password" \
   --dest-delete
+```
+
+If `DEST_DELETE=true` is configured globally, use `--no-dest-delete` for a non-destructive run without editing
+`.env`:
+
+```bash
+python3 imap_backup.py \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-path "./backup" \
+  --no-dest-delete
 ```
 
 **Warning:** The `--dest-delete` flag permanently removes emails/files from the destination. Use with caution and always verify your backup is complete before enabling this option.
@@ -663,6 +695,14 @@ python3 imap_restore.py \
   --dest-user "you@gmail.com" \
   --dest-pass "your-app-password" \
   --full-restore
+
+# Force incremental mode when FULL_RESTORE=true is inherited from .env
+python3 imap_restore.py \
+  --src-path "./my_backup" \
+  --dest-host "imap.gmail.com" \
+  --dest-user "you@gmail.com" \
+  --dest-pass "your-app-password" \
+  --no-full-restore
 
 # Restore with flags (read/starred status)
 python3 imap_restore.py \
