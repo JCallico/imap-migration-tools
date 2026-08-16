@@ -28,6 +28,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dotenv = ["python-dotenv>=1.2.1"]
+tui = [
+    "platformdirs>=3.6,<5",
+    "python-dotenv>=1.2.1",
+    "textual>=8.2,<9",
+]
 
 [project.urls]
 "Homepage" = "https://github.com/jcallico/imap-migration-tools"
@@ -39,6 +44,10 @@ imap-restore = "imap_restore:main"
 imap-migrate = "imap_migrate:main"
 imap-count = "imap_count:main"
 imap-compare = "imap_compare:main"
+imap-tools = "tui:main"
+
+[tool.setuptools.package-data]
+tui = ["*.tcss"]
 
 [tool.setuptools.package-dir]
 "" = "src"

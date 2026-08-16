@@ -42,6 +42,34 @@ source .venv/bin/activate
 python -m pip install "imap-migration-tools[dotenv]"
 ```
 
+### Full-screen terminal interface
+
+Install the optional Textual interface to configure and run all tools from one responsive, full-terminal application:
+
+```bash
+pipx install "imap-migration-tools[tui]"
+imap-tools
+```
+
+For a standard virtual environment, use `pip install "imap-migration-tools[tui]"` instead. The interface provides a
+guided autosaving `.env` form, operation-specific configuration readiness checks, separate live and historical output,
+cancellation, and local run history. Existing commands remain available and are launched as isolated subprocesses by
+the interface.
+
+To run directly from a clone without installing the project:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m tui.app
+```
+
+Drag the thin separators between panels to resize adjacent columns or rows. Separators are also keyboard accessible:
+focus one with `Tab`, then use the arrow keys to resize it. Minimum pane sizes prevent a panel from disappearing.
+
+The interface discovers `.env` from the current directory and its parents, using the same precedence as the scripts:
+per-run choices, existing OS environment variables, `.env`, then defaults. Passwords and OAuth client secrets can be
+saved only after a warning; new `.env` files and saved history use owner-only permissions where the platform supports
+them. Destructive options require typing `DELETE` before a run starts.
+
 Basic password authentication needs no additional authentication package. OAuth2 provider and encrypted cache
 dependencies are installed by the project. See [Installation](docs/installation.md) for platform and source setup.
 
