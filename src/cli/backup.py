@@ -3,7 +3,7 @@
 import argparse
 import os
 
-from cli.common import resolve_authentication
+from cli.common import resolve_and_validate_imap_account_arguments
 from utils import imap_common
 
 
@@ -16,16 +16,16 @@ def parse_arguments(argv=None):
     default_src_user = os.getenv("SRC_IMAP_USERNAME")
     default_src_pass = os.getenv("SRC_IMAP_PASSWORD")
     default_src_client_id = os.getenv("SRC_OAUTH2_CLIENT_ID")
+    default_src_client_secret = os.getenv("SRC_OAUTH2_CLIENT_SECRET")
+    default_src_account_type = os.getenv("SRC_ACCOUNT_TYPE", "auto")
     parser.add_argument(
         "--src-host",
-        default=default_src_host,
-        required=not bool(default_src_host),
+        default=argparse.SUPPRESS,
         help="Source IMAP Server (or SRC_IMAP_HOST)",
     )
     parser.add_argument(
         "--src-user",
-        default=default_src_user,
-        required=not bool(default_src_user),
+        default=argparse.SUPPRESS,
         help="Source Username (or SRC_IMAP_USERNAME)",
     )
     auth_group = parser.add_mutually_exclusive_group()
@@ -38,14 +38,14 @@ def parse_arguments(argv=None):
     )
     parser.add_argument(
         "--src-oauth2-client-secret",
-        default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
+        default=argparse.SUPPRESS,
         dest="src_client_secret",
         help="OAuth2 Client Secret (if required) (or SRC_OAUTH2_CLIENT_SECRET)",
     )
     parser.add_argument(
         "--src-account-type",
         choices=("auto", "personal", "work"),
-        default=os.getenv("SRC_ACCOUNT_TYPE", "auto"),
+        default=argparse.SUPPRESS,
         help="Source OAuth provider account type (auto, personal, or work; or SRC_ACCOUNT_TYPE)",
     )
 
@@ -90,13 +90,23 @@ def parse_arguments(argv=None):
     )
     parser.add_argument("folder", nargs="?", help="Specific folder to backup")
     args = parser.parse_args(argv)
-    resolve_authentication(
+    resolve_and_validate_imap_account_arguments(
         parser,
         args,
+        host_dest="src_host",
+        user_dest="src_user",
         password_dest="src_pass",
         client_id_dest="src_client_id",
+        client_secret_dest="src_client_secret",
+        account_type_dest="src_account_type",
+        default_host=default_src_host,
+        default_user=default_src_user,
         default_password=default_src_pass,
         default_client_id=default_src_client_id,
+        default_client_secret=default_src_client_secret,
+        default_account_type=default_src_account_type,
+        host_option="--src-host",
+        user_option="--src-user",
         password_option="--src-pass",
         oauth_option="--src-oauth2-client-id",
     )

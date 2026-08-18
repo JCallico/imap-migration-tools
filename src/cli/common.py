@@ -4,7 +4,7 @@ import argparse
 from typing import Optional
 
 
-def resolve_authentication(
+def resolve_and_validate_authentication_arguments(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
     *,
@@ -15,7 +15,7 @@ def resolve_authentication(
     password_option: str,
     oauth_option: str,
 ) -> None:
-    """Resolve one explicit or inherited authentication method onto ``args``."""
+    """Resolve and validate authentication arguments, modifying ``args`` in place."""
     explicit_password = hasattr(args, password_dest)
     explicit_oauth = hasattr(args, client_id_dest)
 
@@ -32,3 +32,60 @@ def resolve_authentication(
 
     if not getattr(args, password_dest) and not getattr(args, client_id_dest):
         parser.error(f"one of {password_option} or {oauth_option} is required when authentication is not configured")
+
+
+def resolve_and_validate_imap_account_arguments(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    host_dest: str,
+    user_dest: str,
+    password_dest: str,
+    client_id_dest: str,
+    client_secret_dest: str,
+    account_type_dest: str,
+    default_host: Optional[str],
+    default_user: Optional[str],
+    default_password: Optional[str],
+    default_client_id: Optional[str],
+    default_client_secret: Optional[str],
+    default_account_type: str,
+    host_option: str,
+    user_option: str,
+    password_option: str,
+    oauth_option: str,
+) -> None:
+    """Resolve and validate an IMAP account, modifying ``args`` in place."""
+    explicit_host = hasattr(args, host_dest)
+    if explicit_host and (
+        not hasattr(args, user_dest) or not any(hasattr(args, name) for name in (password_dest, client_id_dest))
+    ):
+        parser.error(
+            f"{host_option} selects a different account and must be accompanied by {user_option} and one of "
+            f"{password_option} or {oauth_option}; otherwise update the account in the environment or .env"
+        )
+
+    setattr(args, host_dest, getattr(args, host_dest, default_host))
+    setattr(args, user_dest, getattr(args, user_dest, default_user))
+    # OAuth adjuncts belong to the inherited account too. Do not carry them to an explicit host.
+    setattr(
+        args, client_secret_dest, getattr(args, client_secret_dest, None if explicit_host else default_client_secret)
+    )
+    setattr(
+        args, account_type_dest, getattr(args, account_type_dest, "auto" if explicit_host else default_account_type)
+    )
+    resolve_and_validate_authentication_arguments(
+        parser,
+        args,
+        password_dest=password_dest,
+        client_id_dest=client_id_dest,
+        default_password=default_password,
+        default_client_id=default_client_id,
+        password_option=password_option,
+        oauth_option=oauth_option,
+    )
+
+    if not getattr(args, host_dest):
+        parser.error(f"{host_option} is required when it is not configured in the environment or .env")
+    if not getattr(args, user_dest):
+        parser.error(f"{user_option} is required when it is not configured in the environment or .env")

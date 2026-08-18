@@ -5,7 +5,7 @@ import os
 import sys
 from typing import Optional
 
-from cli.common import resolve_authentication
+from cli.common import resolve_and_validate_imap_account_arguments
 from utils import imap_common
 
 
@@ -70,23 +70,24 @@ def parse_arguments(argv: Optional[list[str]] = None) -> tuple[argparse.Namespac
         args.path = path
         return args, True
 
-    args.host = getattr(args, "host", default_host)
-    args.user = getattr(args, "user", default_user)
-    args.client_secret = getattr(args, "client_secret", default_client_secret)
-    args.account_type = getattr(args, "account_type", default_account_type)
-    resolve_authentication(
+    resolve_and_validate_imap_account_arguments(
         parser,
         args,
+        host_dest="host",
+        user_dest="user",
         password_dest="password",
         client_id_dest="client_id",
+        client_secret_dest="client_secret",
+        account_type_dest="account_type",
+        default_host=default_host,
+        default_user=default_user,
         default_password=default_pass,
         default_client_id=default_client_id,
+        default_client_secret=default_client_secret,
+        default_account_type=default_account_type,
+        host_option="--host",
+        user_option="--user",
         password_option="--pass",
         oauth_option="--oauth2-client-id",
     )
-
-    if not args.host:
-        parser.error("--host is required when IMAP_HOST and SRC_IMAP_HOST are not set")
-    if not args.user:
-        parser.error("--user is required when IMAP_USERNAME and SRC_IMAP_USERNAME are not set")
     return args, False

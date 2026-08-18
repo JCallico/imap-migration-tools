@@ -236,6 +236,17 @@ is used. Avoid configuring both methods for the same account; if both are presen
 default for backward compatibility. The provided `.env.example` leaves OAuth2 values empty so that a copied template
 uses password authentication until OAuth2 is deliberately enabled.
 
+IMAP account settings normally support useful field-level overrides, such as changing only a username or password.
+An explicit host is the account boundary: `--host`, `--src-host`, or `--dest-host` must be accompanied by the matching
+username and either password or OAuth2 client ID in the same command. OAuth2 client secrets and account-type settings
+from the inherited account are not carried to that host; provide them explicitly when the new account needs them. This
+prevents credentials configured for one server or provider from silently following a host override. Existing commands
+that changed only the host should either provide the complete account on the command line or update the related values
+in the environment or `.env` together.
+
+Before connecting, command summaries identify the selected host, username, and authentication method without printing
+passwords, OAuth2 client secrets, or tokens.
+
 Environment-backed boolean options can be overridden in either direction on the command line. Each positive option has
 a corresponding `--no-...` form, such as `--dest-delete` / `--no-dest-delete`, `--gmail-mode` / `--no-gmail-mode`,
 and `--src-delete` / `--no-src-delete`. This makes it possible to disable a setting enabled by the OS environment or

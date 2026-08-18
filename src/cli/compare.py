@@ -3,7 +3,7 @@
 import argparse
 import os
 
-from cli.common import resolve_authentication
+from cli.common import resolve_and_validate_imap_account_arguments
 from utils import imap_common
 
 
@@ -105,48 +105,61 @@ def parse_arguments(argv=None):
     dest_is_local = explicit_dest_path or (not explicit_dest_imap and bool(default_dest_path))
     args.src_path = getattr(args, "src_path", default_src_path if src_is_local else None)
     args.dest_path = getattr(args, "dest_path", default_dest_path if dest_is_local else None)
-    args.src_host = getattr(args, "src_host", default_src_host)
-    args.src_user = getattr(args, "src_user", default_src_user)
-    args.src_client_secret = getattr(args, "src_client_secret", default_src_client_secret)
-    args.src_account_type = getattr(args, "src_account_type", default_src_account_type)
-    args.dest_host = getattr(args, "dest_host", default_dest_host)
-    args.dest_user = getattr(args, "dest_user", default_dest_user)
-    args.dest_client_secret = getattr(args, "dest_client_secret", default_dest_client_secret)
-    args.dest_account_type = getattr(args, "dest_account_type", default_dest_account_type)
-
     if src_is_local and not args.src_path:
         parser.error("--src-path must specify a non-empty local backup root")
     if dest_is_local and not args.dest_path:
         parser.error("--dest-path must specify a non-empty local backup root")
     if not src_is_local:
-        resolve_authentication(
+        resolve_and_validate_imap_account_arguments(
             parser,
             args,
+            host_dest="src_host",
+            user_dest="src_user",
             password_dest="src_pass",
             client_id_dest="src_client_id",
+            client_secret_dest="src_client_secret",
+            account_type_dest="src_account_type",
+            default_host=default_src_host,
+            default_user=default_src_user,
             default_password=default_src_pass,
             default_client_id=default_src_client_id,
+            default_client_secret=default_src_client_secret,
+            default_account_type=default_src_account_type,
+            host_option="--src-host",
+            user_option="--src-user",
             password_option="--src-pass",
             oauth_option="--src-oauth2-client-id",
         )
-        if not args.src_host:
-            parser.error("--src-host is required when SRC_IMAP_HOST is not set")
-        if not args.src_user:
-            parser.error("--src-user is required when SRC_IMAP_USERNAME is not set")
+    else:
+        args.src_host = default_src_host
+        args.src_user = default_src_user
+        args.src_client_secret = default_src_client_secret
+        args.src_account_type = default_src_account_type
     if not dest_is_local:
-        resolve_authentication(
+        resolve_and_validate_imap_account_arguments(
             parser,
             args,
+            host_dest="dest_host",
+            user_dest="dest_user",
             password_dest="dest_pass",
             client_id_dest="dest_client_id",
+            client_secret_dest="dest_client_secret",
+            account_type_dest="dest_account_type",
+            default_host=default_dest_host,
+            default_user=default_dest_user,
             default_password=default_dest_pass,
             default_client_id=default_dest_client_id,
+            default_client_secret=default_dest_client_secret,
+            default_account_type=default_dest_account_type,
+            host_option="--dest-host",
+            user_option="--dest-user",
             password_option="--dest-pass",
             oauth_option="--dest-oauth2-client-id",
         )
-        if not args.dest_host:
-            parser.error("--dest-host is required when DEST_IMAP_HOST is not set")
-        if not args.dest_user:
-            parser.error("--dest-user is required when DEST_IMAP_USERNAME is not set")
+    else:
+        args.dest_host = default_dest_host
+        args.dest_user = default_dest_user
+        args.dest_client_secret = default_dest_client_secret
+        args.dest_account_type = default_dest_account_type
 
     return args, src_is_local, dest_is_local
