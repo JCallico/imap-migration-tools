@@ -4,7 +4,7 @@ import argparse
 from typing import Optional
 
 
-def resolve_and_validate_authentication_arguments(
+def parse_authentication_arguments(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
     *,
@@ -34,7 +34,7 @@ def resolve_and_validate_authentication_arguments(
         parser.error(f"one of {password_option} or {oauth_option} is required when authentication is not configured")
 
 
-def resolve_and_validate_imap_account_arguments(
+def parse_account_arguments(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
     *,
@@ -74,7 +74,7 @@ def resolve_and_validate_imap_account_arguments(
     setattr(
         args, account_type_dest, getattr(args, account_type_dest, "auto" if explicit_host else default_account_type)
     )
-    resolve_and_validate_authentication_arguments(
+    parse_authentication_arguments(
         parser,
         args,
         password_dest=password_dest,

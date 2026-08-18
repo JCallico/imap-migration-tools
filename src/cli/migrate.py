@@ -3,7 +3,7 @@
 import argparse
 import os
 
-from cli.common import resolve_and_validate_imap_account_arguments
+from cli.common import parse_account_arguments
 from utils import imap_common
 
 
@@ -147,7 +147,7 @@ def parse_arguments(argv=None):
         help="Force full migration (ignore cache for skipping), but still update cache if --migrate-cache provided",
     )
     args = parser.parse_args(argv)
-    resolve_and_validate_imap_account_arguments(
+    parse_account_arguments(
         parser,
         args,
         host_dest="src_host",
@@ -167,7 +167,7 @@ def parse_arguments(argv=None):
         password_option="--src-pass",
         oauth_option="--src-oauth2-client-id",
     )
-    resolve_and_validate_imap_account_arguments(
+    parse_account_arguments(
         parser,
         args,
         host_dest="dest_host",

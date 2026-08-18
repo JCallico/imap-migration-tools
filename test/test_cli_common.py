@@ -5,7 +5,7 @@ import argparse
 import pytest
 
 from cli.backup import parse_arguments as parse_backup_arguments
-from cli.common import resolve_and_validate_authentication_arguments
+from cli.common import parse_authentication_arguments
 from cli.compare import parse_arguments as parse_compare_arguments
 from cli.count import parse_arguments as parse_count_arguments
 from cli.migrate import parse_arguments as parse_migrate_arguments
@@ -21,7 +21,7 @@ def test_explicit_oauth_overrides_inherited_password():
     auth.add_argument("--oauth-client", dest="client_id")
     args = parser.parse_args(["--oauth-client", "explicit-client"])
 
-    resolve_and_validate_authentication_arguments(
+    parse_authentication_arguments(
         parser,
         args,
         password_dest="password",

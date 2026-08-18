@@ -5,7 +5,7 @@ import os
 import sys
 from typing import Optional
 
-from cli.common import resolve_and_validate_imap_account_arguments
+from cli.common import parse_account_arguments
 from utils import imap_common
 
 
@@ -125,7 +125,7 @@ def parse_arguments(argv: Optional[list[str]] = None) -> tuple[argparse.Namespac
     else:
         defaults = count_defaults
 
-    resolve_and_validate_imap_account_arguments(
+    parse_account_arguments(
         parser,
         args,
         host_dest="host",
