@@ -36,7 +36,8 @@ This repository contains a set of Python scripts designed to migrate emails betw
 
 3. **`imap_count.py`** (The Investigator)
   - Counts emails in all folders for a single IMAP account (initial assessment / sizing).
-  - Also supports counting a local backup folder (`.eml` files) via `--path` (or `BACKUP_LOCAL_PATH`).
+  - Also supports counting a local backup folder (`.eml` files) via `--path`.
+  - Uses `--target local`, `--target source`, or `--target destination` when multiple configured targets exist.
 
 4. **`imap_backup.py`** (The Backup)
    - Downloads emails from an IMAP account to a local disk.
@@ -225,9 +226,11 @@ Configuration values are applied in this order, with earlier entries taking prec
 
 For commands that support both IMAP and local paths, explicitly supplied command-line arguments also select the
 operating mode. In `imap_count.py`, `--path` selects local mode, while explicit IMAP connection arguments such as
-`--host` select IMAP mode even if `BACKUP_LOCAL_PATH` or `SRC_LOCAL_PATH` is configured. In `imap_compare.py`, the
-same rule is applied independently to the source and destination. Do not combine an explicit path with explicit IMAP
-connection arguments for the same side.
+`--host` select an ad hoc IMAP account. When more than one of the configured local, source, and destination targets is
+available, select one with `--target local`, `--target source`, or `--target destination`. A path-only configuration and
+a single-account configuration continue to be selected automatically for compatibility. In `imap_compare.py`, mode is
+resolved independently for the source and destination. Do not combine an explicit path with explicit IMAP connection
+arguments for the same side.
 
 Password and OAuth settings are treated as one authentication choice. An explicit password option selects password
 authentication and ignores an OAuth client ID inherited from the environment or `.env`; an explicit OAuth client ID
@@ -312,7 +315,11 @@ python3 imap_count.py \
 
 # Or via environment variable
 export BACKUP_LOCAL_PATH="./my_backup"
-python3 imap_count.py
+python3 imap_count.py --target local
+
+# Count a configured source or destination account
+python3 imap_count.py --target source
+python3 imap_count.py --target destination
 ```
 
 **Counting (OAuth2):**
@@ -594,8 +601,11 @@ python3 imap_count.py --path "./my_backup"
 
 # Option 2: environment variable
 export BACKUP_LOCAL_PATH="./my_backup"
-python3 imap_count.py
+python3 imap_count.py --target local
 ```
+
+If only `BACKUP_LOCAL_PATH` is configured, it remains the automatic local target for compatibility. If local and IMAP
+account settings coexist, `imap_count.py` requires `--target` so it cannot silently choose the backup or an account.
 
 ### 7. Gmail Backup with Labels Preservation
 When backing up a Gmail account, use `--gmail-mode` for the recommended workflow. This backs up `[Gmail]/All Mail` (no duplicates) and creates a labels manifest for restoration.

@@ -15,6 +15,10 @@ Configuration (Environment Variables):
     SRC_OAUTH2_CLIENT_ID    : Alternate OAuth2 client ID env var
     SRC_OAUTH2_CLIENT_SECRET: Alternate OAuth2 client secret env var
 
+    Source and destination targets:
+    SRC_IMAP_* / SRC_OAUTH2_*   : Source account selected by --target source
+    DEST_IMAP_* / DEST_OAUTH2_* : Destination account selected by --target destination
+
 Local backup counting:
     BACKUP_LOCAL_PATH : Local backup root (preferred)
     SRC_LOCAL_PATH    : Alternate local backup root
@@ -36,9 +40,13 @@ Examples:
     # Count a local backup
     python3 imap_count.py --path "./my_backup"
 
-    # Or set a default local backup path via env var
+    # Or select the configured backup path
     export BACKUP_LOCAL_PATH="./my_backup"
-    python3 imap_count.py
+    python3 imap_count.py --target local
+
+    # Select an account when local/source/destination settings coexist
+    python3 imap_count.py --target source
+    python3 imap_count.py --target destination
 """
 
 import imaplib
