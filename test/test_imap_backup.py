@@ -11,7 +11,9 @@ Tests cover:
 
 import imaplib
 import os
+import shutil
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -101,6 +103,24 @@ class TestBackupBasic:
         dotenv_file({**_mock_imap_env(port), "BACKUP_LOCAL_PATH": str(backup_path)})
         with temp_env({}), temp_argv(["backup_imap_emails.py"]):
             backup_imap_emails.main()
+
+        assert len(list((backup_path / "INBOX").glob("*.eml"))) == 1
+
+    def test_copied_dotenv_example_defaults_to_password_authentication(self, single_mock_server, tmp_path):
+        """A copied template must not enable OAuth while configuring password authentication."""
+        _, port = single_mock_server({"INBOX": [b"Subject: Template\r\nMessage-ID: <template@test>\r\n\r\nBody"]})
+        backup_path = tmp_path / "template-backup"
+        template_path = Path(__file__).resolve().parents[1] / ".env.example"
+        shutil.copyfile(template_path, tmp_path / ".env")
+
+        original_cwd = os.getcwd()
+        os.chdir(tmp_path)
+        try:
+            env = {**_mock_imap_env(port), "BACKUP_LOCAL_PATH": str(backup_path)}
+            with temp_env(env), temp_argv(["backup_imap_emails.py"]):
+                backup_imap_emails.main()
+        finally:
+            os.chdir(original_cwd)
 
         assert len(list((backup_path / "INBOX").glob("*.eml"))) == 1
 

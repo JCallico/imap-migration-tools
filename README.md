@@ -200,7 +200,9 @@ Rather than setting environment variables directly, you can use a `.env` file. A
    Copy-Item .env.example .env
    ```
 
-2. **Edit `.env`** and update the values for your environment.
+2. **Edit `.env`** and update the values for your environment. The template defaults to password authentication.
+   For OAuth2, clear the corresponding `SRC_IMAP_PASSWORD` or `DEST_IMAP_PASSWORD` and set the matching OAuth2
+   client values. Configure only one authentication method per account.
 
 3. **Run:**
    ```bash
@@ -230,7 +232,9 @@ connection arguments for the same side.
 Password and OAuth settings are treated as one authentication choice. An explicit password option selects password
 authentication and ignores an OAuth client ID inherited from the environment or `.env`; an explicit OAuth client ID
 likewise ignores an inherited password. When neither method is selected on the command line, environment configuration
-is used. If both methods are configured in the environment, OAuth remains the default for backward compatibility.
+is used. Avoid configuring both methods for the same account; if both are present in the environment, OAuth remains the
+default for backward compatibility. The provided `.env.example` leaves OAuth2 values empty so that a copied template
+uses password authentication until OAuth2 is deliberately enabled.
 
 Environment-backed boolean options can be overridden in either direction on the command line. Each positive option has
 a corresponding `--no-...` form, such as `--dest-delete` / `--no-dest-delete`, `--gmail-mode` / `--no-gmail-mode`,
