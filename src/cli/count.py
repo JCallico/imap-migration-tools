@@ -5,37 +5,16 @@ import os
 import sys
 from typing import Optional
 
-from cli.common import parse_account_arguments
+from cli.common import parse_account_arguments, read_account_defaults
 from utils import imap_common
 
 
-def parse_arguments(argv: Optional[list[str]] = None) -> tuple[argparse.Namespace, bool]:
+def parse_arguments(argv: Optional[list[str]] = None, *, dotenv_keys=frozenset()) -> tuple[argparse.Namespace, bool]:
     """Parse configuration and return the resolved arguments and local-mode flag."""
     default_path = os.getenv("BACKUP_LOCAL_PATH") or os.getenv("SRC_LOCAL_PATH")
-    source_defaults = {
-        "host": os.getenv("SRC_IMAP_HOST"),
-        "user": os.getenv("SRC_IMAP_USERNAME"),
-        "password": os.getenv("SRC_IMAP_PASSWORD"),
-        "client_id": os.getenv("SRC_OAUTH2_CLIENT_ID"),
-        "client_secret": os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
-        "account_type": os.getenv("SRC_ACCOUNT_TYPE", "auto"),
-    }
-    destination_defaults = {
-        "host": os.getenv("DEST_IMAP_HOST"),
-        "user": os.getenv("DEST_IMAP_USERNAME"),
-        "password": os.getenv("DEST_IMAP_PASSWORD"),
-        "client_id": os.getenv("DEST_OAUTH2_CLIENT_ID"),
-        "client_secret": os.getenv("DEST_OAUTH2_CLIENT_SECRET"),
-        "account_type": os.getenv("DEST_ACCOUNT_TYPE", "auto"),
-    }
-    count_defaults = {
-        "host": os.getenv("IMAP_HOST") or source_defaults["host"],
-        "user": os.getenv("IMAP_USERNAME") or source_defaults["user"],
-        "password": os.getenv("IMAP_PASSWORD") or source_defaults["password"],
-        "client_id": os.getenv("OAUTH2_CLIENT_ID") or source_defaults["client_id"],
-        "client_secret": os.getenv("OAUTH2_CLIENT_SECRET") or source_defaults["client_secret"],
-        "account_type": os.getenv("ACCOUNT_TYPE", source_defaults["account_type"]),
-    }
+    source_defaults = read_account_defaults("SRC")
+    destination_defaults = read_account_defaults("DEST")
+    count_defaults = read_account_defaults("", fallback=source_defaults)
 
     parser = argparse.ArgumentParser(
         description="Count emails in IMAP account.",
@@ -87,8 +66,19 @@ def parse_arguments(argv: Optional[list[str]] = None) -> tuple[argparse.Namespac
     if explicit_target and args.target == "local" and explicit_imap:
         parser.error("--target local cannot be combined with explicit IMAP connection arguments")
 
-    source_configured = any(count_defaults[name] for name in ("host", "user", "password", "client_id"))
-    destination_configured = any(destination_defaults[name] for name in ("host", "user", "password", "client_id"))
+    source_configured = any(
+        value.value
+        for value in (count_defaults.host, count_defaults.user, count_defaults.password, count_defaults.client_id)
+    )
+    destination_configured = any(
+        value.value
+        for value in (
+            destination_defaults.host,
+            destination_defaults.user,
+            destination_defaults.password,
+            destination_defaults.client_id,
+        )
+    )
     if not explicit_target and not explicit_path and not explicit_imap:
         configured_targets = [
             name
@@ -134,12 +124,8 @@ def parse_arguments(argv: Optional[list[str]] = None) -> tuple[argparse.Namespac
         client_id_dest="client_id",
         client_secret_dest="client_secret",
         account_type_dest="account_type",
-        default_host=defaults["host"],
-        default_user=defaults["user"],
-        default_password=defaults["password"],
-        default_client_id=defaults["client_id"],
-        default_client_secret=defaults["client_secret"],
-        default_account_type=defaults["account_type"],
+        defaults=defaults,
+        dotenv_keys=dotenv_keys,
         host_option="--host",
         user_option="--user",
         password_option="--pass",

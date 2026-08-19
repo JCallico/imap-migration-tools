@@ -757,9 +757,9 @@ def migrate_folder(
 
 def main():
     # Loading environment variables from .env file
-    load_dotenv()
+    dotenv_result = load_dotenv()
 
-    args = parse_arguments()
+    args = parse_arguments(dotenv_keys=dotenv_result.dotenv_keys)
 
     # Assign to variables
     SRC_HOST = args.src_host

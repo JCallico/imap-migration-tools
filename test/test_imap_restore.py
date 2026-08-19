@@ -288,6 +288,44 @@ Body content.
 
         assert len(server.folders["INBOX"]) == 1
 
+    def test_os_account_and_path_override_dotenv(self, single_mock_server, tmp_path, dotenv_file):
+        """OS endpoint and path values win over conflicting .env values."""
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+        (inbox / "1_OS.eml").write_bytes(b"Subject: OS\r\nMessage-ID: <os-precedence@test>\r\n\r\nBody")
+        server, port = single_mock_server({"INBOX": []})
+        dotenv_file(
+            {
+                "DEST_IMAP_HOST": "imap://localhost:1",
+                "DEST_IMAP_USERNAME": "dotenv-user",
+                "DEST_IMAP_PASSWORD": "dotenv-password",
+                "BACKUP_LOCAL_PATH": str(tmp_path / "missing"),
+            }
+        )
+        os_values = {**_mock_restore_env(port), "BACKUP_LOCAL_PATH": str(tmp_path)}
+
+        with temp_env(os_values), temp_argv(["restore_imap_emails.py", "INBOX"]):
+            restore_imap_emails.main()
+
+        assert len(server.folders["INBOX"]) == 1
+
+    def test_cli_path_overrides_os_and_dotenv_paths(self, single_mock_server, tmp_path, dotenv_file):
+        """The CLI restore path wins over conflicting OS and .env paths."""
+        cli_path = tmp_path / "cli-backup"
+        inbox = cli_path / "INBOX"
+        inbox.mkdir(parents=True)
+        (inbox / "1_CLI.eml").write_bytes(b"Subject: CLI\r\nMessage-ID: <cli-path@test>\r\n\r\nBody")
+        server, port = single_mock_server({"INBOX": []})
+        dotenv_file({**_mock_restore_env(port), "BACKUP_LOCAL_PATH": str(tmp_path / "dotenv-backup")})
+
+        with (
+            temp_env({"BACKUP_LOCAL_PATH": str(tmp_path / "os-backup")}),
+            temp_argv(["restore_imap_emails.py", "--src-path", str(cli_path), "INBOX"]),
+        ):
+            restore_imap_emails.main()
+
+        assert len(server.folders["INBOX"]) == 1
+
     def test_explicit_password_overrides_dotenv_oauth(self, single_mock_server, tmp_path, dotenv_file):
         """An explicit destination password prevents inherited OAuth selection."""
         inbox = tmp_path / "INBOX"
@@ -303,6 +341,47 @@ Body content.
         )
 
         with temp_env({}), temp_argv(["restore_imap_emails.py", "--dest-pass", "p", "INBOX"]):
+            restore_imap_emails.main()
+
+        assert len(server.folders["INBOX"]) == 1
+
+    def test_cli_oauth_overrides_dotenv_password(self, single_mock_server, tmp_path, dotenv_file, monkeypatch):
+        """An explicit OAuth client selects OAuth over a lower-precedence .env password."""
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+        (inbox / "1_OAuth.eml").write_bytes(b"Subject: OAuth\r\nMessage-ID: <oauth@test>\r\n\r\nBody")
+        server, port = single_mock_server({"INBOX": []})
+        dotenv_file({**_mock_restore_env(port), "BACKUP_LOCAL_PATH": str(tmp_path)})
+        monkeypatch.setattr(
+            restore_imap_emails.imap_oauth2, "acquire_token", lambda *_args, **_kwargs: ("token", "microsoft")
+        )
+
+        with temp_env({}), temp_argv(["restore_imap_emails.py", "--dest-oauth2-client-id", "cli-client", "INBOX"]):
+            restore_imap_emails.main()
+
+        assert len(server.folders["INBOX"]) == 1
+
+    def test_os_password_overrides_dotenv_oauth(self, single_mock_server, tmp_path, dotenv_file, monkeypatch):
+        """An OS password selects password authentication over .env OAuth."""
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+        (inbox / "1_OS.eml").write_bytes(b"Subject: OS\r\nMessage-ID: <os@test>\r\n\r\nBody")
+        server, port = single_mock_server({"INBOX": []})
+        dotenv_file(
+            {
+                "DEST_IMAP_HOST": f"imap://localhost:{port}",
+                "DEST_IMAP_USERNAME": "user",
+                "DEST_OAUTH2_CLIENT_ID": "dotenv-client",
+                "BACKUP_LOCAL_PATH": str(tmp_path),
+            }
+        )
+        monkeypatch.setattr(
+            restore_imap_emails.imap_oauth2,
+            "acquire_token",
+            lambda *_args, **_kwargs: pytest.fail("OAuth must not be selected"),
+        )
+
+        with temp_env({"DEST_IMAP_PASSWORD": "pass"}), temp_argv(["restore_imap_emails.py", "INBOX"]):
             restore_imap_emails.main()
 
         assert len(server.folders["INBOX"]) == 1
@@ -761,16 +840,28 @@ class TestDestDeleteRestoreFunctionality:
 
         assert len(server.folders["INBOX"]) == 0
 
-    def test_no_dest_delete_overrides_enabled_env_var(self, single_mock_server, tmp_path):
-        """An explicit negative flag prevents destination deletion requested by the environment."""
+    def test_no_dest_delete_overrides_enabled_env_var(self, single_mock_server, tmp_path, dotenv_file):
+        """An explicit negative flag prevents destination deletion requested by .env."""
         message = b"Subject: Keep\r\nMessage-ID: <keep@test>\r\n\r\nBody"
         server, port = single_mock_server({"INBOX": [message]})
         backup_root = tmp_path / "backup"
         (backup_root / "INBOX").mkdir(parents=True)
-        env = _mock_restore_env(port)
-        env.update({"BACKUP_LOCAL_PATH": str(backup_root), "DEST_DELETE": "true"})
+        dotenv_file({**_mock_restore_env(port), "BACKUP_LOCAL_PATH": str(backup_root), "DEST_DELETE": "true"})
 
-        with temp_env(env), temp_argv(["restore_imap_emails.py", "--no-dest-delete", "INBOX"]):
+        with temp_env({}), temp_argv(["restore_imap_emails.py", "--no-dest-delete", "INBOX"]):
+            restore_imap_emails.main()
+
+        assert len(server.folders["INBOX"]) == 1
+
+    def test_os_boolean_overrides_dotenv(self, single_mock_server, tmp_path, dotenv_file):
+        """An OS false value prevents destination deletion enabled by .env."""
+        message = b"Subject: Keep\r\nMessage-ID: <keep-os@test>\r\n\r\nBody"
+        server, port = single_mock_server({"INBOX": [message]})
+        backup_root = tmp_path / "backup"
+        (backup_root / "INBOX").mkdir(parents=True)
+        dotenv_file({**_mock_restore_env(port), "BACKUP_LOCAL_PATH": str(backup_root), "DEST_DELETE": "true"})
+
+        with temp_env({"DEST_DELETE": "false"}), temp_argv(["restore_imap_emails.py", "INBOX"]):
             restore_imap_emails.main()
 
         assert len(server.folders["INBOX"]) == 1

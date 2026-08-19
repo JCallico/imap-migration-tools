@@ -681,9 +681,9 @@ def backup_folder(src_main, folder_name, local_base_path, src_conf, dest_delete=
 
 def main():
     # Loading environment variables from .env file
-    load_dotenv()
+    dotenv_result = load_dotenv()
 
-    args = parse_arguments()
+    args = parse_arguments(dotenv_keys=dotenv_result.dotenv_keys)
 
     global MAX_WORKERS, BATCH_SIZE
     MAX_WORKERS = args.workers

@@ -99,6 +99,26 @@ class TestFolderComparison:
 
         assert "INBOX" in capsys.readouterr().out
 
+    def test_os_accounts_override_dotenv_endpoints(self, mock_server_factory, capsys, dotenv_file):
+        """Complete OS accounts win independently over both conflicting .env endpoints."""
+        data = {"INBOX": [b"Subject: OS\r\n\r\nBody"]}
+        _, _, src_port, dest_port = mock_server_factory(data, data.copy())
+        dotenv_file(
+            {
+                "SRC_IMAP_HOST": "imap://localhost:1",
+                "SRC_IMAP_USERNAME": "dotenv-source",
+                "SRC_IMAP_PASSWORD": "dotenv-source-password",
+                "DEST_IMAP_HOST": "imap://localhost:2",
+                "DEST_IMAP_USERNAME": "dotenv-destination",
+                "DEST_IMAP_PASSWORD": "dotenv-destination-password",
+            }
+        )
+
+        with temp_env(_mock_compare_env(src_port, dest_port)), temp_argv(["compare_imap_folders.py"]):
+            compare_imap_folders.main()
+
+        assert "INBOX" in capsys.readouterr().out
+
     def test_explicit_passwords_override_dotenv_oauth(self, mock_server_factory, capsys, dotenv_file):
         """Explicit passwords select basic authentication for both comparison accounts."""
         data = {"INBOX": [b"Subject: Password\r\n\r\nBody"]}
@@ -112,6 +132,56 @@ class TestFolderComparison:
         )
 
         with temp_env({}), temp_argv(["compare_imap_folders.py", "--src-pass", "p", "--dest-pass", "p"]):
+            compare_imap_folders.main()
+
+        assert "INBOX" in capsys.readouterr().out
+
+    def test_cli_oauth_overrides_dotenv_passwords(self, mock_server_factory, capsys, dotenv_file, monkeypatch):
+        """Explicit OAuth clients select OAuth for both comparison accounts."""
+        data = {"INBOX": [b"Subject: OAuth\r\n\r\nBody"]}
+        _, _, src_port, dest_port = mock_server_factory(data, data.copy())
+        dotenv_file(_mock_compare_env(src_port, dest_port))
+        monkeypatch.setattr(
+            compare_imap_folders.imap_oauth2, "acquire_token", lambda *_args, **_kwargs: ("token", "microsoft")
+        )
+
+        with (
+            temp_env({}),
+            temp_argv(
+                [
+                    "compare_imap_folders.py",
+                    "--src-oauth2-client-id",
+                    "src-client",
+                    "--dest-oauth2-client-id",
+                    "dest-client",
+                ]
+            ),
+        ):
+            compare_imap_folders.main()
+
+        assert "INBOX" in capsys.readouterr().out
+
+    def test_os_passwords_override_dotenv_oauth(self, mock_server_factory, capsys, dotenv_file, monkeypatch):
+        """OS passwords select password authentication for both accounts over .env OAuth."""
+        data = {"INBOX": [b"Subject: OS\r\n\r\nBody"]}
+        _, _, src_port, dest_port = mock_server_factory(data, data.copy())
+        dotenv_file(
+            {
+                **_mock_compare_env(src_port, dest_port),
+                "SRC_OAUTH2_CLIENT_ID": "dotenv-source-client",
+                "DEST_OAUTH2_CLIENT_ID": "dotenv-destination-client",
+            }
+        )
+        monkeypatch.setattr(
+            compare_imap_folders.imap_oauth2,
+            "acquire_token",
+            lambda *_args, **_kwargs: pytest.fail("OAuth must not be selected"),
+        )
+
+        with (
+            temp_env({"SRC_IMAP_PASSWORD": "pass", "DEST_IMAP_PASSWORD": "pass"}),
+            temp_argv(["compare_imap_folders.py"]),
+        ):
             compare_imap_folders.main()
 
         assert "INBOX" in capsys.readouterr().out

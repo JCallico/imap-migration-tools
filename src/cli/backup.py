@@ -3,21 +3,16 @@
 import argparse
 import os
 
-from cli.common import parse_account_arguments
+from cli.common import parse_account_arguments, read_account_defaults
 from utils import imap_common
 
 
-def parse_arguments(argv=None):
+def parse_arguments(argv=None, *, dotenv_keys=frozenset()):
     """Parse backup command arguments using environment-backed defaults."""
     parser = argparse.ArgumentParser(description="Backup IMAP emails to local .eml files.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
 
-    default_src_host = os.getenv("SRC_IMAP_HOST")
-    default_src_user = os.getenv("SRC_IMAP_USERNAME")
-    default_src_pass = os.getenv("SRC_IMAP_PASSWORD")
-    default_src_client_id = os.getenv("SRC_OAUTH2_CLIENT_ID")
-    default_src_client_secret = os.getenv("SRC_OAUTH2_CLIENT_SECRET")
-    default_src_account_type = os.getenv("SRC_ACCOUNT_TYPE", "auto")
+    source_defaults = read_account_defaults("SRC")
     parser.add_argument(
         "--src-host",
         default=argparse.SUPPRESS,
@@ -99,12 +94,8 @@ def parse_arguments(argv=None):
         client_id_dest="src_client_id",
         client_secret_dest="src_client_secret",
         account_type_dest="src_account_type",
-        default_host=default_src_host,
-        default_user=default_src_user,
-        default_password=default_src_pass,
-        default_client_id=default_src_client_id,
-        default_client_secret=default_src_client_secret,
-        default_account_type=default_src_account_type,
+        defaults=source_defaults,
+        dotenv_keys=dotenv_keys,
         host_option="--src-host",
         user_option="--src-user",
         password_option="--src-pass",

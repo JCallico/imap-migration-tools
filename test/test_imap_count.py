@@ -330,6 +330,22 @@ class TestMainFunction:
 
         assert "INBOX" in capsys.readouterr().out
 
+    def test_os_account_overrides_dotenv_endpoint(self, single_mock_server, capsys, dotenv_file):
+        """A complete count-specific OS account wins over a conflicting .env account."""
+        _, port = single_mock_server({"INBOX": [b"Subject: OS\r\n\r\nBody"]})
+        dotenv_file(
+            {
+                "IMAP_HOST": "imap://localhost:1",
+                "IMAP_USERNAME": "dotenv-user",
+                "IMAP_PASSWORD": "dotenv-password",
+            }
+        )
+
+        with temp_env(_mock_imap_env(port)):
+            count_imap_emails.main([])
+
+        assert f"Host            : imap://localhost:{port}" in capsys.readouterr().out
+
     def test_explicit_password_overrides_dotenv_oauth(self, single_mock_server, capsys, dotenv_file):
         """An explicit password prevents an inherited OAuth client ID from selecting OAuth."""
         _, port = single_mock_server({"INBOX": [b"Subject: Password\r\n\r\nBody"]})
@@ -339,6 +355,63 @@ class TestMainFunction:
             count_imap_emails.main(["--pass", "pass"])
 
         assert "INBOX" in capsys.readouterr().out
+
+    def test_cli_oauth_overrides_dotenv_password(self, single_mock_server, capsys, dotenv_file, monkeypatch):
+        """An explicit OAuth client selects OAuth over a lower-precedence .env password."""
+        _, port = single_mock_server({"INBOX": [b"Subject: OAuth\r\n\r\nBody"]})
+        dotenv_file(_mock_imap_env(port))
+        monkeypatch.setattr(
+            count_imap_emails.imap_oauth2, "acquire_token", lambda *_args, **_kwargs: ("token", "microsoft")
+        )
+
+        with temp_env({}):
+            count_imap_emails.main(["--oauth2-client-id", "cli-client"])
+
+        assert "INBOX" in capsys.readouterr().out
+
+    def test_os_password_overrides_dotenv_oauth(self, single_mock_server, capsys, dotenv_file, monkeypatch):
+        """An OS password selects password authentication over .env OAuth."""
+        _, port = single_mock_server({"INBOX": [b"Subject: OS\r\n\r\nBody"]})
+        dotenv_file(
+            {
+                "IMAP_HOST": f"imap://localhost:{port}",
+                "IMAP_USERNAME": "user",
+                "OAUTH2_CLIENT_ID": "dotenv-client",
+            }
+        )
+        monkeypatch.setattr(
+            count_imap_emails.imap_oauth2,
+            "acquire_token",
+            lambda *_args, **_kwargs: pytest.fail("OAuth must not be selected"),
+        )
+
+        with temp_env({"IMAP_PASSWORD": "pass"}):
+            count_imap_emails.main([])
+
+        assert "INBOX" in capsys.readouterr().out
+
+    def test_os_oauth_overrides_dotenv_password(self, single_mock_server, capsys, dotenv_file, monkeypatch):
+        """An OS OAuth client selects OAuth over a lower-precedence .env password."""
+        _, port = single_mock_server({"INBOX": [b"Subject: OS OAuth\r\n\r\nBody"]})
+        dotenv_file(
+            {
+                "IMAP_HOST": f"imap://localhost:{port}",
+                "IMAP_USERNAME": "user",
+                "IMAP_PASSWORD": "dotenv-password",
+            }
+        )
+        monkeypatch.setattr(
+            count_imap_emails.imap_oauth2,
+            "acquire_token",
+            lambda *_args, **_kwargs: ("token", "microsoft"),
+        )
+
+        with temp_env({"OAUTH2_CLIENT_ID": "os-client"}):
+            count_imap_emails.main([])
+
+        output = capsys.readouterr().out
+        assert "Auth Method     : OAuth2/microsoft (XOAUTH2)" in output
+        assert "INBOX" in output
 
     def test_explicit_imap_arguments_override_dotenv_local_path(
         self, single_mock_server, tmp_path, capsys, dotenv_file

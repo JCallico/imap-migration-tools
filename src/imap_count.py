@@ -144,9 +144,9 @@ def count_local_emails(local_path: str) -> None:
 
 def main(argv: Optional[list[str]] = None) -> None:
     # Loading environment variables from .env file
-    load_dotenv()
+    dotenv_result = load_dotenv()
 
-    args, local_mode = parse_arguments(argv)
+    args, local_mode = parse_arguments(argv, dotenv_keys=dotenv_result.dotenv_keys)
     if local_mode:
         print("\n--- Configuration Summary ---")
         print(f"Local Path      : {args.path}")

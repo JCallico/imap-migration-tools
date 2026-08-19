@@ -3,22 +3,17 @@
 import argparse
 import os
 
-from cli.common import parse_account_arguments
+from cli.common import parse_account_arguments, read_account_defaults
 from utils import imap_common
 
 
-def parse_arguments(argv=None):
+def parse_arguments(argv=None, *, dotenv_keys=frozenset()):
     """Parse migration command arguments using environment-backed defaults."""
     parser = argparse.ArgumentParser(description="Migrate emails between IMAP accounts.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
     parser.add_argument("folder", nargs="?", help="Specific folder to migrate (e.g. '[Gmail]/Important')")
 
-    default_src_host = os.getenv("SRC_IMAP_HOST")
-    default_src_user = os.getenv("SRC_IMAP_USERNAME")
-    default_src_pass = os.getenv("SRC_IMAP_PASSWORD")
-    default_src_client_id = os.getenv("SRC_OAUTH2_CLIENT_ID")
-    default_src_client_secret = os.getenv("SRC_OAUTH2_CLIENT_SECRET")
-    default_src_account_type = os.getenv("SRC_ACCOUNT_TYPE", "auto")
+    source_defaults = read_account_defaults("SRC")
     parser.add_argument(
         "--src-host",
         default=argparse.SUPPRESS,
@@ -50,12 +45,7 @@ def parse_arguments(argv=None):
         help="Source OAuth provider account type (auto, personal, or work; or SRC_ACCOUNT_TYPE)",
     )
 
-    default_dest_host = os.getenv("DEST_IMAP_HOST")
-    default_dest_user = os.getenv("DEST_IMAP_USERNAME")
-    default_dest_pass = os.getenv("DEST_IMAP_PASSWORD")
-    default_dest_client_id = os.getenv("DEST_OAUTH2_CLIENT_ID")
-    default_dest_client_secret = os.getenv("DEST_OAUTH2_CLIENT_SECRET")
-    default_dest_account_type = os.getenv("DEST_ACCOUNT_TYPE", "auto")
+    destination_defaults = read_account_defaults("DEST")
     parser.add_argument(
         "--dest-host",
         default=argparse.SUPPRESS,
@@ -156,12 +146,8 @@ def parse_arguments(argv=None):
         client_id_dest="src_client_id",
         client_secret_dest="src_client_secret",
         account_type_dest="src_account_type",
-        default_host=default_src_host,
-        default_user=default_src_user,
-        default_password=default_src_pass,
-        default_client_id=default_src_client_id,
-        default_client_secret=default_src_client_secret,
-        default_account_type=default_src_account_type,
+        defaults=source_defaults,
+        dotenv_keys=dotenv_keys,
         host_option="--src-host",
         user_option="--src-user",
         password_option="--src-pass",
@@ -176,12 +162,8 @@ def parse_arguments(argv=None):
         client_id_dest="dest_client_id",
         client_secret_dest="dest_client_secret",
         account_type_dest="dest_account_type",
-        default_host=default_dest_host,
-        default_user=default_dest_user,
-        default_password=default_dest_pass,
-        default_client_id=default_dest_client_id,
-        default_client_secret=default_dest_client_secret,
-        default_account_type=default_dest_account_type,
+        defaults=destination_defaults,
+        dotenv_keys=dotenv_keys,
         host_option="--dest-host",
         user_option="--dest-user",
         password_option="--dest-pass",

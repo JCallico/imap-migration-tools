@@ -224,6 +224,11 @@ Configuration values are applied in this order, with earlier entries taking prec
 3. Values in `.env`
 4. Script defaults
 
+The same ordering applies to logical choices that span multiple variables. For example, an OS-level password selects
+password authentication over an OAuth client ID found only in `.env`, while an OS-level OAuth client ID selects OAuth
+over a `.env` password. This prevents a lower-precedence value in a different field from changing the authentication
+method selected by a higher-precedence source.
+
 For commands that support both IMAP and local paths, explicitly supplied command-line arguments also select the
 operating mode. In `imap_count.py`, `--path` selects local mode, while explicit IMAP connection arguments such as
 `--host` select an ad hoc IMAP account. When more than one of the configured local, source, and destination targets is
@@ -240,12 +245,12 @@ default for backward compatibility. The provided `.env.example` leaves OAuth2 va
 uses password authentication until OAuth2 is deliberately enabled.
 
 IMAP account settings normally support useful field-level overrides, such as changing only a username or password.
-An explicit host is the account boundary: `--host`, `--src-host`, or `--dest-host` must be accompanied by the matching
-username and either password or OAuth2 client ID in the same command. OAuth2 client secrets and account-type settings
-from the inherited account are not carried to that host; provide them explicitly when the new account needs them. This
-prevents credentials configured for one server or provider from silently following a host override. Existing commands
-that changed only the host should either provide the complete account on the command line or update the related values
-in the environment or `.env` together.
+A host is the account boundary. `--host`, `--src-host`, or `--dest-host` must be accompanied by the matching username
+and either password or OAuth2 client ID in the same command. Likewise, a host supplied by the OS environment requires
+its username and authentication choice to come from the OS or command line rather than a lower-precedence `.env` file.
+OAuth2 client secrets and account-type settings from a lower-precedence account are not carried to that host; provide
+them through the same or a higher-precedence source when needed. Existing commands that changed only the host should
+provide the complete account together.
 
 Before connecting, command summaries identify the selected host, username, and authentication method without printing
 passwords, OAuth2 client secrets, or tokens.

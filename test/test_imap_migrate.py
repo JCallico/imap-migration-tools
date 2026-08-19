@@ -101,6 +101,26 @@ class TestBasicMigration:
 
         assert len(dest_server.folders["INBOX"]) == 1
 
+    def test_os_accounts_override_dotenv_endpoints(self, mock_server_factory, dotenv_file):
+        """Complete OS source and destination accounts win over conflicting .env accounts."""
+        src_data = {"INBOX": [b"Subject: OS\r\nMessage-ID: <os-precedence@test>\r\n\r\nBody"]}
+        _, dest_server, src_port, dest_port = mock_server_factory(src_data, {"INBOX": []})
+        dotenv_file(
+            {
+                "SRC_IMAP_HOST": "imap://localhost:1",
+                "SRC_IMAP_USERNAME": "dotenv-source",
+                "SRC_IMAP_PASSWORD": "dotenv-source-password",
+                "DEST_IMAP_HOST": "imap://localhost:2",
+                "DEST_IMAP_USERNAME": "dotenv-destination",
+                "DEST_IMAP_PASSWORD": "dotenv-destination-password",
+            }
+        )
+
+        with temp_env(_mock_migrate_env(src_port, dest_port)), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+            migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX"]) == 1
+
     def test_explicit_passwords_override_dotenv_oauth(self, mock_server_factory, dotenv_file):
         """Explicit passwords select basic authentication for both migration accounts."""
         src_data = {"INBOX": [b"Subject: Password\r\nMessage-ID: <password@test>\r\n\r\nBody"]}
@@ -114,6 +134,57 @@ class TestBasicMigration:
         )
 
         with temp_env({}), temp_argv(["migrate_imap_emails.py", "--src-pass", "p", "--dest-pass", "p", "INBOX"]):
+            migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX"]) == 1
+
+    def test_cli_oauth_overrides_dotenv_passwords(self, mock_server_factory, dotenv_file, monkeypatch):
+        """Explicit OAuth clients select OAuth for both accounts over .env passwords."""
+        src_data = {"INBOX": [b"Subject: OAuth\r\nMessage-ID: <oauth@test>\r\n\r\nBody"]}
+        _, dest_server, src_port, dest_port = mock_server_factory(src_data, {"INBOX": []})
+        dotenv_file(_mock_migrate_env(src_port, dest_port))
+        monkeypatch.setattr(
+            migrate_imap_emails.imap_oauth2, "acquire_token", lambda *_args, **_kwargs: ("token", "microsoft")
+        )
+
+        with (
+            temp_env({}),
+            temp_argv(
+                [
+                    "migrate_imap_emails.py",
+                    "--src-oauth2-client-id",
+                    "src-client",
+                    "--dest-oauth2-client-id",
+                    "dest-client",
+                    "INBOX",
+                ]
+            ),
+        ):
+            migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX"]) == 1
+
+    def test_os_passwords_override_dotenv_oauth(self, mock_server_factory, dotenv_file, monkeypatch):
+        """OS passwords select password authentication for both accounts over .env OAuth."""
+        src_data = {"INBOX": [b"Subject: OS\r\nMessage-ID: <os@test>\r\n\r\nBody"]}
+        _, dest_server, src_port, dest_port = mock_server_factory(src_data, {"INBOX": []})
+        dotenv_file(
+            {
+                **_mock_migrate_env(src_port, dest_port),
+                "SRC_OAUTH2_CLIENT_ID": "dotenv-source-client",
+                "DEST_OAUTH2_CLIENT_ID": "dotenv-destination-client",
+            }
+        )
+        monkeypatch.setattr(
+            migrate_imap_emails.imap_oauth2,
+            "acquire_token",
+            lambda *_args, **_kwargs: pytest.fail("OAuth must not be selected"),
+        )
+
+        with (
+            temp_env({"SRC_IMAP_PASSWORD": "pass", "DEST_IMAP_PASSWORD": "pass"}),
+            temp_argv(["migrate_imap_emails.py", "INBOX"]),
+        ):
             migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 1
@@ -187,14 +258,25 @@ class TestDeleteFromSource:
         assert len(dest_server.folders["INBOX"]) == 1
         assert len(src_server.folders["INBOX"]) == 1
 
-    def test_no_src_delete_overrides_enabled_env_var(self, mock_server_factory):
-        """An explicit negative flag keeps source mail despite an enabled environment setting."""
+    def test_no_src_delete_overrides_enabled_env_var(self, mock_server_factory, dotenv_file):
+        """An explicit negative flag keeps source mail despite an enabled .env setting."""
         src_data = {"INBOX": [b"Subject: Keep\r\nMessage-ID: <keep-negative>\r\n\r\nC"]}
         src_server, dest_server, p1, p2 = mock_server_factory(src_data, {"INBOX": []})
-        env = _mock_migrate_env(p1, p2)
-        env["DELETE_FROM_SOURCE"] = "true"
+        dotenv_file({**_mock_migrate_env(p1, p2), "DELETE_FROM_SOURCE": "true"})
 
-        with temp_env(env), temp_argv(["migrate_imap_emails.py", "--no-src-delete", "INBOX"]):
+        with temp_env({}), temp_argv(["migrate_imap_emails.py", "--no-src-delete", "INBOX"]):
+            migrate_imap_emails.main()
+
+        assert len(dest_server.folders["INBOX"]) == 1
+        assert len(src_server.folders["INBOX"]) == 1
+
+    def test_os_boolean_overrides_dotenv(self, mock_server_factory, dotenv_file):
+        """An OS false value prevents source deletion enabled by .env."""
+        src_data = {"INBOX": [b"Subject: Keep\r\nMessage-ID: <keep-os@test>\r\n\r\nC"]}
+        src_server, dest_server, p1, p2 = mock_server_factory(src_data, {"INBOX": []})
+        dotenv_file({**_mock_migrate_env(p1, p2), "DELETE_FROM_SOURCE": "true"})
+
+        with temp_env({"DELETE_FROM_SOURCE": "false"}), temp_argv(["migrate_imap_emails.py", "INBOX"]):
             migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 1
@@ -797,15 +879,14 @@ class TestDestDeleteFunctionality:
         remaining_content = dest_server.folders["INBOX"][0]["content"]
         assert b"Message-ID: <keep@test>" in remaining_content
 
-    def test_no_dest_delete_overrides_enabled_env_var(self, mock_server_factory):
-        """An explicit negative flag keeps destination orphans despite the environment setting."""
+    def test_no_dest_delete_overrides_enabled_env_var(self, mock_server_factory, dotenv_file):
+        """An explicit negative flag keeps destination orphans despite the .env setting."""
         src_data = {"INBOX": [b"Subject: Source\r\nMessage-ID: <source-negative@test>\r\n\r\nBody"]}
         dest_data = {"INBOX": [b"Subject: Orphan\r\nMessage-ID: <orphan-negative@test>\r\n\r\nBody"]}
         _, dest_server, p1, p2 = mock_server_factory(src_data, dest_data)
-        env = _mock_migrate_env(p1, p2)
-        env["DEST_DELETE"] = "true"
+        dotenv_file({**_mock_migrate_env(p1, p2), "DEST_DELETE": "true"})
 
-        with temp_env(env), temp_argv(["migrate_imap_emails.py", "--no-dest-delete", "INBOX"]):
+        with temp_env({}), temp_argv(["migrate_imap_emails.py", "--no-dest-delete", "INBOX"]):
             migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 2

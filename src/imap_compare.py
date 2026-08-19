@@ -88,9 +88,9 @@ def get_email_count(conn, folder_name):
 
 def main():
     # Loading environment variables from .env file
-    load_dotenv()
+    dotenv_result = load_dotenv()
 
-    args, src_is_local, dest_is_local = parse_arguments()
+    args, src_is_local, dest_is_local = parse_arguments(dotenv_keys=dotenv_result.dotenv_keys)
 
     SRC_HOST = args.src_host
     SRC_USER = args.src_user

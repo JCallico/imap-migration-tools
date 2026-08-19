@@ -3,11 +3,11 @@
 import argparse
 import os
 
-from cli.common import parse_account_arguments
+from cli.common import parse_account_arguments, read_account_defaults
 from utils import imap_common
 
 
-def parse_arguments(argv=None):
+def parse_arguments(argv=None, *, dotenv_keys=frozenset()):
     """Parse restore command arguments using environment-backed defaults."""
     parser = argparse.ArgumentParser(description="Restore IMAP emails from local .eml files.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
@@ -20,12 +20,7 @@ def parse_arguments(argv=None):
         help="Local source path containing backup (or BACKUP_LOCAL_PATH)",
     )
 
-    default_dest_host = os.getenv("DEST_IMAP_HOST")
-    default_dest_user = os.getenv("DEST_IMAP_USERNAME")
-    default_dest_pass = os.getenv("DEST_IMAP_PASSWORD")
-    default_dest_client_id = os.getenv("DEST_OAUTH2_CLIENT_ID")
-    default_dest_client_secret = os.getenv("DEST_OAUTH2_CLIENT_SECRET")
-    default_dest_account_type = os.getenv("DEST_ACCOUNT_TYPE", "auto")
+    destination_defaults = read_account_defaults("DEST")
     parser.add_argument(
         "--dest-host",
         default=argparse.SUPPRESS,
@@ -120,12 +115,8 @@ def parse_arguments(argv=None):
         client_id_dest="dest_client_id",
         client_secret_dest="dest_client_secret",
         account_type_dest="dest_account_type",
-        default_host=default_dest_host,
-        default_user=default_dest_user,
-        default_password=default_dest_pass,
-        default_client_id=default_dest_client_id,
-        default_client_secret=default_dest_client_secret,
-        default_account_type=default_dest_account_type,
+        defaults=destination_defaults,
+        dotenv_keys=dotenv_keys,
         host_option="--dest-host",
         user_option="--dest-user",
         password_option="--dest-pass",

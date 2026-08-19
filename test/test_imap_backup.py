@@ -141,6 +141,43 @@ class TestBackupBasic:
 
         assert len(list((backup_path / "INBOX").glob("*.eml"))) == 1
 
+    def test_os_password_overrides_dotenv_oauth(self, single_mock_server, tmp_path, dotenv_file, monkeypatch):
+        """An OS password selects password authentication over a lower-precedence .env OAuth client."""
+        _, port = single_mock_server({"INBOX": [b"Subject: OS password\r\nMessage-ID: <os-pass@test>\r\n\r\nBody"]})
+        backup_path = tmp_path / "os-password-backup"
+        dotenv_file(
+            {
+                "SRC_IMAP_HOST": f"imap://localhost:{port}",
+                "SRC_IMAP_USERNAME": "user",
+                "SRC_OAUTH2_CLIENT_ID": "dotenv-client",
+                "BACKUP_LOCAL_PATH": str(backup_path),
+            }
+        )
+        monkeypatch.setattr(
+            backup_imap_emails.imap_oauth2,
+            "acquire_token",
+            lambda *_args, **_kwargs: pytest.fail("OAuth must not be selected"),
+        )
+
+        with temp_env({"SRC_IMAP_PASSWORD": "pass"}), temp_argv(["backup_imap_emails.py"]):
+            backup_imap_emails.main()
+
+        assert len(list((backup_path / "INBOX").glob("*.eml"))) == 1
+
+    def test_cli_oauth_overrides_dotenv_password(self, single_mock_server, tmp_path, dotenv_file, monkeypatch):
+        """An explicit OAuth client selects OAuth over a lower-precedence .env password."""
+        _, port = single_mock_server({"INBOX": [b"Subject: CLI OAuth\r\nMessage-ID: <cli-oauth@test>\r\n\r\nBody"]})
+        backup_path = tmp_path / "cli-oauth-backup"
+        dotenv_file({**_mock_imap_env(port), "BACKUP_LOCAL_PATH": str(backup_path)})
+        monkeypatch.setattr(
+            backup_imap_emails.imap_oauth2, "acquire_token", lambda *_args, **_kwargs: ("token", "microsoft")
+        )
+
+        with temp_env({}), temp_argv(["backup_imap_emails.py", "--src-oauth2-client-id", "cli-client"]):
+            backup_imap_emails.main()
+
+        assert len(list((backup_path / "INBOX").glob("*.eml"))) == 1
+
     def test_backup_prefers_existing_os_environment(self, single_mock_server, tmp_path, dotenv_file):
         """End-to-end: an OS value overrides the same value in .env."""
         src_data = {"INBOX": [b"Subject: OS wins\r\nMessage-ID: <os@test>\r\n\r\nBody"]}
@@ -154,10 +191,51 @@ class TestBackupBasic:
                 "BACKUP_LOCAL_PATH": str(backup_path),
             }
         )
-        with temp_env({"SRC_IMAP_HOST": f"imap://localhost:{port}"}), temp_argv(["backup_imap_emails.py"]):
+        os_account = {
+            "SRC_IMAP_HOST": f"imap://localhost:{port}",
+            "SRC_IMAP_USERNAME": "user",
+            "SRC_IMAP_PASSWORD": "pass",
+        }
+        with temp_env(os_account), temp_argv(["backup_imap_emails.py"]):
             backup_imap_emails.main()
 
         assert len(list((backup_path / "INBOX").glob("*.eml"))) == 1
+
+    def test_cli_path_overrides_os_and_dotenv_paths(self, single_mock_server, tmp_path, dotenv_file):
+        """The CLI backup path wins over conflicting OS and .env paths."""
+        _, port = single_mock_server({"INBOX": [b"Subject: CLI path\r\nMessage-ID: <cli-path@test>\r\n\r\nBody"]})
+        cli_path = tmp_path / "cli-backup"
+        os_path = tmp_path / "os-backup"
+        dotenv_path = tmp_path / "dotenv-backup"
+        dotenv_file({**_mock_imap_env(port), "BACKUP_LOCAL_PATH": str(dotenv_path)})
+
+        with (
+            temp_env({"BACKUP_LOCAL_PATH": str(os_path)}),
+            temp_argv(["backup_imap_emails.py", "--dest-path", str(cli_path)]),
+        ):
+            backup_imap_emails.main()
+
+        assert len(list((cli_path / "INBOX").glob("*.eml"))) == 1
+        assert not os_path.exists()
+        assert not dotenv_path.exists()
+
+    def test_os_host_rejects_dotenv_credentials(self, tmp_path, dotenv_file, capsys):
+        """An OS host cannot silently inherit lower-precedence .env credentials."""
+        dotenv_file(
+            {
+                "SRC_IMAP_HOST": "imap.dotenv.example",
+                "SRC_IMAP_USERNAME": "dotenv-user",
+                "SRC_IMAP_PASSWORD": "dotenv-password",
+                "BACKUP_LOCAL_PATH": str(tmp_path),
+            }
+        )
+
+        with temp_env({"SRC_IMAP_HOST": "imap.os.example"}), temp_argv(["backup_imap_emails.py"]):
+            with pytest.raises(SystemExit) as exc_info:
+                backup_imap_emails.main()
+
+        assert exc_info.value.code == 2
+        assert "same or a higher-precedence source" in capsys.readouterr().err
 
 
 class TestIncrementalBackup:
@@ -648,18 +726,32 @@ class TestDestDeleteBackupEnvVar:
 
         assert not orphan.exists()
 
-    def test_no_dest_delete_overrides_enabled_env_var(self, single_mock_server, tmp_path):
-        """An explicit negative flag prevents deletion requested by the environment."""
+    def test_no_dest_delete_overrides_enabled_env_var(self, single_mock_server, tmp_path, dotenv_file):
+        """An explicit negative flag prevents deletion requested by .env."""
         _, port = single_mock_server({"INBOX": []})
         backup_root = tmp_path / "backup"
         inbox_path = backup_root / "INBOX"
         inbox_path.mkdir(parents=True)
         orphan = inbox_path / "1_Orphan.eml"
         orphan.write_bytes(b"Subject: Keep\r\nMessage-ID: <keep@test>\r\n\r\nBody")
-        env = _mock_imap_env(port)
-        env.update({"BACKUP_LOCAL_PATH": str(backup_root), "DEST_DELETE": "true"})
+        dotenv_file({**_mock_imap_env(port), "BACKUP_LOCAL_PATH": str(backup_root), "DEST_DELETE": "true"})
 
-        with temp_env(env), temp_argv(["backup_imap_emails.py", "--no-dest-delete"]):
+        with temp_env({}), temp_argv(["backup_imap_emails.py", "--no-dest-delete"]):
+            backup_imap_emails.main()
+
+        assert orphan.exists()
+
+    def test_os_boolean_overrides_dotenv(self, single_mock_server, tmp_path, dotenv_file):
+        """An OS false value prevents deletion enabled by .env."""
+        _, port = single_mock_server({"INBOX": []})
+        backup_root = tmp_path / "backup"
+        inbox_path = backup_root / "INBOX"
+        inbox_path.mkdir(parents=True)
+        orphan = inbox_path / "1_Orphan.eml"
+        orphan.write_bytes(b"Subject: Keep\r\nMessage-ID: <keep-os@test>\r\n\r\nBody")
+        dotenv_file({**_mock_imap_env(port), "BACKUP_LOCAL_PATH": str(backup_root), "DEST_DELETE": "true"})
+
+        with temp_env({"DEST_DELETE": "false"}), temp_argv(["backup_imap_emails.py"]):
             backup_imap_emails.main()
 
         assert orphan.exists()
