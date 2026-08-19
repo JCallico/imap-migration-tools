@@ -5,1012 +5,145 @@
 ![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-## Background
-I was in need of migrating a Google account with more than 100,000 emails, and none of the freely available solutions worked reliably for me. They often timed out, crashed, or couldn't handle the volume. Hence, I created these simple, robust Python scripts that got the job done effectively.
+A collection of command-line tools for migrating, backing up, restoring, counting, and comparing email on IMAP
+servers. The tools were created for large migrations where simpler clients timed out or could not resume reliably.
 
-### Disclaimer
-These scripts are provided "as is", without warranty of any kind, express or implied. While they have been tested and used successfully for ONE large migration, the author assumes no liability for any data loss, corruption, or other issues that may arise from their use. Users are advised to review the code and test with non-critical data before performing large-scale operations. No support or maintenance is guaranteed.
+They support password and OAuth2 authentication, incremental operation, Gmail labels, standard IMAP flags, local
+`.eml` backups, and destination synchronization.
 
-## Project Overview
-This repository contains a set of Python scripts designed to migrate emails between IMAP servers (supports Gmail, Outlook, etc.), verify the migration, and manage folder states.
+> These tools can copy and delete email. Test with non-critical data, verify counts and backups, and review destructive
+> options before using them on an important account. The software is provided without warranty.
 
-### The Scripts
+## Commands
 
-1. **`imap_migrate.py`** (The Solution)
-   - Migrates emails folder-by-folder.
-   - **Multi-threaded**: Uses a thread pool to copy messages in parallel for high speed.
-  - **Smart De-duplication**: Checks if a message already exists in the destination (matching Message-ID) and skips it if found.
-  - **Robust**: Preserves original dates and can preserve IMAP flags with `--preserve-flags`.
-  - **Gmail Mode**: For Gmail -> Gmail migrations, use `--gmail-mode` to migrate `[Gmail]/All Mail` (no duplicates) and apply Gmail labels by copying messages into label folders.
-   - **Cleanup**: Optionally deletes messages from the source after successful transfer (effectively a "Move" operation).
-     - *Improved for Gmail*: Automatically detects "Trash" folders to ensure emails are properly binned rather than just archived.
-   - **Sync Mode**: Optionally deletes emails from destination that no longer exist in source (`--dest-delete`).
-   - **Incremental Cache**: Supports `--migrate-cache <path>` to store a local map of processed emails, drastically speeding up subsequent runs by skipping known messages.
-   - **Configurable**: Adjustable concurrency and batch sizes to respect server rate limits.
+| Installed command | Source entry point | Purpose |
+|---|---|---|
+| `imap-migrate` | `src/imap_migrate.py` | Copy or move email between IMAP accounts |
+| `imap-backup` | `src/imap_backup.py` | Download an IMAP account as `.eml` files |
+| `imap-restore` | `src/imap_restore.py` | Upload a local backup to an IMAP account |
+| `imap-compare` | `src/imap_compare.py` | Compare folder counts across IMAP or local sources |
+| `imap-count` | `src/imap_count.py` | Count messages on an account or in a local backup |
 
-2. **`imap_compare.py`** (The Validator)
-   - Connects to both Source and Destination accounts.
-   - Prints a side-by-side comparison table of message counts for every folder.
-  - Supports comparing IMAP to a local backup folder (`.eml` files) as either the source or destination.
-  - Essential for verifying that the migration was successful and that counts match.
+Legacy script names remain available as compatibility wrappers.
 
-3. **`imap_count.py`** (The Investigator)
-  - Counts emails in all folders for a single IMAP account (initial assessment / sizing).
-  - Also supports counting a local backup folder (`.eml` files) via `--path`.
-  - Uses `--target local`, `--target source`, or `--target destination` when multiple configured targets exist.
+## Installation
 
-4. **`imap_backup.py`** (The Backup)
-   - Downloads emails from an IMAP account to a local disk.
-   - **Format**: Saves emails as individual `.eml` files (RFC 5322), compatible with Outlook, Thunderbird, and Apple Mail.
-   - **Structure**: Replicates the IMAP folder hierarchy locally.
-   - **Incremental**: Skips emails that have already been downloaded (based on UID) so you can run it periodically to fetch new messages.
-   - **Sync Mode**: Optionally deletes local `.eml` files that no longer exist on the server (`--dest-delete`).
-   - **Gmail Labels Preservation**: Creates a `labels_manifest.json` file mapping each email's Message-ID to its Gmail labels, enabling proper restoration with labels intact.
+Python 3.9 or newer is required. Install with `.env` support using `pipx`:
 
-5. **`imap_restore.py`** (The Restore)
-   - Uploads emails from a local backup to an IMAP server.
-   - **Format**: Reads `.eml` files and uploads them preserving original dates.
-   - **Structure**: Recreates the folder hierarchy on the destination server.
-  - **Incremental**: Skips emails that already exist (based on Message-ID), but still syncs labels and flags.
-   - **Sync Mode**: Optionally deletes emails from destination that no longer exist in local backup (`--dest-delete`).
-   - **Gmail Labels Restoration**: Applies labels from `labels_manifest.json` to recreate the original Gmail label structure.
-
-## Getting Started
-
-### 1. Prerequisites
-- **Python 3.9+**
-- **No external installations required for basic (password) authentication.**
-  The scripts use only the Python Standard Library for standard IMAP login.
-
-- **Optional:** To use a `.env` file, install the `python-dotenv` package as well:
-  - `pip install python-dotenv`
-
-- **Optional: OAuth2 authentication** requires provider-specific packages:
-  - **Microsoft (Outlook/Office 365):** `pip install msal msal-extensions`
-  - **Google (Gmail):** `pip install google-auth-oauthlib`
-
-### 2. Installation
-
-#### Installation via PyPI (Recommended)
-You can install the tools directly from PyPI.
-
-**For macOS Users (and other externally managed environments):**
-Due to recent changes in Python environments on macOS, it is recommended to use `pipx` to install the tools globally without conflicting with system packages.
-
-1. Install `pipx` (if not already installed):
-   ```bash
-   brew install pipx
-   pipx ensurepath
-   ```
-2. Install the tools, including the optional `.env` support:
-   ```bash
-   pipx install "imap-migration-tools[dotenv]"
-   ```
-
-   If the tools are already installed, add `.env` support with:
-   ```bash
-   pipx inject imap-migration-tools python-dotenv
-   ```
-
-**For Standard Environments:**
 ```bash
-pip install "imap-migration-tools[dotenv]"
+pipx install "imap-migration-tools[dotenv]"
 ```
 
-Once installed via PyPI, the following commands are globally available in your terminal:
-- `imap-backup`
-- `imap-compare`
-- `imap-count`
-- `imap-migrate`
-- `imap-restore`
+Or use pip in a virtual environment:
 
-#### Installation from Source
-Alternatively, clone this repository or download the script files to your local machine.
-
-#### macOS
-macOS often comes with Python, but it's best to install the latest version.
-- **Using Homebrew** (Recommended):
-  ```bash
-  brew install python
-  ```
-- **Manual**: Download the installer from [python.org](https://www.python.org/downloads/mac-osx/).
-
-#### Linux (Ubuntu/Debian)
-Most Linux distributions come with Python 3 pre-installed. To ensure you have it:
 ```bash
-sudo apt-get update
-sudo apt-get install python3
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install "imap-migration-tools[dotenv]"
 ```
 
-#### Windows
-1. Download the Python 3 executable installer from [python.org](https://www.python.org/downloads/windows/).
-2. Run the installer and **ensure you check the box "Add Python to PATH"** at the bottom of the setup screen before clicking Install.
-3. Open PowerShell or Command Prompt and verify installation:
-   ```powershell
-   python --version
-   ```
+Basic password authentication needs no additional authentication package. OAuth2 provider and encrypted cache
+dependencies are installed by the project. See [Installation](docs/installation.md) for platform and source setup.
 
-## Configuration & Running
+## Quick start
 
-You can configure the scripts using **Environment Variables** (recommended for security) or **Command Line Arguments**.
+Copy the safe configuration template:
 
-### Method 1: Environment Variables
+```bash
+cp .env.example .env
+```
 
-#### Linux / macOS (Bash/Zsh)
+Edit `.env` with source and destination credentials. The template enables password authentication by default; OAuth2
+values are empty. Configure only one authentication method per account.
 
-1. **Set Variables:**
-   ```bash
-   # Source Account
-   export SRC_IMAP_HOST="imap.gmail.com"
-   export SRC_IMAP_USERNAME="source@gmail.com"
-   export SRC_IMAP_PASSWORD="your-app-password"
+Migrate all folders:
 
-   # Destination Account
-   export DEST_IMAP_HOST="imap.destination.com"
-   export DEST_IMAP_USERNAME="dest@domain.com"
-   export DEST_IMAP_PASSWORD="dest-app-password"
+```bash
+imap-migrate
+```
 
-   # OAuth2 (Optional - instead of password)
-   export SRC_OAUTH2_CLIENT_ID="your-client-id"
-   export SRC_OAUTH2_CLIENT_SECRET="your-client-secret"  # Required for Google
-   export DEST_OAUTH2_CLIENT_ID="your-dest-client-id"
-   export DEST_OAUTH2_CLIENT_SECRET="your-dest-client-secret"  # Required for Google
+Or provide a complete account directly:
 
-   # Options (Optional)
-   export DELETE_FROM_SOURCE="false"  # Set to "true" to delete from source after copy
-   export DEST_DELETE="false"         # Set to "true" to delete orphans from destination (sync mode)
-   export PRESERVE_FLAGS="false"      # Set to "true" to preserve IMAP flags (read/starred/etc)
-   export GMAIL_MODE="false"          # Set to "true" for Gmail mode (All Mail + label application)
-   export MAX_WORKERS=4               # Number of parallel threads
-   export BATCH_SIZE=10               # Emails per batch
-   ```
+```bash
+imap-migrate \
+  --src-host "imap.gmail.com" \
+  --src-user "source@gmail.com" \
+  --src-pass "source-app-password" \
+  --dest-host "imap.example.com" \
+  --dest-user "destination@example.com" \
+  --dest-pass "destination-password"
+```
 
-2. **Run:**
-   ```bash
-   python3 imap_migrate.py
-   ```
+Back up and verify an account:
 
-#### Windows (PowerShell)
+```bash
+imap-backup \
+  --src-host "imap.gmail.com" \
+  --src-user "you@gmail.com" \
+  --src-pass "app-password" \
+  --dest-path "./mail-backup"
 
-1. **Set Variables:**
-   ```powershell
-   # Source Account
-   $env:SRC_IMAP_HOST="imap.gmail.com"
-   $env:SRC_IMAP_USERNAME="source@gmail.com"
-   $env:SRC_IMAP_PASSWORD="your-app-password"
+imap-compare \
+  --src-host "imap.gmail.com" \
+  --src-user "you@gmail.com" \
+  --src-pass "app-password" \
+  --dest-path "./mail-backup"
+```
 
-   # Same for DEST_* ...
-   ```
+## Configuration essentials
 
-2. **Run:**
-   ```powershell
-   python imap_migrate.py
-   ```
-
-### Method 2: `.env` File
-
-Rather than setting environment variables directly, you can use a `.env` file. A template containing all supported configuration options is provided in `.env.example`.
-
-1. **Create a `.env` file:**
-   ```bash
-   cp .env.example .env
-   ```
-
-   On Windows (PowerShell):
-   ```powershell
-   Copy-Item .env.example .env
-   ```
-
-2. **Edit `.env`** and update the values for your environment. The template defaults to password authentication.
-   For OAuth2, clear the corresponding `SRC_IMAP_PASSWORD` or `DEST_IMAP_PASSWORD` and set the matching OAuth2
-   client values. Configure only one authentication method per account.
-
-3. **Run:**
-   ```bash
-   python3 imap_migrate.py
-   ```
-
-   On Windows (PowerShell):
-   ```powershell
-   python imap_migrate.py
-   ```
-
-> **Note:** If a `.env` file is present, it will be loaded automatically at startup. `.env.example` is provided as a template and should be copied rather than modified directly.
-
-Configuration values are applied in this order, with earlier entries taking precedence:
+Configuration precedence is:
 
 1. Command-line arguments
-2. Existing OS environment variables (such as values from your shell, CI system, or secret manager)
-3. Values in `.env`
+2. Existing OS environment variables
+3. `.env` values
 4. Script defaults
 
-The same ordering applies to logical choices that span multiple variables. For example, an OS-level password selects
-password authentication over an OAuth client ID found only in `.env`, while an OS-level OAuth client ID selects OAuth
-over a `.env` password. This prevents a lower-precedence value in a different field from changing the authentication
-method selected by a higher-precedence source.
+Authentication is resolved as one choice, so a higher-precedence password cannot be displaced by a lower-precedence
+OAuth client ID, or vice versa. A host is an account boundary: when overriding a host, provide its username and password
+or OAuth client ID from the same or a higher-precedence source.
 
-For commands that support both IMAP and local paths, explicitly supplied command-line arguments also select the
-operating mode. In `imap_count.py`, `--path` selects local mode, while explicit IMAP connection arguments such as
-`--host` select an ad hoc IMAP account. When more than one of the configured local, source, and destination targets is
-available, select one with `--target local`, `--target source`, or `--target destination`. A path-only configuration and
-a single-account configuration continue to be selected automatically for compatibility. In `imap_compare.py`, mode is
-resolved independently for the source and destination. Do not combine an explicit path with explicit IMAP connection
-arguments for the same side.
-
-Password and OAuth settings are treated as one authentication choice. An explicit password option selects password
-authentication and ignores an OAuth client ID inherited from the environment or `.env`; an explicit OAuth client ID
-likewise ignores an inherited password. When neither method is selected on the command line, environment configuration
-is used. Avoid configuring both methods for the same account; if both are present in the environment, OAuth remains the
-default for backward compatibility. The provided `.env.example` leaves OAuth2 values empty so that a copied template
-uses password authentication until OAuth2 is deliberately enabled.
-
-IMAP account settings normally support useful field-level overrides, such as changing only a username or password.
-A host is the account boundary. `--host`, `--src-host`, or `--dest-host` must be accompanied by the matching username
-and either password or OAuth2 client ID in the same command. Likewise, a host supplied by the OS environment requires
-its username and authentication choice to come from the OS or command line rather than a lower-precedence `.env` file.
-OAuth2 client secrets and account-type settings from a lower-precedence account are not carried to that host; provide
-them through the same or a higher-precedence source when needed. Existing commands that changed only the host should
-provide the complete account together.
-
-Before connecting, command summaries identify the selected host, username, and authentication method without printing
-passwords, OAuth2 client secrets, or tokens.
-
-Environment-backed boolean options can be overridden in either direction on the command line. Each positive option has
-a corresponding `--no-...` form, such as `--dest-delete` / `--no-dest-delete`, `--gmail-mode` / `--no-gmail-mode`,
-and `--src-delete` / `--no-src-delete`. This makes it possible to disable a setting enabled by the OS environment or
-`.env` for one invocation. The same pattern applies to label, flag, manifest, and full-restore options.
-
-Destination namespace prefixes are detected automatically through the IMAP
-`NAMESPACE` command. If a server does not advertise its namespace correctly,
-set `DEST_FOLDER_PREFIX` and `DEST_FOLDER_SEP` explicitly (for example,
-`INBOX.` and `.` for a typical cPanel/Dovecot configuration).
-
-
-### Method 3: Command Line Arguments (Overrides)
-All scripts support command-line arguments which take precedence over environment variables.
-
-**Migration:**
-```bash
-python3 imap_migrate.py \
-  --src-host "imap.gmail.com" \
-  --src-user "me@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-host "imap.other.com" \
-  --dest-user "you@domain.com" \
-  --dest-pass "your-app-password" \
-  --workers 4 \
-  --src-delete
-```
-
-**Comparison:**
-```bash
-python3 imap_compare.py \
-  --src-host "imap.gmail.com" \
-  --src-user "me@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-host "imap.other.com" \
-  --dest-user "you@domain.com" \
-  --dest-pass "your-app-password"
-
-# Compare IMAP source to a local backup folder
-python3 imap_compare.py \
-  --src-host "imap.gmail.com" \
-  --src-user "me@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-path "./my_backup"
-
-# Compare a local backup folder to an IMAP destination
-python3 imap_compare.py \
-  --src-path "./my_backup" \
-  --dest-host "imap.other.com" \
-  --dest-user "you@domain.com" \
-  --dest-pass "your-app-password"
-```
-
-**Counting:**
-```bash
-python3 imap_count.py \
-   --host "imap.gmail.com" \
-   --user "me@gmail.com" \
-   --pass "secret"
-
-# Count a local backup folder
-python3 imap_count.py \
-   --path "./my_backup"
-
-# Or via environment variable
-export BACKUP_LOCAL_PATH="./my_backup"
-python3 imap_count.py --target local
-
-# Count a configured source or destination account
-python3 imap_count.py --target source
-python3 imap_count.py --target destination
-```
-
-**Counting (OAuth2):**
-```bash
-python3 imap_count.py \
-   --host "imap.gmail.com" \
-   --user "me@gmail.com" \
-   --oauth2-client-id "id" \
-   --oauth2-client-secret "secret"
-
-# Or via environment variables (single-account script)
-export IMAP_HOST="imap.gmail.com"
-export IMAP_USERNAME="me@gmail.com"
-export OAUTH2_CLIENT_ID="id"
-export OAUTH2_CLIENT_SECRET="secret"  # Required for Google
-python3 imap_count.py
-```
-
-**Backup:**
-```bash
-python3 imap_backup.py \
-  --src-host "imap.gmail.com" \
-  --src-user "me@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-path "./my_backup" \
-  --preserve-flags
-```
-
-## Usage Examples
-
-### 1. Full Migration
-Migrate all folders from Source to Destination.
-```bash
-python3 imap_migrate.py \
-  --src-host "imap.gmail.com" \
-  --src-user "source@gmail.com" \
-  --src-pass "source-app-password" \
-  --dest-host "imap.other.com" \
-  --dest-user "dest@domain.com" \
-  --dest-pass "dest-app-password"
-```
-
-### 1a. Gmail Mode Migration (Gmail -> Gmail)
-For Gmail -> Gmail migrations, `--gmail-mode` migrates only `[Gmail]/All Mail` (no duplicates) and applies labels by copying messages into label folders.
+Environment-backed booleans have positive and negative CLI forms. For example:
 
 ```bash
-python3 imap_migrate.py \
-  --gmail-mode \
-  --src-host "imap.gmail.com" \
-  --src-user "source@gmail.com" \
-  --src-pass "source-app-password" \
-  --dest-host "imap.gmail.com" \
-  --dest-user "dest@gmail.com" \
-  --dest-pass "dest-app-password"
+imap-migrate --src-delete
+imap-migrate --no-src-delete
+imap-backup --dest-delete
+imap-backup --no-dest-delete
 ```
 
-### 1b. Fast Incremental Migration (Cached)
-Use a local cache file to remember processed emails. Use this for large migrations that may be interrupted or need to run multiple times.
+When local, source, and destination count targets coexist, choose explicitly:
 
 ```bash
-python3 imap_migrate.py \
-  --src-host "imap.source.com" \
-  --src-user "source" \
-  --src-pass "pass" \
-  --dest-host "imap.dest.com" \
-  --dest-user "dest" \
-  --dest-pass "pass" \
-  --migrate-cache "./migration_cache"
+imap-count --target local
+imap-count --target source
+imap-count --target destination
 ```
 
-To force a re-check of cached items without clearing the cache logic entirely, add `--full-migrate`.
+See [Configuration](docs/configuration.md) for all precedence, authentication, mode-selection, namespace, and boolean
+rules.
 
-### 1c. Preserve Flags (Any IMAP Server)
-Preserve IMAP flags (`\Seen`, `\Flagged`, `\Answered`, `\Draft`) during migration.
+## Common workflows
 
-If an email already exists on the destination (duplicate), the script can still sync missing flags on the existing message.
+- [Migration, backup, restore, count, and comparison examples](docs/workflows.md)
+- [OAuth2 setup for Microsoft and Google](docs/oauth2.md)
+- [Troubleshooting and operational safety](docs/troubleshooting.md)
+- [Development, testing, and CI](docs/development.md)
+
+For large migrations, start with a count, run a non-destructive copy, compare the result, and only then consider
+deletion or synchronization options.
+
+## Contributing
+
+Create a virtual environment, install the project and development requirements, then run:
 
 ```bash
-python3 imap_migrate.py \
-  --preserve-flags \
-  --src-host "imap.example.com" \
-  --src-user "source@example.com" \
-  --src-pass "source-password" \
-  --dest-host "imap.example.com" \
-  --dest-user "dest@example.com" \
-  --dest-pass "dest-password"
-```
-
-### 2. Single Folder Migration
-Migrate ONLY a specific folder (e.g., trying to fix just "Important" or "Sent").
-```bash
-# Syntax: python3 imap_migrate.py "[Folder Name]"
-python3 imap_migrate.py \
-  --src-host "imap.gmail.com" \
-  --src-user "source@gmail.com" \
-  --src-pass "source-app-password" \
-  --dest-host "imap.other.com" \
-  --dest-user "dest@domain.com" \
-  --dest-pass "dest-app-password" \
-  "[Gmail]/Important"
-```
-
-### 3. Move Instead of Copy
-Migrate and **delete** from source immediately after verifying the copy.
-```bash
-# Using flag
-python3 imap_migrate.py \
-  --src-host "imap.gmail.com" \
-  --src-user "source@gmail.com" \
-  --src-pass "source-app-password" \
-  --dest-host "imap.other.com" \
-  --dest-user "dest@domain.com" \
-  --dest-pass "dest-app-password" \
-  --src-delete
-
-# Or specific folder with delete
-python3 imap_migrate.py \
-  --src-host "imap.gmail.com" \
-  --src-user "source@gmail.com" \
-  --src-pass "source-app-password" \
-  --dest-host "imap.other.com" \
-  --dest-user "dest@domain.com" \
-  --dest-pass "dest-app-password" \
-  "INBOX" \
-  --src-delete
-```
-
-If `DELETE_FROM_SOURCE=true` is configured in the environment or `.env`, force copy semantics for one run with
-`--no-src-delete`:
-
-```bash
-python3 imap_migrate.py \
-  --src-host "imap.gmail.com" \
-  --src-user "source@gmail.com" \
-  --src-pass "source-app-password" \
-  --dest-host "imap.other.com" \
-  --dest-user "dest@domain.com" \
-  --dest-pass "dest-app-password" \
-  --no-src-delete
-```
-
-### 4. Sync Mode (Delete from Destination)
-Keep destination in sync by deleting emails that no longer exist in the source.
-
-Note: `--dest-delete` is not supported in `--gmail-mode`.
-```bash
-# Migration: Delete destination emails not found in source
-python3 imap_migrate.py \
-  --src-host "imap.gmail.com" \
-  --src-user "source@gmail.com" \
-  --src-pass "source-app-password" \
-  --dest-host "imap.other.com" \
-  --dest-user "dest@domain.com" \
-  --dest-pass "dest-app-password" \
-  --dest-delete
-
-# Backup: Delete local .eml files not found on server
-python3 imap_backup.py \
-  --src-host "imap.gmail.com" \
-  --src-user "source@gmail.com" \
-  --src-pass "source-app-password" \
-  --dest-path "./backup" \
-  --dest-delete
-
-# Restore: Delete server emails not found in local backup
-python3 imap_restore.py \
-  --src-path "./backup" \
-  --dest-host "imap.other.com" \
-  --dest-user "dest@domain.com" \
-  --dest-pass "dest-app-password" \
-  --dest-delete
-```
-
-If `DEST_DELETE=true` is configured globally, use `--no-dest-delete` for a non-destructive run without editing
-`.env`:
-
-```bash
-python3 imap_backup.py \
-  --src-host "imap.gmail.com" \
-  --src-user "source@gmail.com" \
-  --src-pass "source-app-password" \
-  --dest-path "./backup" \
-  --no-dest-delete
-```
-
-**Warning:** The `--dest-delete` flag permanently removes emails/files from the destination. Use with caution and always verify your backup is complete before enabling this option.
-
-### 5. Verify Migration
-Compare counts between source and destination.
-```bash
-python3 imap_compare.py \
-  --src-host "imap.gmail.com" \
-  --src-user "source@gmail.com" \
-  --src-pass "source-app-password" \
-  --dest-host "imap.other.com" \
-  --dest-user "dest@domain.com" \
-  --dest-pass "dest-app-password"
-
-# IMAP source -> local backup destination
-python3 imap_compare.py \
-  --src-host "imap.gmail.com" \
-  --src-user "source@gmail.com" \
-  --src-pass "source-app-password" \
-  --dest-path "./my_backup"
-
-# local backup source -> IMAP destination
-python3 imap_compare.py \
-  --src-path "./my_backup" \
-  --dest-host "imap.other.com" \
-  --dest-user "dest@domain.com" \
-  --dest-pass "dest-app-password"
-```
-*Output Example:*
-```
-Folder Name             | Source Count | Dest Count | Status
-------------------------------------------------------------
-INBOX                   | 1250         | 1250       | MATCH
-...
-```
-
-### 6. Local Backup
-Download all your emails to your computer as `.eml` files.
-```bash
-# Backup all folders from an IMAP account to a local folder
-python3 imap_backup.py \
-  --src-host "imap.gmail.com" \
-  --src-user "you@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-path "./backup_folder"
-
-# Or via command line
-python3 imap_backup.py \
-  --src-host "imap.gmail.com" \
-  --src-user "you@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-path "/Users/jdoe/Documents/Emails"
-
-# Backup single folder
-python3 imap_backup.py \
-  --src-host "imap.gmail.com" \
-  --src-user "you@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-path "./my_backup" \
-  "[Gmail]/Sent Mail"
-```
-
-### 6a. Compare IMAP vs Local Backup
-Use `imap_compare.py` to validate an IMAP account against a local backup created by `imap_backup.py`.
-
-```bash
-# Option 1: IMAP source -> local destination
-python3 imap_compare.py \
-  --src-host "imap.gmail.com" \
-  --src-user "you@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-path "./my_backup"
-
-# Option 2: local source -> IMAP destination
-python3 imap_compare.py \
-  --src-path "./my_backup" \
-  --dest-host "imap.other.com" \
-  --dest-user "you@domain.com" \
-  --dest-pass "your-app-password"
-```
-
-You can also set local paths via environment variables:
-
-```bash
-export SRC_LOCAL_PATH="./my_backup"
-export DEST_LOCAL_PATH="./my_backup"
-```
-
-### 6b. Count a Local Backup
-Use `imap_count.py` to get per-folder counts from a local backup created by `imap_backup.py`.
-
-```bash
-# Option 1: explicit path
-python3 imap_count.py --path "./my_backup"
-
-# Option 2: environment variable
-export BACKUP_LOCAL_PATH="./my_backup"
-python3 imap_count.py --target local
-```
-
-If only `BACKUP_LOCAL_PATH` is configured, it remains the automatic local target for compatibility. If local and IMAP
-account settings coexist, `imap_count.py` requires `--target` so it cannot silently choose the backup or an account.
-
-### 7. Gmail Backup with Labels Preservation
-When backing up a Gmail account, use `--gmail-mode` for the recommended workflow. This backs up `[Gmail]/All Mail` (no duplicates) and creates a labels manifest for restoration.
-
-```bash
-# Recommended: Use --gmail-mode for simplest workflow
-python3 imap_backup.py \
-  --src-host "imap.gmail.com" \
-  --src-user "you@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-path "./gmail_backup" \
-  --gmail-mode
-```
-
-This is equivalent to the more verbose:
-```bash
-python3 imap_backup.py \
-  --src-host "imap.gmail.com" \
-  --src-user "you@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-path "./gmail_backup" \
-  --preserve-labels \
-  "[Gmail]/All Mail"
-```
-
-**For large accounts (100K+ emails)**, you can build the manifest first to test:
-```bash
-# Step 1: Build manifest only (fast, no download)
-python3 imap_backup.py \
-  --src-host "imap.gmail.com" \
-  --src-user "you@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-path "./gmail_backup" \
-  --manifest-only
-
-# Step 2: Download emails (can run later, manifest already exists)
-python3 imap_backup.py \
-  --src-host "imap.gmail.com" \
-  --src-user "you@gmail.com" \
-  --src-pass "your-app-password" \
-  --dest-path "./gmail_backup" \
-  "[Gmail]/All Mail"
-```
-
-**How it works:**
-1. The script scans ALL folders in your Gmail account to identify which emails have which labels
-2. Creates a `labels_manifest.json` file mapping each email's `Message-ID` to its labels and IMAP flags
-3. Downloads all emails from `[Gmail]/All Mail` (contains every email once, no duplicates)
-
-**Example `labels_manifest.json`:**
-```json
-{
-  "<CAExample123@mail.gmail.com>": {
-    "labels": ["INBOX", "Work", "Projects/2024"],
-    "flags": ["\\Seen"]
-  },
-  "<CAExample456@mail.gmail.com>": {
-    "labels": ["Sent Mail", "Personal"],
-    "flags": ["\\Seen", "\\Flagged"]
-  }
-}
-```
-
-**Preserved IMAP Flags:**
-- `\Seen` - Email has been read
-- `\Flagged` - Email is starred/flagged
-- `\Answered` - Email has been replied to
-- `\Draft` - Email is a draft
-
-**Benefits:**
-- ✅ No duplicate emails on disk (each email saved once)
-- ✅ Labels are preserved for restoration
-- ✅ Read/unread and starred status is preserved
-- ✅ Includes system labels (INBOX, Sent Mail, Starred) and user labels
-- ✅ Progress reporting for large accounts
-
-**Note:** Gmail labels like "Important" that are auto-managed by Gmail are excluded from the manifest as they cannot be reliably restored.
-
-### 8. Backup with Flags Only (Non-Gmail)
-For non-Gmail servers, you can preserve read/starred status with `--preserve-flags`:
-
-```bash
-python3 imap_backup.py \
-  --src-host "imap.example.com" \
-  --src-user "you@example.com" \
-  --src-pass "your-password" \
-  --dest-path "./my_backup" \
-  --preserve-flags \
-  "INBOX"
-```
-
-This creates a `flags_manifest.json` with the status of each email.
-
-### 9. Restore Backup to IMAP Server
-Restore emails from a local backup to any IMAP server.
-
-By default, restore runs in **incremental mode**: it uploads only emails that are not already present on the destination (based on `Message-ID`).
-Use `--full-restore` to force the legacy behavior (process all emails and re-sync labels/flags for already-present messages).
-
-```bash
-# Restore all folders from backup
-python3 imap_restore.py \
-  --src-path "./my_backup" \
-  --dest-host "imap.gmail.com" \
-  --dest-user "you@gmail.com" \
-  --dest-pass "your-app-password"
-
-# Force full restore (legacy behavior)
-python3 imap_restore.py \
-  --src-path "./my_backup" \
-  --dest-host "imap.gmail.com" \
-  --dest-user "you@gmail.com" \
-  --dest-pass "your-app-password" \
-  --full-restore
-
-# Force incremental mode when FULL_RESTORE=true is inherited from .env
-python3 imap_restore.py \
-  --src-path "./my_backup" \
-  --dest-host "imap.gmail.com" \
-  --dest-user "you@gmail.com" \
-  --dest-pass "your-app-password" \
-  --no-full-restore
-
-# Restore with flags (read/starred status)
-python3 imap_restore.py \
-  --src-path "./my_backup" \
-  --dest-host "imap.example.com" \
-  --dest-user "you@example.com" \
-  --dest-pass "your-password" \
-  --apply-flags
-
-# Restore a specific folder
-python3 imap_restore.py \
-  --src-path "./my_backup" \
-  --dest-host "imap.gmail.com" \
-  --dest-user "you@gmail.com" \
-  --dest-pass "your-app-password" \
-  "INBOX"
-```
-
-### 10. Gmail Restore with Labels
-Restore a Gmail backup with full label structure using `--gmail-mode`:
-
-```bash
-python3 imap_restore.py \
-  --src-path "./gmail_backup" \
-  --dest-host "imap.gmail.com" \
-  --dest-user "newaccount@gmail.com" \
-  --dest-pass "your-app-password" \
-  --gmail-mode
-```
-
-**How Gmail restore works:**
-1. Reads emails from the backup (typically `[Gmail]/All Mail`)
-2. Uploads each email to the first usable label folder (preserving original flags)
-  - If an email has no usable labels, it is uploaded to `Restored/Unlabeled`
-3. Looks up the Message-ID in `labels_manifest.json`
-4. Copies the email to each label folder (e.g., "Work", "Personal", "Projects/2024")
-
-**Alternatively**, restore folders individually with labels and flags applied:
-```bash
-python3 imap_restore.py \
-  --src-path "./gmail_backup" \
-  --dest-host "imap.gmail.com" \
-  --dest-user "newaccount@gmail.com" \
-  --dest-pass "your-app-password" \
-  --apply-labels \
-  --apply-flags
-```
-
-## OAuth2 Authentication
-
-All scripts support OAuth2 as an alternative to password-based authentication. The OAuth2 provider is **auto-detected** from the IMAP host:
-
-| IMAP Host contains | Detected Provider |
-|---|---|
-| `outlook`, `office365`, `microsoft` | Microsoft |
-| `gmail`, `google` | Google |
-
-To use OAuth2, pass `--oauth2-client-id` (or `--src-oauth2-client-id`/`--dest-oauth2-client-id` for dual-account scripts) instead of the password argument.
-
-Environment variable equivalents:
-- Dual-account scripts: `SRC_OAUTH2_CLIENT_ID`, `SRC_OAUTH2_CLIENT_SECRET` and `DEST_OAUTH2_CLIENT_ID`, `DEST_OAUTH2_CLIENT_SECRET`.
-- Single-account scripts (like `imap_count.py`): `OAUTH2_CLIENT_ID`, `OAUTH2_CLIENT_SECRET` (also accepts `SRC_OAUTH2_CLIENT_ID`, `SRC_OAUTH2_CLIENT_SECRET`).
-
-Microsoft and Google authentication share an encrypted persistent token cache
-implemented with MSAL Extensions. Cache entries are isolated by provider,
-client, and account, and concurrent access is protected by locking. Set
-`OAUTH2_CACHE_DIR` to override its location, or
-`OAUTH2_CACHE_ENABLED=false` to disable persistent token caching. Tokens are
-never persisted in plaintext. If platform encryption is unavailable,
-authentication continues with an in-memory cache for the current process only.
-
-### Microsoft (Outlook / Office 365)
-
-Requires `msal` and `msal-extensions` (`pip install msal msal-extensions`). Uses the **device code flow** — no browser redirect needed. The tenant ID is auto-discovered from the user's email domain.
-
-#### Creating an App Registration in Microsoft Entra
-
-1. Go to [Microsoft Entra admin center](https://entra.microsoft.com/) → **Identity** → **Applications** → **App registrations**
-2. Click **New registration**
-   - **Name**: e.g., "IMAP Migration Tool"
-   - **Supported account types**: Select based on your needs (single tenant or multi-tenant)
-   - **Redirect URI**: Leave blank (not needed for device code flow)
-3. Click **Register**
-4. Copy the **Application (client) ID** — this is your `--oauth2-client-id`
-
-#### Adding API Permissions
-
-1. In your app registration, go to **API permissions**
-2. Click **Add a permission** → **APIs my organization uses**
-3. Search for and select **Office 365 Exchange Online**
-4. Select **Delegated permissions**
-5. Check **IMAP.AccessAsUser.All**
-6. Click **Add permissions**
-7. (Optional) Click **Grant admin consent** if you have admin rights and want to pre-approve for all users
-
-#### Enabling Public Client Flow
-
-1. Go to **Authentication**
-2. Under **Advanced settings**, set **Allow public client flows** to **Yes**
-3. Click **Save**
-
-#### Usage
-
-```bash
-# Install dependencies
-pip install msal msal-extensions
-
-# Enable the encrypted persistent token cache and optionally choose its location
-export OAUTH2_CACHE_ENABLED="true"
-export OAUTH2_CACHE_DIR="/path/to/private/oauth2-cache"
-
-# Migration with Microsoft OAuth2 on source
-python3 imap_migrate.py \
-  --src-host "outlook.office365.com" \
-  --src-user "user@contoso.com" \
-  --src-oauth2-client-id "your-azure-app-client-id" \
-  --dest-host "imap.other.com" \
-  --dest-user "user@other.com" \
-  --dest-pass "password"
-```
-
-The script will print a device code and URL. Open the URL in a browser, enter the code, and sign in to authorize access.
-
-#### Personal and work Microsoft accounts
-
-Microsoft account type is detected automatically for common Hotmail, Outlook,
-Live, and MSN domains. If the email address does not identify the account type
-correctly, select it explicitly without needing to know Microsoft's tenant
-names:
-
-```bash
-# Single-account command
-python3 imap_count.py \
-  --host "outlook.office365.com" \
-  --user "user@example.com" \
-  --oauth2-client-id "your-application-client-id" \
-  --account-type personal
-
-# Dual-account command
-python3 imap_migrate.py \
-  --src-host "outlook.office365.com" \
-  --src-user "user@example.com" \
-  --src-oauth2-client-id "your-application-client-id" \
-  --src-account-type personal \
-  --dest-host "imap.other.com" \
-  --dest-user "user@other.com" \
-  --dest-pass "password"
-```
-
-Accepted values are `auto` (default), `personal`, and `work`. Environment
-equivalents are `ACCOUNT_TYPE` for `imap_count.py`, and
-`SRC_ACCOUNT_TYPE` / `DEST_ACCOUNT_TYPE` for dual-account
-commands. `personal` supports Microsoft accounts registered with any email
-domain; `work` forces the existing organizational tenant discovery even for a
-normally personal domain such as `hotmail.com`.
-
-### Google (Gmail)
-
-Requires the `google-auth-oauthlib` package (`pip install google-auth-oauthlib`). Uses the **installed app flow** — opens a browser window for consent. Both `--oauth2-client-id` and `--oauth2-client-secret` are required.
-
-```bash
-# Install dependency
-pip install google-auth-oauthlib
-
-# Backup with Google OAuth2
-python3 imap_backup.py \
-  --src-host "imap.gmail.com" \
-  --src-user "you@gmail.com" \
-  --src-oauth2-client-id "your-google-client-id" \
-  --src-oauth2-client-secret "your-google-client-secret" \
-  --dest-path "./gmail_backup"
-```
-
-The script will open your default browser for Google sign-in. After authorizing, the token is returned automatically via a local HTTP redirect.
-
-## Troubleshooting
-
-- **"Too many simultaneous connections"**:
-  IMAP servers (especially Gmail) limit the number of active connections per IP or user (typically ~15). Since `imap_migrate.py` uses multiple threads, you may hit this limit.
-  **Solution**: Reduce `MAX_WORKERS` to `4` or `2` using the environment variable.
-
-- **Authentication Errors**:
-  If you are using Gmail or Google Workspace, you generally **cannot** use your regular login password. You must enable 2-Step Verification and generate an **App Password**. Use that App Password in the `_PASSWORD` variable.
-
-- **Timeouts / Socket Errors**:
-  Migrating 100k+ emails is network intensive. If the script crashes, simply run it again. The built-in de-duplication will skip already migrated messages and resume where it left off.
-
-### Gmail "All Mail" & Deletion
-If you are migrating **from** a Gmail account and using the `--src-delete` option:
-- The script attempts to detect your Trash folder (e.g., `[Gmail]/Trash` or `[Gmail]/Bin`).
-- Instead of simply marking emails as deleted (which Gmail often treats as "Archive"), the script **copies the email to the Trash folder** and then marks the original as deleted.
-- This ensures that the storage count in `[Gmail]/All Mail` actually decreases, as the emails are moved to the Trash (which is auto-emptied by Google after 30 days) rather than remaining in your "All Mail" archive.
-
-## Development & Testing
-
-### Setting Up the Development Environment
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/JCallico/imap-migration-tools.git
-   cd imap-migration-tools
-   ```
-
-2. **Create a virtual environment:**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-
-3. **Install development dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   # Or using Make:
-   make install-dev
-   ```
-
-### Running Tests
-
-The project uses `pytest` for testing with a custom mock IMAP server for integration tests.
-
-```bash
-# Run all tests
-make test
-
-# Run tests with verbose output
-PYTHONPATH=src pytest test/ -v
-
-# Run tests with coverage report
-make coverage
-
-# Run a specific test file
-PYTHONPATH=src pytest test/test_imap_migrate.py -v
-
-# Run a specific test
-PYTHONPATH=src pytest test/test_imap_common.py::TestNormalizeFolderName -v
-```
-
-### Code Quality
-
-```bash
-# Run linter
-make lint
-
-# Auto-format code
-make format
-
-# Check formatting without modifying
-make format-check
-
-# Run security scan
-make security
-
-# Run type checker
-make typecheck
-
-# Run all CI checks locally
 make ci
 ```
 
-### Test Structure
-
-| Test File | Description |
-|-----------|-------------|
-| `test_imap_migrate.py` | Email migration tests (basic, duplicates, deletion, folders) |
-| `test_imap_backup.py` | Backup functionality tests |
-| `test_imap_restore.py` | Restore functionality tests |
-| `test_imap_count.py` | Email counting tests |
-| `test_imap_compare.py` | Folder comparison tests |
-| `test_imap_common.py` | Shared utility function tests |
-
-### Continuous Integration
-
-The project uses GitHub Actions for CI. On every push and pull request:
-- **Lint**: Code style and formatting checks (Ruff)
-- **Test**: Runs on Python 3.9, 3.10, 3.11, 3.12, and 3.13
-- **Security**: Bandit security scanner
-- **Type Check**: mypy static type analysis
+See [Development](docs/development.md) and [AGENTS.md](AGENTS.md) for the complete contributor workflow and repository
+conventions.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Licensed under the [MIT License](LICENSE).

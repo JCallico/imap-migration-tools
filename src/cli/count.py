@@ -79,6 +79,7 @@ def parse_arguments(argv: Optional[list[str]] = None, *, dotenv_keys=frozenset()
             destination_defaults.client_id,
         )
     )
+    selected_target: Optional[str]
     if not explicit_target and not explicit_path and not explicit_imap:
         configured_targets = [
             name
