@@ -49,7 +49,6 @@ Gmail Labels:
   file that maps each email's Message-ID to its Gmail labels for later restoration.
 """
 
-import argparse
 import concurrent.futures
 import json
 import os
@@ -57,6 +56,7 @@ import sys
 import threading
 
 from auth import imap_oauth2
+from cli.backup import parse_arguments
 from core import imap_session
 from providers import provider_exchange, provider_gmail
 from utils import imap_common
@@ -681,109 +681,9 @@ def backup_folder(src_main, folder_name, local_base_path, src_conf, dest_delete=
 
 def main():
     # Loading environment variables from .env file
-    load_dotenv()
+    dotenv_result = load_dotenv()
 
-    parser = argparse.ArgumentParser(description="Backup IMAP emails to local .eml files.")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
-
-    # Source
-    default_src_host = os.getenv("SRC_IMAP_HOST")
-    default_src_user = os.getenv("SRC_IMAP_USERNAME")
-    default_src_pass = os.getenv("SRC_IMAP_PASSWORD")
-    default_src_client_id = os.getenv("SRC_OAUTH2_CLIENT_ID")
-
-    parser.add_argument(
-        "--src-host",
-        default=default_src_host,
-        required=not bool(default_src_host),
-        help="Source IMAP Server (or SRC_IMAP_HOST)",
-    )
-    parser.add_argument(
-        "--src-user",
-        default=default_src_user,
-        required=not bool(default_src_user),
-        help="Source Username (or SRC_IMAP_USERNAME)",
-    )
-
-    # Authentication: require either password OR OAuth2 client-id (unless provided via env vars)
-    auth_required = not bool(default_src_pass or default_src_client_id)
-    auth_group = parser.add_mutually_exclusive_group(required=auth_required)
-    auth_group.add_argument("--src-pass", default=default_src_pass, help="Source Password (or SRC_IMAP_PASSWORD)")
-    # OAuth2
-    auth_group.add_argument(
-        "--src-oauth2-client-id",
-        default=default_src_client_id,
-        dest="src_client_id",
-        help="OAuth2 Client ID (or SRC_OAUTH2_CLIENT_ID)",
-    )
-    parser.add_argument(
-        "--src-oauth2-client-secret",
-        default=os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
-        dest="src_client_secret",
-        help="OAuth2 Client Secret (if required) (or SRC_OAUTH2_CLIENT_SECRET)",
-    )
-    parser.add_argument(
-        "--src-account-type",
-        choices=("auto", "personal", "work"),
-        default=os.getenv("SRC_ACCOUNT_TYPE", "auto"),
-        help="Source OAuth provider account type (auto, personal, or work; or SRC_ACCOUNT_TYPE)",
-    )
-
-    # Destination (Local Path)
-    env_path = os.getenv("BACKUP_LOCAL_PATH")
-    parser.add_argument(
-        "--dest-path",
-        default=env_path,
-        required=not bool(env_path),
-        help="Local destination path (or BACKUP_LOCAL_PATH)",
-    )
-
-    # Config
-    parser.add_argument("--workers", type=int, default=int(os.getenv("MAX_WORKERS", 10)), help="Thread count")
-    parser.add_argument("--batch", type=int, default=int(os.getenv("BATCH_SIZE", 10)), help="Emails per batch")
-
-    # Gmail Labels
-    env_preserve_labels = os.getenv("PRESERVE_LABELS", "false").lower() == "true"
-    parser.add_argument(
-        "--preserve-labels",
-        action="store_true",
-        default=env_preserve_labels,
-        help="Gmail only: Create a labels_manifest.json mapping Message-IDs to labels for restoration",
-    )
-    env_preserve_flags = os.getenv("PRESERVE_FLAGS", "false").lower() == "true"
-    parser.add_argument(
-        "--preserve-flags",
-        action="store_true",
-        default=env_preserve_flags,
-        help="Preserve IMAP flags (read/unread, starred, answered, draft) in manifest for restoration",
-    )
-    env_manifest_only = os.getenv("MANIFEST_ONLY", "false").lower() == "true"
-    parser.add_argument(
-        "--manifest-only",
-        action="store_true",
-        default=env_manifest_only,
-        help="Gmail only: Build the labels manifest and exit without downloading emails",
-    )
-    env_gmail_mode = os.getenv("GMAIL_MODE", "false").lower() == "true"
-    parser.add_argument(
-        "--gmail-mode",
-        action="store_true",
-        default=env_gmail_mode,
-        help="Gmail backup mode: Build labels manifest and backup [Gmail]/All Mail only (recommended)",
-    )
-
-    # Sync mode: delete local files not on server
-    env_dest_delete = os.getenv("DEST_DELETE", "false").lower() == "true"
-    parser.add_argument(
-        "--dest-delete",
-        action="store_true",
-        default=env_dest_delete,
-        help="Delete local .eml files that no longer exist on the IMAP server (sync mode)",
-    )
-
-    parser.add_argument("folder", nargs="?", help="Specific folder to backup")
-
-    args = parser.parse_args()
+    args = parse_arguments(dotenv_keys=dotenv_result.dotenv_keys)
 
     global MAX_WORKERS, BATCH_SIZE
     MAX_WORKERS = args.workers

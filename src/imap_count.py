@@ -15,6 +15,10 @@ Configuration (Environment Variables):
     SRC_OAUTH2_CLIENT_ID    : Alternate OAuth2 client ID env var
     SRC_OAUTH2_CLIENT_SECRET: Alternate OAuth2 client secret env var
 
+    Source and destination targets:
+    SRC_IMAP_* / SRC_OAUTH2_*   : Source account selected by --target source
+    DEST_IMAP_* / DEST_OAUTH2_* : Destination account selected by --target destination
+
 Local backup counting:
     BACKUP_LOCAL_PATH : Local backup root (preferred)
     SRC_LOCAL_PATH    : Alternate local backup root
@@ -36,18 +40,21 @@ Examples:
     # Count a local backup
     python3 imap_count.py --path "./my_backup"
 
-    # Or set a default local backup path via env var
+    # Or select the configured backup path
     export BACKUP_LOCAL_PATH="./my_backup"
-    python3 imap_count.py
+    python3 imap_count.py --target local
+
+    # Select an account when local/source/destination settings coexist
+    python3 imap_count.py --target source
+    python3 imap_count.py --target destination
 """
 
-import argparse
 import imaplib
-import os
 import sys
 from typing import Optional
 
 from auth import imap_oauth2
+from cli.count import parse_arguments
 from utils import imap_common
 from utils.dotenv import load_dotenv
 
@@ -137,117 +144,35 @@ def count_local_emails(local_path: str) -> None:
 
 def main(argv: Optional[list[str]] = None) -> None:
     # Loading environment variables from .env file
-    load_dotenv()
+    dotenv_result = load_dotenv()
 
-    # Phase 1: determine whether we're in local mode (--path)
-    default_path = os.getenv("BACKUP_LOCAL_PATH") or os.getenv("SRC_LOCAL_PATH")
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--path", default=default_path)
-    pre_args, _ = pre_parser.parse_known_args(argv)
-    require_imap = not bool(pre_args.path)
-
-    # Phase 2: full parser with conditional requirements
-    parser = argparse.ArgumentParser(description="Count emails in IMAP account.")
-    parser.add_argument("--version", action="version", version=f"%(prog)s {imap_common.get_version()}")
-
-    parser.add_argument(
-        "--path",
-        default=default_path,
-        help="Local backup root to count (counts .eml files per folder). If set, IMAP args are ignored.",
-    )
-
-    # Try to unify var names for defaults. Priority: IMAP_* > SRC_IMAP_* > None
-    default_host = os.getenv("IMAP_HOST") or os.getenv("SRC_IMAP_HOST")
-    default_user = os.getenv("IMAP_USERNAME") or os.getenv("SRC_IMAP_USERNAME")
-    default_pass = os.getenv("IMAP_PASSWORD") or os.getenv("SRC_IMAP_PASSWORD")
-    default_client_id = os.getenv("OAUTH2_CLIENT_ID") or os.getenv("SRC_OAUTH2_CLIENT_ID")
-
-    parser.add_argument(
-        "--host",
-        default=default_host,
-        required=require_imap and not bool(default_host),
-        help="IMAP Server (or IMAP_HOST / SRC_IMAP_HOST)",
-    )
-    parser.add_argument(
-        "--user",
-        default=default_user,
-        required=require_imap and not bool(default_user),
-        help="Username (or IMAP_USERNAME / SRC_IMAP_USERNAME)",
-    )
-
-    auth_required = require_imap and not bool(default_pass or default_client_id)
-    auth_group = parser.add_mutually_exclusive_group(required=auth_required)
-    auth_group.add_argument(
-        "--pass", dest="password", default=default_pass, help="Password (or IMAP_PASSWORD / SRC_IMAP_PASSWORD)"
-    )
-    auth_group.add_argument(
-        "--oauth2-client-id",
-        default=default_client_id,
-        dest="client_id",
-        help="OAuth2 Client ID (or OAUTH2_CLIENT_ID / SRC_OAUTH2_CLIENT_ID)",
-    )
-    auth_group.add_argument(
-        "--client-id",
-        default=default_client_id,
-        dest="client_id",
-        help=argparse.SUPPRESS,
-    )
-
-    parser.add_argument(
-        "--oauth2-client-secret",
-        default=os.getenv("OAUTH2_CLIENT_SECRET") or os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
-        dest="client_secret",
-        help="OAuth2 Client Secret (if required) (or OAUTH2_CLIENT_SECRET / SRC_OAUTH2_CLIENT_SECRET)",
-    )
-    parser.add_argument(
-        "--account-type",
-        choices=("auto", "personal", "work"),
-        default=os.getenv("ACCOUNT_TYPE", "auto"),
-        help="OAuth provider account type (auto, personal, or work; or ACCOUNT_TYPE)",
-    )
-    parser.add_argument(
-        "--client-secret",
-        default=os.getenv("OAUTH2_CLIENT_SECRET") or os.getenv("SRC_OAUTH2_CLIENT_SECRET"),
-        dest="client_secret",
-        help=argparse.SUPPRESS,
-    )
-
-    args = parser.parse_args(argv)
-
-    if args.path:
-        if not os.path.isdir(args.path):
-            print(f"Error: Local path does not exist or is not a directory: {args.path}")
-            sys.exit(1)
-
+    args, local_mode = parse_arguments(argv, dotenv_keys=dotenv_result.dotenv_keys)
+    if local_mode:
         print("\n--- Configuration Summary ---")
         print(f"Local Path      : {args.path}")
         print("-----------------------------\n")
         count_local_emails(args.path)
         raise SystemExit(0)
 
-    IMAP_SERVER = args.host
-    USERNAME = args.user
-    PASSWORD = args.password
-
     # Acquire OAuth2 token if configured
     oauth2_token = None
     oauth2_provider = None
     if args.client_id:
         oauth2_token, oauth2_provider = imap_oauth2.acquire_token(
-            IMAP_SERVER,
+            args.host,
             args.client_id,
-            USERNAME,
+            args.user,
             args.client_secret,
             account_type=args.account_type,
         )
 
     print("\n--- Configuration Summary ---")
-    print(f"Host            : {IMAP_SERVER}")
-    print(f"User            : {USERNAME}")
+    print(f"Host            : {args.host}")
+    print(f"User            : {args.user}")
     print(f"Auth Method     : {imap_oauth2.auth_description(oauth2_provider)}")
     print("-----------------------------\n")
 
-    count_emails(IMAP_SERVER, USERNAME, PASSWORD, oauth2_token)
+    count_emails(args.host, args.user, args.password, oauth2_token)
 
 
 if __name__ == "__main__":

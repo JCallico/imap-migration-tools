@@ -19,6 +19,14 @@ from mock_imap_server import start_server_thread
 from mock_oauth_server import start_server_thread as start_oauth_server_thread
 
 
+@pytest.fixture(autouse=True)
+def isolate_test_dotenv(tmp_path_factory, monkeypatch):
+    """Prevent tests from discovering a developer's real ``.env`` file."""
+    isolated_cwd = tmp_path_factory.mktemp("isolated-cwd")
+    (isolated_cwd / ".env").touch()
+    monkeypatch.chdir(isolated_cwd)
+
+
 def get_free_port():
     """Get a free port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

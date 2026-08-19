@@ -29,6 +29,14 @@ def _mock_imap_env(port):
     }
 
 
+def _account_env(prefix, port):
+    return {
+        f"{prefix}_IMAP_HOST": f"imap://localhost:{port}",
+        f"{prefix}_IMAP_USERNAME": "user",
+        f"{prefix}_IMAP_PASSWORD": "pass",
+    }
+
+
 @pytest.fixture
 def dotenv_file(tmp_path):
     """Create a .env file and run the test from its directory."""
@@ -321,6 +329,292 @@ class TestMainFunction:
             count_imap_emails.main()
 
         assert "INBOX" in capsys.readouterr().out
+
+    def test_os_account_overrides_dotenv_endpoint(self, single_mock_server, capsys, dotenv_file):
+        """A complete count-specific OS account wins over a conflicting .env account."""
+        _, port = single_mock_server({"INBOX": [b"Subject: OS\r\n\r\nBody"]})
+        dotenv_file(
+            {
+                "IMAP_HOST": "imap://localhost:1",
+                "IMAP_USERNAME": "dotenv-user",
+                "IMAP_PASSWORD": "dotenv-password",
+            }
+        )
+
+        with temp_env(_mock_imap_env(port)):
+            count_imap_emails.main([])
+
+        assert f"Host            : imap://localhost:{port}" in capsys.readouterr().out
+
+    def test_explicit_password_overrides_dotenv_oauth(self, single_mock_server, capsys, dotenv_file):
+        """An explicit password prevents an inherited OAuth client ID from selecting OAuth."""
+        _, port = single_mock_server({"INBOX": [b"Subject: Password\r\n\r\nBody"]})
+        dotenv_file({**_mock_imap_env(port), "OAUTH2_CLIENT_ID": "inherited-oauth-client"})
+
+        with temp_env({}):
+            count_imap_emails.main(["--pass", "pass"])
+
+        assert "INBOX" in capsys.readouterr().out
+
+    def test_cli_oauth_overrides_dotenv_password(self, single_mock_server, capsys, dotenv_file, monkeypatch):
+        """An explicit OAuth client selects OAuth over a lower-precedence .env password."""
+        _, port = single_mock_server({"INBOX": [b"Subject: OAuth\r\n\r\nBody"]})
+        dotenv_file(_mock_imap_env(port))
+        monkeypatch.setattr(
+            count_imap_emails.imap_oauth2, "acquire_token", lambda *_args, **_kwargs: ("token", "microsoft")
+        )
+
+        with temp_env({}):
+            count_imap_emails.main(["--oauth2-client-id", "cli-client"])
+
+        assert "INBOX" in capsys.readouterr().out
+
+    def test_os_password_overrides_dotenv_oauth(self, single_mock_server, capsys, dotenv_file, monkeypatch):
+        """An OS password selects password authentication over .env OAuth."""
+        _, port = single_mock_server({"INBOX": [b"Subject: OS\r\n\r\nBody"]})
+        dotenv_file(
+            {
+                "IMAP_HOST": f"imap://localhost:{port}",
+                "IMAP_USERNAME": "user",
+                "OAUTH2_CLIENT_ID": "dotenv-client",
+            }
+        )
+        monkeypatch.setattr(
+            count_imap_emails.imap_oauth2,
+            "acquire_token",
+            lambda *_args, **_kwargs: pytest.fail("OAuth must not be selected"),
+        )
+
+        with temp_env({"IMAP_PASSWORD": "pass"}):
+            count_imap_emails.main([])
+
+        assert "INBOX" in capsys.readouterr().out
+
+    def test_os_oauth_overrides_dotenv_password(self, single_mock_server, capsys, dotenv_file, monkeypatch):
+        """An OS OAuth client selects OAuth over a lower-precedence .env password."""
+        _, port = single_mock_server({"INBOX": [b"Subject: OS OAuth\r\n\r\nBody"]})
+        dotenv_file(
+            {
+                "IMAP_HOST": f"imap://localhost:{port}",
+                "IMAP_USERNAME": "user",
+                "IMAP_PASSWORD": "dotenv-password",
+            }
+        )
+        monkeypatch.setattr(
+            count_imap_emails.imap_oauth2,
+            "acquire_token",
+            lambda *_args, **_kwargs: ("token", "microsoft"),
+        )
+
+        with temp_env({"OAUTH2_CLIENT_ID": "os-client"}):
+            count_imap_emails.main([])
+
+        output = capsys.readouterr().out
+        assert "Auth Method     : OAuth2/microsoft (XOAUTH2)" in output
+        assert "INBOX" in output
+
+    def test_explicit_imap_arguments_override_dotenv_local_path(
+        self, single_mock_server, tmp_path, capsys, dotenv_file
+    ):
+        """Explicit IMAP configuration selects IMAP mode over a .env local path."""
+        _, port = single_mock_server({"INBOX": [b"Subject: IMAP wins\r\n\r\nBody"]})
+        local_path = tmp_path / "local-backup"
+        local_path.mkdir()
+        dotenv_file({"BACKUP_LOCAL_PATH": str(local_path)})
+
+        with temp_env({}):
+            count_imap_emails.main(
+                [
+                    f"--ho=imap://localhost:{port}",
+                    "--user",
+                    "user",
+                    "--pass",
+                    "pass",
+                ]
+            )
+
+        captured = capsys.readouterr().out
+        assert f"Host            : imap://localhost:{port}" in captured
+        assert "INBOX" in captured
+        assert "Local Path" not in captured
+
+    def test_explicit_path_and_imap_arguments_are_rejected(self, tmp_path, capsys):
+        """Conflicting explicit mode selectors produce an actionable parser error."""
+        with temp_env({}):
+            with pytest.raises(SystemExit) as exc_info:
+                count_imap_emails.main(
+                    [
+                        "--path",
+                        str(tmp_path),
+                        "--host",
+                        "imap.example.com",
+                        "--user",
+                        "user",
+                        "--pass",
+                        "pass",
+                    ]
+                )
+
+        assert exc_info.value.code == 2
+        assert "cannot be combined" in capsys.readouterr().err
+
+
+class TestTargetSelection:
+    """Tests for deterministic selection between configured count targets."""
+
+    def test_local_path_and_source_account_require_target(self, tmp_path, capsys):
+        env = {"BACKUP_LOCAL_PATH": str(tmp_path), **_account_env("SRC", 10143)}
+
+        with temp_env(env), pytest.raises(SystemExit) as exc_info:
+            count_imap_emails.parse_arguments([])
+
+        assert exc_info.value.code == 2
+        assert "multiple count targets are configured (local, source)" in capsys.readouterr().err
+
+    def test_local_path_and_destination_account_require_target(self, tmp_path, capsys):
+        env = {"BACKUP_LOCAL_PATH": str(tmp_path), **_account_env("DEST", 10143)}
+
+        with temp_env(env), pytest.raises(SystemExit) as exc_info:
+            count_imap_emails.parse_arguments([])
+
+        assert exc_info.value.code == 2
+        assert "multiple count targets are configured (local, destination)" in capsys.readouterr().err
+
+    def test_source_and_destination_accounts_require_target(self, capsys):
+        env = {**_account_env("SRC", 10143), **_account_env("DEST", 10144)}
+
+        with temp_env(env), pytest.raises(SystemExit) as exc_info:
+            count_imap_emails.parse_arguments([])
+
+        assert exc_info.value.code == 2
+        assert "multiple count targets are configured (source, destination)" in capsys.readouterr().err
+
+    def test_dotenv_with_local_and_source_targets_requires_selection(self, tmp_path, dotenv_file, capsys):
+        dotenv_file({"BACKUP_LOCAL_PATH": str(tmp_path), **_account_env("SRC", 10143)})
+
+        with temp_env({}), pytest.raises(SystemExit) as exc_info:
+            count_imap_emails.main([])
+
+        assert exc_info.value.code == 2
+        assert "select one with --target local" in capsys.readouterr().err
+
+    def test_target_local_counts_configured_backup(self, tmp_path, capsys):
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+        (inbox / "message.eml").write_text("Subject: Local\n\nBody", encoding="utf-8")
+        env = {"BACKUP_LOCAL_PATH": str(tmp_path), **_account_env("SRC", 10143)}
+
+        with temp_env(env), pytest.raises(SystemExit) as exc_info:
+            count_imap_emails.main(["--target", "local"])
+
+        assert exc_info.value.code == 0
+        output = capsys.readouterr().out
+        assert f"Local Path      : {tmp_path}" in output
+        assert "INBOX" in output
+
+    def test_target_source_counts_source_account(self, single_mock_server, tmp_path, capsys):
+        _, port = single_mock_server({"INBOX": [b"Subject: Source\r\n\r\nBody"]})
+        env = {"BACKUP_LOCAL_PATH": str(tmp_path), **_account_env("SRC", port)}
+
+        with temp_env(env):
+            count_imap_emails.main(["--target", "source"])
+
+        output = capsys.readouterr().out
+        assert f"Host            : imap://localhost:{port}" in output
+        assert "INBOX" in output
+
+    def test_target_destination_counts_destination_account(self, single_mock_server, tmp_path, capsys):
+        _, port = single_mock_server({"INBOX": [b"Subject: Destination\r\n\r\nBody"]})
+        env = {"BACKUP_LOCAL_PATH": str(tmp_path), **_account_env("DEST", port)}
+
+        with temp_env(env):
+            count_imap_emails.main(["--target", "destination"])
+
+        output = capsys.readouterr().out
+        assert f"Host            : imap://localhost:{port}" in output
+        assert "INBOX" in output
+
+    def test_explicit_path_resolves_configured_target_ambiguity(self, tmp_path):
+        env = {"BACKUP_LOCAL_PATH": "/unused", **_account_env("SRC", 10143), **_account_env("DEST", 10144)}
+
+        with temp_env(env):
+            args, local_mode = count_imap_emails.parse_arguments(["--path", str(tmp_path)])
+
+        assert local_mode is True
+        assert args.path == str(tmp_path)
+
+    def test_explicit_imap_account_resolves_configured_target_ambiguity(self, tmp_path):
+        env = {"BACKUP_LOCAL_PATH": str(tmp_path), **_account_env("SRC", 10143), **_account_env("DEST", 10144)}
+
+        with temp_env(env):
+            args, local_mode = count_imap_emails.parse_arguments(
+                ["--host", "imap.example.com", "--user", "explicit", "--pass", "explicit-password"]
+            )
+
+        assert local_mode is False
+        assert args.host == "imap.example.com"
+        assert args.user == "explicit"
+
+    def test_source_target_accepts_partial_account_overrides(self):
+        with temp_env(_account_env("SRC", 10143)):
+            args, local_mode = count_imap_emails.parse_arguments(
+                ["--target", "source", "--user", "another-user", "--pass", "another-password"]
+            )
+
+        assert local_mode is False
+        assert args.host == "imap://localhost:10143"
+        assert args.user == "another-user"
+        assert args.password == "another-password"
+
+    def test_target_cannot_be_combined_with_explicit_path(self, tmp_path, capsys):
+        with temp_env({}), pytest.raises(SystemExit) as exc_info:
+            count_imap_emails.parse_arguments(["--target", "local", "--path", str(tmp_path)])
+
+        assert exc_info.value.code == 2
+        assert "--path cannot be combined with --target" in capsys.readouterr().err
+
+    def test_local_target_cannot_be_combined_with_imap_arguments(self, tmp_path, capsys):
+        with temp_env({"BACKUP_LOCAL_PATH": str(tmp_path)}), pytest.raises(SystemExit) as exc_info:
+            count_imap_emails.parse_arguments(["--target", "local", "--pass", "password"])
+
+        assert exc_info.value.code == 2
+        assert "--target local cannot be combined" in capsys.readouterr().err
+
+    def test_path_only_legacy_configuration_selects_local(self, tmp_path):
+        with temp_env({"BACKUP_LOCAL_PATH": str(tmp_path)}):
+            args, local_mode = count_imap_emails.parse_arguments([])
+
+        assert local_mode is True
+        assert args.path == str(tmp_path)
+
+    def test_source_only_legacy_configuration_selects_source(self):
+        with temp_env(_account_env("SRC", 10143)):
+            args, local_mode = count_imap_emails.parse_arguments([])
+
+        assert local_mode is False
+        assert args.host == "imap://localhost:10143"
+        assert args.password == "pass"
+
+    def test_count_specific_imap_aliases_remain_supported(self):
+        with temp_env(_mock_imap_env(10143)):
+            args, local_mode = count_imap_emails.parse_arguments([])
+
+        assert local_mode is False
+        assert args.host == "imap://localhost:10143"
+        assert args.user == "user"
+
+    def test_source_target_preserves_count_specific_alias_precedence(self, tmp_path):
+        env = {
+            "BACKUP_LOCAL_PATH": str(tmp_path),
+            **_account_env("SRC", 10143),
+            **_mock_imap_env(10144),
+        }
+
+        with temp_env(env):
+            args, local_mode = count_imap_emails.parse_arguments(["--target", "source"])
+
+        assert local_mode is False
+        assert args.host == "imap://localhost:10144"
 
     def test_missing_credentials(self, capsys):
         """Test that missing auth is rejected by argparse (neither password nor OAuth2 client-id)."""

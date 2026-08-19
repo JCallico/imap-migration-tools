@@ -99,6 +99,162 @@ class TestFolderComparison:
 
         assert "INBOX" in capsys.readouterr().out
 
+    def test_os_accounts_override_dotenv_endpoints(self, mock_server_factory, capsys, dotenv_file):
+        """Complete OS accounts win independently over both conflicting .env endpoints."""
+        data = {"INBOX": [b"Subject: OS\r\n\r\nBody"]}
+        _, _, src_port, dest_port = mock_server_factory(data, data.copy())
+        dotenv_file(
+            {
+                "SRC_IMAP_HOST": "imap://localhost:1",
+                "SRC_IMAP_USERNAME": "dotenv-source",
+                "SRC_IMAP_PASSWORD": "dotenv-source-password",
+                "DEST_IMAP_HOST": "imap://localhost:2",
+                "DEST_IMAP_USERNAME": "dotenv-destination",
+                "DEST_IMAP_PASSWORD": "dotenv-destination-password",
+            }
+        )
+
+        with temp_env(_mock_compare_env(src_port, dest_port)), temp_argv(["compare_imap_folders.py"]):
+            compare_imap_folders.main()
+
+        assert "INBOX" in capsys.readouterr().out
+
+    def test_explicit_passwords_override_dotenv_oauth(self, mock_server_factory, capsys, dotenv_file):
+        """Explicit passwords select basic authentication for both comparison accounts."""
+        data = {"INBOX": [b"Subject: Password\r\n\r\nBody"]}
+        _, _, src_port, dest_port = mock_server_factory(data, data.copy())
+        dotenv_file(
+            {
+                **_mock_compare_env(src_port, dest_port),
+                "SRC_OAUTH2_CLIENT_ID": "inherited-source-oauth",
+                "DEST_OAUTH2_CLIENT_ID": "inherited-destination-oauth",
+            }
+        )
+
+        with temp_env({}), temp_argv(["compare_imap_folders.py", "--src-pass", "p", "--dest-pass", "p"]):
+            compare_imap_folders.main()
+
+        assert "INBOX" in capsys.readouterr().out
+
+    def test_cli_oauth_overrides_dotenv_passwords(self, mock_server_factory, capsys, dotenv_file, monkeypatch):
+        """Explicit OAuth clients select OAuth for both comparison accounts."""
+        data = {"INBOX": [b"Subject: OAuth\r\n\r\nBody"]}
+        _, _, src_port, dest_port = mock_server_factory(data, data.copy())
+        dotenv_file(_mock_compare_env(src_port, dest_port))
+        monkeypatch.setattr(
+            compare_imap_folders.imap_oauth2, "acquire_token", lambda *_args, **_kwargs: ("token", "microsoft")
+        )
+
+        with (
+            temp_env({}),
+            temp_argv(
+                [
+                    "compare_imap_folders.py",
+                    "--src-oauth2-client-id",
+                    "src-client",
+                    "--dest-oauth2-client-id",
+                    "dest-client",
+                ]
+            ),
+        ):
+            compare_imap_folders.main()
+
+        assert "INBOX" in capsys.readouterr().out
+
+    def test_os_passwords_override_dotenv_oauth(self, mock_server_factory, capsys, dotenv_file, monkeypatch):
+        """OS passwords select password authentication for both accounts over .env OAuth."""
+        data = {"INBOX": [b"Subject: OS\r\n\r\nBody"]}
+        _, _, src_port, dest_port = mock_server_factory(data, data.copy())
+        dotenv_file(
+            {
+                **_mock_compare_env(src_port, dest_port),
+                "SRC_OAUTH2_CLIENT_ID": "dotenv-source-client",
+                "DEST_OAUTH2_CLIENT_ID": "dotenv-destination-client",
+            }
+        )
+        monkeypatch.setattr(
+            compare_imap_folders.imap_oauth2,
+            "acquire_token",
+            lambda *_args, **_kwargs: pytest.fail("OAuth must not be selected"),
+        )
+
+        with (
+            temp_env({"SRC_IMAP_PASSWORD": "pass", "DEST_IMAP_PASSWORD": "pass"}),
+            temp_argv(["compare_imap_folders.py"]),
+        ):
+            compare_imap_folders.main()
+
+        assert "INBOX" in capsys.readouterr().out
+
+    def test_explicit_imap_arguments_override_dotenv_local_paths(
+        self, mock_server_factory, tmp_path, capsys, dotenv_file
+    ):
+        """Explicit IMAP configuration selects IMAP mode for both comparison sides."""
+        data = {"INBOX": [b"Subject: IMAP wins\r\n\r\nBody"]}
+        _, _, src_port, dest_port = mock_server_factory(data, data.copy())
+        src_path = tmp_path / "local-source"
+        dest_path = tmp_path / "local-destination"
+        src_path.mkdir()
+        dest_path.mkdir()
+        dotenv_file({"SRC_LOCAL_PATH": str(src_path), "DEST_LOCAL_PATH": str(dest_path)})
+
+        with (
+            temp_env({}),
+            temp_argv(
+                [
+                    "compare_imap_folders.py",
+                    f"--src-host=imap://localhost:{src_port}",
+                    "--src-user",
+                    "src_user",
+                    "--src-pass",
+                    "p",
+                    "--dest-host",
+                    f"imap://localhost:{dest_port}",
+                    "--dest-user",
+                    "dest_user",
+                    "--dest-pass",
+                    "p",
+                ]
+            ),
+        ):
+            compare_imap_folders.main()
+
+        captured = capsys.readouterr().out
+        assert "Source Host" in captured
+        assert "Destination Host" in captured
+        assert "Source (Local)" not in captured
+        assert "Destination (Local)" not in captured
+        assert "INBOX" in captured
+
+    def test_explicit_source_path_and_imap_arguments_are_rejected(self, tmp_path, capsys):
+        """Conflicting explicit source modes produce an actionable parser error."""
+        env = {
+            "DEST_IMAP_HOST": "imap.example.com",
+            "DEST_IMAP_USERNAME": "dest",
+            "DEST_IMAP_PASSWORD": "pass",
+        }
+        with (
+            temp_env(env),
+            temp_argv(
+                [
+                    "compare_imap_folders.py",
+                    "--src-path",
+                    str(tmp_path),
+                    "--src-host",
+                    "imap.example.com",
+                    "--src-user",
+                    "src",
+                    "--src-pass",
+                    "pass",
+                ]
+            ),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                compare_imap_folders.main()
+
+        assert exc_info.value.code == 2
+        assert "cannot be combined" in capsys.readouterr().err
+
     def test_folder_missing_on_destination(self, mock_server_factory, capsys):
         """Test when a folder exists on source but not destination."""
         src_data = {
