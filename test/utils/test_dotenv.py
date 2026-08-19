@@ -1,10 +1,25 @@
 """Tests for optional dotenv loading and configuration provenance."""
 
+import builtins
 import os
 from pathlib import Path
 
 from conftest import temp_env
 from utils.dotenv import load_dotenv
+
+
+def test_missing_optional_dependency_is_ignored(monkeypatch):
+    """Commands still run without dotenv support when the optional package is absent."""
+    real_import = builtins.__import__
+
+    def import_without_dotenv(name, *args, **kwargs):
+        if name == "dotenv":
+            raise ModuleNotFoundError("No module named 'dotenv'", name="dotenv")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_dotenv)
+
+    assert load_dotenv().dotenv_keys == frozenset()
 
 
 def test_every_test_starts_behind_dotenv_discovery_boundary():

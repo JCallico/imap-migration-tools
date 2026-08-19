@@ -5,7 +5,7 @@ import argparse
 import pytest
 
 from cli.backup import parse_arguments as parse_backup_arguments
-from cli.common import EnvironmentValue, parse_authentication_arguments
+from cli.common import AccountDefaults, EnvironmentValue, parse_account_arguments, parse_authentication_arguments
 from cli.compare import parse_arguments as parse_compare_arguments
 from cli.count import parse_arguments as parse_count_arguments
 from cli.migrate import parse_arguments as parse_migrate_arguments
@@ -35,6 +35,125 @@ def test_explicit_oauth_overrides_inherited_password():
 
     assert args.password is None
     assert args.client_id == "explicit-client"
+
+
+def test_dotenv_oauth_wins_when_both_authentication_methods_are_configured():
+    """OAuth remains the compatibility choice when both methods come from dotenv."""
+    parser = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
+    args = parser.parse_args([])
+
+    parse_authentication_arguments(
+        parser,
+        args,
+        password_dest="password",
+        client_id_dest="client_id",
+        default_password=EnvironmentValue("dotenv-password", "PASSWORD"),
+        default_client_id=EnvironmentValue("dotenv-client", "OAUTH_CLIENT"),
+        dotenv_keys=frozenset({"PASSWORD", "OAUTH_CLIENT"}),
+        password_option="--password",
+        oauth_option="--oauth-client",
+    )
+
+    assert args.password is None
+    assert args.client_id == "dotenv-client"
+
+
+def _account_defaults(*, host=None, user=None, password="password"):
+    return AccountDefaults(
+        host=EnvironmentValue(host, "HOST"),
+        user=EnvironmentValue(user, "USER"),
+        password=EnvironmentValue(password, "PASSWORD"),
+        client_id=EnvironmentValue(None, "OAUTH_CLIENT"),
+        client_secret=EnvironmentValue(None, "OAUTH_SECRET"),
+        account_type=EnvironmentValue("auto", "ACCOUNT_TYPE"),
+    )
+
+
+def _parse_account(parser, args, defaults, *, dotenv_keys=frozenset()):
+    parse_account_arguments(
+        parser,
+        args,
+        host_dest="host",
+        user_dest="user",
+        password_dest="password",
+        client_id_dest="client_id",
+        client_secret_dest="client_secret",
+        account_type_dest="account_type",
+        defaults=defaults,
+        dotenv_keys=dotenv_keys,
+        host_option="--host",
+        user_option="--user",
+        password_option="--password",
+        oauth_option="--oauth-client",
+    )
+
+
+def test_account_requires_configured_host(capsys):
+    parser = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
+
+    with pytest.raises(SystemExit) as exc_info:
+        _parse_account(parser, parser.parse_args([]), _account_defaults(user="user"))
+
+    assert exc_info.value.code == 2
+    assert "--host is required" in capsys.readouterr().err
+
+
+def test_account_requires_configured_username(capsys):
+    parser = argparse.ArgumentParser(argument_default=argparse.SUPPRESS)
+    dotenv_keys = frozenset({"HOST", "PASSWORD"})
+
+    with pytest.raises(SystemExit) as exc_info:
+        _parse_account(
+            parser,
+            parser.parse_args([]),
+            _account_defaults(host="imap.example.com"),
+            dotenv_keys=dotenv_keys,
+        )
+
+    assert exc_info.value.code == 2
+    assert "--user is required" in capsys.readouterr().err
+
+
+def test_compare_rejects_destination_path_with_destination_imap_arguments(tmp_path, capsys):
+    with temp_env({}), pytest.raises(SystemExit) as exc_info:
+        parse_compare_arguments(["--dest-path", str(tmp_path), "--dest-host", "imap.example.com"])
+
+    assert exc_info.value.code == 2
+    assert "--dest-path cannot be combined" in capsys.readouterr().err
+
+
+def test_compare_rejects_empty_source_path(capsys):
+    with temp_env({}), pytest.raises(SystemExit) as exc_info:
+        parse_compare_arguments(["--src-path", ""])
+
+    assert exc_info.value.code == 2
+    assert "--src-path must specify a non-empty" in capsys.readouterr().err
+
+
+def test_compare_rejects_empty_destination_path(tmp_path, capsys):
+    with temp_env({}), pytest.raises(SystemExit) as exc_info:
+        parse_compare_arguments(["--src-path", str(tmp_path), "--dest-path", ""])
+
+    assert exc_info.value.code == 2
+    assert "--dest-path must specify a non-empty" in capsys.readouterr().err
+
+
+def test_count_rejects_empty_local_path(capsys):
+    with temp_env({}), pytest.raises(SystemExit) as exc_info:
+        parse_count_arguments(["--path", ""])
+
+    assert exc_info.value.code == 2
+    assert "--path must specify a non-empty" in capsys.readouterr().err
+
+
+def test_count_rejects_missing_local_path(tmp_path, capsys):
+    missing_path = tmp_path / "missing"
+
+    with temp_env({}), pytest.raises(SystemExit) as exc_info:
+        parse_count_arguments(["--path", str(missing_path)])
+
+    assert exc_info.value.code == 1
+    assert f"Local path does not exist or is not a directory: {missing_path}" in capsys.readouterr().out
 
 
 def test_backup_host_override_rejects_inherited_password_account():
