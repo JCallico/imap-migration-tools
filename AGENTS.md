@@ -23,7 +23,6 @@ Use Python 3.9+ and run commands from the repository root. The source tree is no
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .  # install declared runtime dependencies
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pip install python-dotenv  # required by .env integration tests
 PYTHONPATH=src .venv/bin/python -m pytest test/ -v
 .venv/bin/python -m ruff check src/ tools/ test/
 .venv/bin/python -m ruff format --check src/ tools/ test/
@@ -80,7 +79,7 @@ dependencies locally and cause collection failures in the clean CI matrix.
 - Load `.env` through `utils.dotenv.load_dotenv()` at the start of a CLI `main()` function, before reading environment variables or constructing `argparse` defaults.
 - The loader discovers `.env` from the process working directory (and its parents), not from the installed package directory.
 - Precedence is: command-line arguments, existing OS environment variables, `.env` values, then script defaults. Keep `override=False` so CI, shell, and secret-manager values remain authoritative.
-- `python-dotenv` is an optional runtime extra (`imap-migration-tools[dotenv]`). If changes affect `.env` support, update `README.md`, `.env.example`, and the CI/dev dependency setup as needed.
+- `python-dotenv` is a standard runtime dependency. The legacy `imap-migration-tools[dotenv]` extra remains an empty compatibility alias. If changes affect `.env` support, update `README.md`, `.env.example`, and the CI/dev dependency setup as needed.
 - For CLI `.env` coverage, add an end-to-end case to each affected `test/test_imap_*.py` module. Use its local `dotenv_file` fixture, run the real `main()`, and assert an observable outcome against a mock IMAP server or local backup. Do not replace this with parser interception or a centralized CLI test module.
 
 ## Verification before handoff

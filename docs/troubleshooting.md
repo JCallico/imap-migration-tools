@@ -15,10 +15,11 @@
 Existing OS environment variables override `.env`, and CLI values override both. Inspect exported variables in the
 current shell and remember that an empty OS variable still has higher precedence than a `.env` value.
 
-Automatic `.env` loading requires the optional dependency:
+Automatic `.env` loading is included in the standard package. If it is unavailable in an older or incomplete
+environment, reinstall the current package:
 
 ```bash
-python -m pip install "imap-migration-tools[dotenv]"
+python -m pip install --upgrade imap-migration-tools
 ```
 
 The loader searches the working directory and its parents. It does not search relative to the installed package.

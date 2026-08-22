@@ -90,16 +90,30 @@ class TestBasicMigration:
 
         assert len(dest_server.folders["INBOX"]) == 3
 
-    def test_migration_uses_dotenv_configuration(self, mock_server_factory, dotenv_file):
-        """End-to-end: .env credentials migrate a message to the destination."""
+    def test_migration_uses_dotenv_configuration(self, mock_server_factory, dotenv_file, tmp_path):
+        """End-to-end: .env credentials and migration cache settings are used."""
         src_data = {"INBOX": [b"Subject: Dotenv\r\nMessage-ID: <dotenv@test>\r\n\r\nBody"]}
         _, dest_server, src_port, dest_port = mock_server_factory(src_data, {"INBOX": []})
+        cache_directory = tmp_path / "migration-cache"
 
-        dotenv_file(_mock_migrate_env(src_port, dest_port))
-        with temp_env({}), temp_argv(["migrate_imap_emails.py", "INBOX"]):
+        dotenv_file(
+            {
+                **_mock_migrate_env(src_port, dest_port),
+                "MIGRATE_CACHE_DIR": str(cache_directory),
+                "FULL_MIGRATE": "true",
+            }
+        )
+        from unittest.mock import patch
+
+        with (
+            patch("utils.imap_common.load_progress_cache", wraps=imap_common.load_progress_cache) as load_cache,
+            temp_env({}),
+            temp_argv(["migrate_imap_emails.py", "INBOX"]),
+        ):
             migrate_imap_emails.main()
 
         assert len(dest_server.folders["INBOX"]) == 1
+        assert load_cache.call_args.args[0] == str(cache_directory)
 
     def test_os_accounts_override_dotenv_endpoints(self, mock_server_factory, dotenv_file):
         """Complete OS source and destination accounts win over conflicting .env accounts."""

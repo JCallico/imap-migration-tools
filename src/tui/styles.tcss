@@ -200,26 +200,6 @@ AsciiCheckbox.-on > .toggle--button {
     text-style: bold;
 }
 
-TabbedContent {
-    height: 100%;
-}
-
-Tabs {
-    height: 2;
-    background: $imap-black;
-    color: $imap-muted;
-}
-
-Tab {
-    height: 2;
-    padding: 0 2;
-}
-
-Tab.-active {
-    color: $imap-green;
-    text-style: bold;
-}
-
 ContentSwitcher {
     background: $imap-black;
 }
@@ -297,35 +277,7 @@ DataTable > .datatable--cursor {
     margin-right: 1;
 }
 
-#output-tabs Tabs {
-    height: 1;
-    background: #202020;
-}
-
-#output-tabs Tab {
-    height: 1;
-    min-width: 11;
-    padding: 0 2;
-    color: $imap-muted;
-    background: #202020;
-    text-style: bold;
-}
-
-#output-tabs Tab:hover {
-    color: #eeeeee;
-    background: #303030;
-}
-
-#output-tabs Tab.-active {
-    color: $imap-black;
-    background: $imap-green;
-}
-
-#output-tabs Underline {
-    display: none;
-}
-
-#live-log, #history-log {
+#output-log {
     height: 1fr;
     background: $imap-black;
     color: #dddddd;

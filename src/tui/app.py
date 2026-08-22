@@ -25,8 +25,6 @@ from textual.widgets import (
     RichLog,
     Select,
     Static,
-    TabbedContent,
-    TabPane,
 )
 
 from tui.config import (
@@ -59,10 +57,6 @@ from tui.splitter import ResizeHandle
 
 def _field_id(name: str) -> str:
     return "env-" + name.lower().replace("_", "-")
-
-
-def _option_id(operation: str, name: str) -> str:
-    return f"opt-{operation}-{name.lower().replace('_', '-')}"
 
 
 class ToolButton(Static, can_focus=True):
@@ -146,39 +140,39 @@ class ConfirmationModal(ModalScreen[bool]):
         self.action_yes()
 
 
-OPERATION_SWITCHES: dict[str, tuple[tuple[str, str], ...]] = {
+OPERATION_SWITCHES: dict[str, tuple[str, ...]] = {
     "count": (),
     "compare": (),
     "backup": (
-        ("PRESERVE_LABELS", "Preserve Gmail labels"),
-        ("PRESERVE_FLAGS", "Preserve flags"),
-        ("MANIFEST_ONLY", "Manifest only"),
-        ("GMAIL_MODE", "Gmail mode"),
-        ("DEST_DELETE", "Delete local orphans"),
+        "PRESERVE_LABELS",
+        "PRESERVE_FLAGS",
+        "MANIFEST_ONLY",
+        "GMAIL_MODE",
+        "DEST_DELETE",
     ),
     "restore": (
-        ("APPLY_LABELS", "Apply Gmail labels"),
-        ("APPLY_FLAGS", "Apply flags"),
-        ("GMAIL_MODE", "Gmail mode"),
-        ("FULL_RESTORE", "Full restore"),
-        ("DEST_DELETE", "Delete destination orphans"),
+        "APPLY_LABELS",
+        "APPLY_FLAGS",
+        "GMAIL_MODE",
+        "FULL_RESTORE",
+        "DEST_DELETE",
     ),
     "migrate": (
-        ("DELETE_FROM_SOURCE", "Delete copied source messages"),
-        ("DEST_DELETE", "Delete destination orphans"),
-        ("PRESERVE_LABELS", "Preserve Gmail labels"),
-        ("PRESERVE_FLAGS", "Preserve flags"),
-        ("GMAIL_MODE", "Gmail mode"),
-        ("FULL_MIGRATE", "Ignore cache for skipping"),
+        "DELETE_FROM_SOURCE",
+        "DEST_DELETE",
+        "PRESERVE_LABELS",
+        "PRESERVE_FLAGS",
+        "GMAIL_MODE",
+        "FULL_MIGRATE",
     ),
 }
 
 OPERATION_PANEL_HEIGHTS: dict[OperationName, int] = {
     "count": 5,
-    "compare": 11,
-    "backup": 10,
-    "restore": 11,
-    "migrate": 13,
+    "compare": 8,
+    "backup": 5,
+    "restore": 6,
+    "migrate": 5,
 }
 
 
@@ -209,7 +203,8 @@ class ImapToolsApp(App[None]):
         self.selected_operation: OperationName = "count"
         self.progress = ProgressState()
         self.log_lines: deque[str] = deque(maxlen=5000)
-        self.history_lines: list[str] = []
+        self.current_run_id: str | None = None
+        self.selected_output_id: str | None = None
         self.history_writer: HistoryWriter | None = None
         self.pending_action = ""
         self.pending_payload: object | None = None
@@ -296,12 +291,6 @@ class ImapToolsApp(App[None]):
                         id="compare-source-mode",
                         classes="compare-control",
                     )
-                    yield Input(
-                        value=values.get("SRC_LOCAL_PATH", ""),
-                        placeholder="source local path",
-                        id="compare-source-path",
-                        classes="compare-control",
-                    )
                     yield Label("Destination side", classes="compare-control control-label")
                     yield Select(
                         (("automatic", "auto"), ("destination IMAP", "imap"), ("local path", "local")),
@@ -310,25 +299,8 @@ class ImapToolsApp(App[None]):
                         id="compare-dest-mode",
                         classes="compare-control",
                     )
-                    yield Input(
-                        value=values.get("DEST_LOCAL_PATH", ""),
-                        placeholder="destination local path",
-                        id="compare-dest-path",
-                        classes="compare-control",
-                    )
                     yield Label("Only this folder", classes="transfer-control control-label folder-label")
                     yield Input(id="folder", placeholder="leave empty for all folders", classes="transfer-control")
-                    yield Input(id="migrate-cache", placeholder="migration cache directory", classes="migrate-control")
-                    for operation, switches in OPERATION_SWITCHES.items():
-                        for name, label in switches:
-                            yield AsciiCheckbox(
-                                label,
-                                value=values.get(name, "false").lower() == "true",
-                                id=_option_id(operation, name),
-                                name=name,
-                                classes=f"option-control option-{operation}",
-                                compact=True,
-                            )
                     yield Button("run count", id="run-operation", variant="success", classes="wide-action")
                 yield ResizeHandle(
                     "operation-panel", "history-panel", "horizontal", minimum_before=5, id="operation-history-handle"
@@ -336,7 +308,6 @@ class ImapToolsApp(App[None]):
                 with Vertical(id="history-panel", classes="panel"):
                     yield DataTable(id="history-table", cursor_type="row")
                     with Horizontal(classes="compact-actions"):
-                        yield Button("view", id="view-history")
                         yield Button("export", id="export-history")
                         yield Button("delete", id="delete-history")
             yield ResizeHandle(
@@ -349,17 +320,12 @@ class ImapToolsApp(App[None]):
             )
             with Vertical(id="right-column"):
                 with Vertical(id="monitor-panel", classes="panel"):
-                    with TabbedContent(id="output-tabs", initial="live-output-tab"):
-                        with TabPane("LIVE", id="live-output-tab"):
-                            yield Input(placeholder="filter live output", id="live-filter")
-                            yield RichLog(id="live-log", wrap=True, markup=False, max_lines=5000, auto_scroll=True)
-                            with Horizontal(classes="compact-actions"):
-                                yield Button("cancel", id="cancel-run", disabled=True)
-                                yield Button("force stop", id="force-stop", disabled=True)
-                                yield Button("clear log", id="clear-live-log")
-                        with TabPane("HISTORY", id="history-output-tab"):
-                            yield Input(placeholder="filter history output", id="history-filter")
-                            yield RichLog(id="history-log", wrap=True, markup=False, max_lines=5000)
+                    yield Input(placeholder="filter output", id="output-filter")
+                    yield RichLog(id="output-log", wrap=True, markup=False, max_lines=5000, auto_scroll=True)
+                    with Horizontal(classes="compact-actions"):
+                        yield Button("cancel", id="cancel-run", disabled=True)
+                        yield Button("force stop", id="force-stop", disabled=True)
+                        yield Button("clear output", id="clear-output")
         yield Static(
             "[bold #388bff]Alt+1-5[/] tool   [bold #388bff]Alt+C/O/L[/] config/operation/log   "
             "[bold #44dd55]Alt+R[/] run   [bold #e6d84a]drag/arrows[/] resize   "
@@ -439,11 +405,16 @@ class ImapToolsApp(App[None]):
                 select.value = "source"
             options.disable_option_at_index(1)
 
-    def refresh_history(self) -> None:
+    def refresh_history(self, select_run_id: str | None = None) -> None:
         table = self.query_one("#history-table", DataTable)
         table.clear()
-        for record in load_records()[:20]:
+        selected_row: int | None = None
+        for row, record in enumerate(load_records()[:20]):
             table.add_row(record.operation, record.status, record.started_at[:19], key=record.run_id)
+            if record.run_id == select_run_id:
+                selected_row = row
+        if selected_row is not None:
+            table.move_cursor(row=selected_row)
 
     def select_operation(self, operation: OperationName) -> None:
         self.selected_operation = operation
@@ -459,13 +430,9 @@ class ImapToolsApp(App[None]):
         for widget in self.query(".compare-control"):
             widget.set_class(operation != "compare", "hidden")
         for widget in self.query(".transfer-control"):
-            widget.set_class(operation not in {"backup", "restore", "migrate"}, "hidden")
-        self.query_one(".folder-label").set_class(operation not in {"restore", "migrate"}, "hidden")
-        for widget in self.query(".migrate-control"):
-            widget.set_class(operation != "migrate", "hidden")
+            widget.set_class(operation not in {"backup", "restore"}, "hidden")
+        self.query_one(".folder-label").set_class(operation != "restore", "hidden")
         for candidate in OPERATIONS:
-            for widget in self.query(f".option-{candidate.name}"):
-                widget.set_class(candidate.name != operation, "hidden")
             self.query_one(f"#tool-{candidate.name}", ToolButton).set_class(candidate.name == operation, "selected")
 
     def highlight_required_settings(self) -> None:
@@ -493,6 +460,8 @@ class ImapToolsApp(App[None]):
             guidance = f"Required for {operation}"
             if is_missing and field.name.endswith(("_IMAP_PASSWORD", "_OAUTH2_CLIENT_ID")):
                 guidance = f"Provide either a password or OAuth2 client ID for {operation}"
+            elif field.name.endswith(("_IMAP_PASSWORD", "_OAUTH2_CLIENT_ID", "_OAUTH2_CLIENT_SECRET", "_ACCOUNT_TYPE")):
+                guidance = f"Authentication option for {operation}"
             control.tooltip = f"Missing — {guidance}" if is_missing else guidance if is_required else None
 
     def selected_operation_readiness(self):
@@ -526,45 +495,35 @@ class ImapToolsApp(App[None]):
 
     def run_options(self) -> RunOptions:
         operation = self.selected_operation
-        switches = {
-            checkbox.name or "": checkbox.value
-            for checkbox in self.query(f".option-{operation}").nodes
-            if isinstance(checkbox, Checkbox)
-        }
+        values = self.values()
+        switches = {name: values.get(name, "false").lower() == "true" for name in OPERATION_SWITCHES[operation]}
         environment: dict[str, str] = {}
         if operation == "count":
             mode = str(self.query_one("#count-mode", Select).value)
-            if mode in {"source", "destination"}:
-                environment.update({"BACKUP_LOCAL_PATH": "", "SRC_LOCAL_PATH": ""})
-                if mode == "destination":
-                    values = self.values()
-                    for target, suffix in (
-                        ("IMAP_HOST", "IMAP_HOST"),
-                        ("IMAP_USERNAME", "IMAP_USERNAME"),
-                        ("IMAP_PASSWORD", "IMAP_PASSWORD"),
-                        ("OAUTH2_CLIENT_ID", "OAUTH2_CLIENT_ID"),
-                        ("OAUTH2_CLIENT_SECRET", "OAUTH2_CLIENT_SECRET"),
-                        ("ACCOUNT_TYPE", "ACCOUNT_TYPE"),
-                    ):
-                        environment[target] = values.get(f"DEST_{suffix}", "")
-            return RunOptions(switches=switches, environment=environment)
+            return RunOptions(switches=switches, target=mode)
         if operation == "compare":
             source_mode = str(self.query_one("#compare-source-mode", Select).value)
             destination_mode = str(self.query_one("#compare-dest-mode", Select).value)
+            source_path = ""
+            destination_path = ""
             if source_mode == "imap":
                 environment["SRC_LOCAL_PATH"] = ""
             elif source_mode == "local":
-                environment["SRC_LOCAL_PATH"] = self.query_one("#compare-source-path", Input).value
+                source_path = values.get("SRC_LOCAL_PATH", "")
             if destination_mode == "imap":
                 environment["DEST_LOCAL_PATH"] = ""
             elif destination_mode == "local":
-                environment["DEST_LOCAL_PATH"] = self.query_one("#compare-dest-path", Input).value
-            return RunOptions(switches=switches, environment=environment)
-        values = self.values()
+                destination_path = values.get("DEST_LOCAL_PATH", "")
+            return RunOptions(
+                switches=switches,
+                environment=environment,
+                source_path=source_path,
+                destination_path=destination_path,
+            )
         workers = int(values.get("MAX_WORKERS", "4") or "4")
         batch = int(values.get("BATCH_SIZE", "10") or "10")
-        cache = self.query_one("#migrate-cache", Input).value if operation == "migrate" else ""
-        return RunOptions(self.query_one("#folder", Input).value, workers, batch, cache, switches, environment)
+        folder = self.query_one("#folder", Input).value if operation in {"backup", "restore"} else ""
+        return RunOptions(folder, workers, batch, "", switches, environment)
 
     def request_confirmation(self, action: str, message: str, payload: object, require_delete: bool = False) -> None:
         self.pending_action = action
@@ -582,11 +541,8 @@ class ImapToolsApp(App[None]):
             self.cancel_operation()
         elif button_id == "force-stop":
             self.request_confirmation("force-stop", "Type DELETE to terminate the process immediately.", None, True)
-        elif button_id == "clear-live-log":
-            self.log_lines.clear()
-            self.query_one("#live-log", RichLog).clear()
-        elif button_id == "view-history":
-            self.view_history()
+        elif button_id == "clear-output":
+            self.query_one("#output-log", RichLog).clear()
         elif button_id == "export-history":
             self.export_history()
         elif button_id == "delete-history":
@@ -676,11 +632,12 @@ class ImapToolsApp(App[None]):
             return
         if self.selected_operation == "compare":
             local_selections = (
-                ("SRC_LOCAL_PATH", "#compare-source-mode", "#compare-source-path"),
-                ("DEST_LOCAL_PATH", "#compare-dest-mode", "#compare-dest-path"),
+                ("SRC_LOCAL_PATH", "#compare-source-mode"),
+                ("DEST_LOCAL_PATH", "#compare-dest-mode"),
             )
-            for variable, mode_id, path_id in local_selections:
-                if self.query_one(mode_id, Select).value == "local" and not self.query_one(path_id, Input).value:
+            values = self.values()
+            for variable, mode_id in local_selections:
+                if self.query_one(mode_id, Select).value == "local" and not values.get(variable):
                     self.notify(f"{variable} requires a path for local mode", severity="error")
                     return
         destructive = options.switches.get("DELETE_FROM_SOURCE") or options.switches.get("DEST_DELETE")
@@ -703,38 +660,34 @@ class ImapToolsApp(App[None]):
     @work(exclusive=True, group="operation")
     async def start_operation(self, options: RunOptions) -> None:
         operation = OPERATION_BY_NAME[self.selected_operation]
-        self.show_live_output()
         self.log_lines.clear()
-        self.query_one("#live-log", RichLog).clear()
+        self.query_one("#output-log", RichLog).clear()
         self.progress = ProgressState()
         self.query_one("#cancel-run", Button).disabled = False
         self.query_one("#run-operation", Button).disabled = True
         values = self.values()
         redactor = Redactor([values.get(name, "") for name in SECRET_NAMES])
         record = new_record(operation.name)
+        self.current_run_id = record.run_id
+        self.selected_output_id = record.run_id
         try:
             self.history_writer = HistoryWriter(record, redactor)
+            self.refresh_history(self.selected_output_id)
         except OSError as exc:
             self.history_writer = None
             self.notify(f"History unavailable: {exc}", severity="warning")
-        environment = {field.name: values[field.name] for field in FIELDS}
-        operation_environment = {
-            name: str(enabled).lower() for name, enabled in options.switches.items() if name != "FULL_MIGRATE"
-        }
-        operation_environment.update(options.environment)
-        environment.update(operation_environment)
-        request = RunRequest(
-            build_command(operation, options), self.working_directory, environment, operation_environment
-        )
+        request = self._make_run_request(operation.name, options)
 
         async def receive(line: str) -> None:
             sanitized = self.history_writer.write(line) if self.history_writer else redactor(line)
             self.log_lines.append(sanitized)
-            match = self.query_one("#live-filter", Input).value.lower()
-            if not match or match in sanitized.lower():
-                self.query_one("#live-log", RichLog).write(sanitized)
+            if self.selected_output_id == record.run_id:
+                match = self.query_one("#output-filter", Input).value.lower()
+                if not match or match in sanitized.lower():
+                    self.query_one("#output-log", RichLog).write(sanitized)
             parse_output(sanitized, self.progress)
 
+        exit_code = -1
         try:
             exit_code = await self.runner.run(request, receive)
             record.status = "completed" if exit_code == 0 else "failed"
@@ -755,8 +708,18 @@ class ImapToolsApp(App[None]):
             self.query_one("#cancel-run", Button).disabled = True
             self.query_one("#force-stop", Button).disabled = True
             self.query_one("#run-operation", Button).disabled = not readiness(operation.name, self.values()).ready
-            self.refresh_history()
+            self.refresh_history(self.selected_output_id)
             self.notify(f"{operation.title} {record.status}", severity="information" if exit_code == 0 else "error")
+
+    def _make_run_request(self, operation: OperationName, options: RunOptions) -> RunRequest:
+        """Build a request containing only genuine per-operation environment overrides."""
+        operation_environment = dict(options.environment)
+        return RunRequest(
+            build_command(OPERATION_BY_NAME[operation], options),
+            self.working_directory,
+            operation_environment,
+            operation_environment,
+        )
 
     @work(exclusive=True, group="cancellation")
     async def cancel_operation(self) -> None:
@@ -779,18 +742,19 @@ class ImapToolsApp(App[None]):
         run_id = run_id or self.selected_history_id()
         if not run_id:
             return
-        self.history_lines = read_log(run_id).splitlines()
-        self.render_history_output()
-        self.query_one("#output-tabs", TabbedContent).active = "history-output-tab"
+        self.selected_output_id = run_id
+        self.render_output()
 
-    def show_live_output(self) -> None:
-        self.query_one("#output-tabs", TabbedContent).active = "live-output-tab"
-
-    def render_history_output(self) -> None:
-        log = self.query_one("#history-log", RichLog)
+    def render_output(self) -> None:
+        log = self.query_one("#output-log", RichLog)
         log.clear()
-        match = self.query_one("#history-filter", Input).value.lower()
-        for line in self.history_lines:
+        match = self.query_one("#output-filter", Input).value.lower()
+        lines = (
+            self.log_lines
+            if self.selected_output_id == self.current_run_id
+            else read_log(self.selected_output_id or "").splitlines()
+        )
+        for line in lines:
             if not match or match in line.lower():
                 log.write(line)
 
@@ -808,18 +772,9 @@ class ImapToolsApp(App[None]):
             return
         self.notify(f"Exported {destination}")
 
-    @on(Input.Changed, "#live-filter")
-    def filter_live_output(self, event: Input.Changed) -> None:
-        log = self.query_one("#live-log", RichLog)
-        log.clear()
-        match = event.value.lower()
-        for line in self.log_lines:
-            if not match or match in line.lower():
-                log.write(line)
-
-    @on(Input.Changed, "#history-filter")
-    def filter_history_output(self) -> None:
-        self.render_history_output()
+    @on(Input.Changed, "#output-filter")
+    def filter_output(self) -> None:
+        self.render_output()
 
     def action_select_operation(self, operation: str) -> None:
         self.select_operation(operation)  # type: ignore[arg-type]
@@ -833,12 +788,12 @@ class ImapToolsApp(App[None]):
             "compare": "#compare-source-mode",
             "backup": "#folder",
             "restore": "#folder",
-            "migrate": "#folder",
+            "migrate": "#run-operation",
         }[self.selected_operation]
         self.query_one(first_control).focus()
 
     def action_focus_log(self) -> None:
-        self.query_one("#live-filter", Input).focus()
+        self.query_one("#output-filter", Input).focus()
 
     def action_start_selected(self) -> None:
         self.prepare_run()

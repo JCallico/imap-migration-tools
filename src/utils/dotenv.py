@@ -1,4 +1,4 @@
-"""Optional loading of environment variables from a ``.env`` file."""
+"""Loading of environment variables from a ``.env`` file."""
 
 import os
 from dataclasses import dataclass

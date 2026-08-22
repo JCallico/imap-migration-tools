@@ -167,6 +167,8 @@ MAX_WORKERS=4
 BATCH_SIZE=10
 OAUTH2_CACHE_ENABLED="true"
 OAUTH2_CACHE_DIR=""
+MIGRATE_CACHE_DIR=""
+FULL_MIGRATE="false"
 ```
 
 Reduce `MAX_WORKERS` when a provider reports too many simultaneous connections.

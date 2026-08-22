@@ -50,22 +50,25 @@ def _account(values: dict[str, str], prefix: str) -> bool:
 
 
 def account_settings(values: dict[str, str], prefix: str) -> tuple[set[str], set[str]]:
-    required = {f"{prefix}_IMAP_HOST", f"{prefix}_IMAP_USERNAME"}
-    missing = {name for name in required if not values.get(name)}
     password = f"{prefix}_IMAP_PASSWORD"
     client_id = f"{prefix}_OAUTH2_CLIENT_ID"
     client_secret = f"{prefix}_OAUTH2_CLIENT_SECRET"
-    if values.get(password):
-        required.add(password)
-    elif values.get(client_id):
-        required.add(client_id)
+    account_type = f"{prefix}_ACCOUNT_TYPE"
+    required = {
+        f"{prefix}_IMAP_HOST",
+        f"{prefix}_IMAP_USERNAME",
+        password,
+        client_id,
+        client_secret,
+        account_type,
+    }
+    missing = {name for name in (f"{prefix}_IMAP_HOST", f"{prefix}_IMAP_USERNAME") if not values.get(name)}
+    if not values.get(password) and values.get(client_id):
         host = values.get(f"{prefix}_IMAP_HOST", "").lower()
         if "gmail" in host or "google" in host:
-            required.add(client_secret)
             if not values.get(client_secret):
                 missing.add(client_secret)
-    else:
-        required.update({password, client_id})
+    elif not values.get(password):
         missing.update({password, client_id})
     return required, missing
 
@@ -178,6 +181,9 @@ class RunOptions:
     migrate_cache: str = ""
     switches: dict[str, bool] = field(default_factory=dict)
     environment: dict[str, str] = field(default_factory=dict)
+    target: str = ""
+    source_path: str = ""
+    destination_path: str = ""
 
 
 SWITCH_ARGUMENTS = {
@@ -197,11 +203,23 @@ SWITCH_ARGUMENTS = {
 def build_command(spec: OperationSpec, options: RunOptions) -> list[str]:
     """Build a secret-free command for an operation."""
     command = [sys.executable, "-u", "-m", spec.module]
+    if spec.name == "count" and options.target:
+        command.extend(("--target", options.target))
+    if spec.name == "compare":
+        if options.source_path:
+            command.extend(("--src-path", options.source_path))
+        if options.destination_path:
+            command.extend(("--dest-path", options.destination_path))
     if spec.name in {"backup", "restore", "migrate"}:
         command.extend(("--workers", str(options.workers), "--batch", str(options.batch)))
     for key, enabled in options.switches.items():
-        if enabled and key in SWITCH_ARGUMENTS:
-            command.append(SWITCH_ARGUMENTS[key])
+        argument = SWITCH_ARGUMENTS.get(key)
+        if argument is None:
+            continue
+        if enabled:
+            command.append(argument)
+        else:
+            command.append(f"--no-{argument.removeprefix('--')}")
     if spec.name == "migrate" and options.migrate_cache:
         command.extend(("--migrate-cache", options.migrate_cache))
     if options.folder and spec.name in {"backup", "restore", "migrate"}:

@@ -26,9 +26,19 @@ def test_rendered_schema_contains_every_supported_field():
     assert set(parsed) == {field.name for field in FIELDS}
 
 
-def test_committed_example_matches_schema():
+def test_committed_example_contains_tui_schema_without_legacy_count_aliases():
     parsed = dotenv_values(Path(__file__).resolve().parents[2] / ".env.example")
-    assert set(parsed) == {field.name for field in FIELDS}
+    supported = {field.name for field in FIELDS}
+    aliases = {
+        "IMAP_HOST",
+        "IMAP_USERNAME",
+        "IMAP_PASSWORD",
+        "OAUTH2_CLIENT_ID",
+        "OAUTH2_CLIENT_SECRET",
+        "ACCOUNT_TYPE",
+    }
+    assert supported <= set(parsed)
+    assert supported.isdisjoint(aliases)
 
 
 def test_schema_sections_match_env_example_order():
@@ -38,7 +48,6 @@ def test_schema_sections_match_env_example_order():
         "Destination Account",
         "OAuth2",
         "Local paths",
-        "imap-count aliases",
         "Microsoft account type overrides",
         "Shared options",
         "Migration options",
@@ -50,13 +59,14 @@ def test_schema_sections_match_env_example_order():
 
 def test_save_form_preserves_comments_and_unknown_keys(tmp_path):
     path = tmp_path / ".env"
-    path.write_text("# custom comment\nUNKNOWN=value\nSRC_IMAP_HOST=old\n", encoding="utf-8")
+    path.write_text("# custom comment\nUNKNOWN=value\nIMAP_HOST=legacy\nSRC_IMAP_HOST=old\n", encoding="utf-8")
 
     save_form(path, {"SRC_IMAP_HOST": "imap.example.com", "MAX_WORKERS": "3"})
 
     content = path.read_text(encoding="utf-8")
     assert "# custom comment" in content
     assert "UNKNOWN=value" in content
+    assert read_env(path)["IMAP_HOST"] == "legacy"
     assert read_env(path)["SRC_IMAP_HOST"] == "imap.example.com"
     if os.name != "nt":
         assert stat.S_IMODE(path.stat().st_mode) == 0o600

@@ -8,7 +8,6 @@ cd imap-migration-tools
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pip install python-dotenv
 ```
 
 Python 3.9 and newer are supported. Read [AGENTS.md](../AGENTS.md) before contributing; it documents repository

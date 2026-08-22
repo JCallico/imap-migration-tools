@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from textual.widgets import Button, Checkbox, DataTable, Input, OptionList, Select, Static, TabbedContent
+from textual.widgets import Button, Checkbox, DataTable, Input, OptionList, RichLog, Select, Static
 
 import tui.app as app_module
 from tui.app import ConfirmationModal, ImapToolsApp
 from tui.config import read_env
+from tui.operations import RunOptions
 
 
 @pytest.mark.parametrize(
@@ -76,8 +77,11 @@ def test_configuration_is_one_form_populated_with_defaults(tmp_path):
             await pilot.pause()
             assert app.query_one("#config-panel").border_title == "Configuration"
             section_titles = list(app.query(".group-title"))
-            assert len(section_titles) == 11
+            assert len(section_titles) == 10
             assert all(title.region.height == 1 for title in section_titles)
+            assert all("imap-count aliases" not in str(title.render()) for title in section_titles)
+            assert app.query("#env-imap-host").nodes == []
+            assert app.query("#env-oauth2-client-id").nodes == []
             assert app.query("#config-tabs").nodes == []
             assert app.query("#raw-editor").nodes == []
             assert app.query("#effective-table").nodes == []
@@ -104,7 +108,7 @@ def test_configuration_is_one_form_populated_with_defaults(tmp_path):
     asyncio.run(run_test())
 
 
-def test_sidebar_allocates_height_to_selected_operation_and_history(tmp_path):
+def test_sidebar_keeps_simplified_operations_compact(tmp_path):
     async def run_test():
         app = ImapToolsApp(tmp_path / ".env")
         async with app.run_test(size=(160, 40)) as pilot:
@@ -113,13 +117,26 @@ def test_sidebar_allocates_height_to_selected_operation_and_history(tmp_path):
             assert app.query("#operation-description").nodes == []
             assert app.query(".operation-rule").nodes == []
             count_height = app.query_one("#operation-panel").region.height
-            count_history_height = app.query_one("#history-panel").region.height
-
             app.select_operation("migrate")
             await pilot.pause()
 
-            assert app.query_one("#operation-panel").region.height > count_height
-            assert app.query_one("#history-panel").region.height < count_history_height
+            assert app.query_one("#operation-panel").region.height == count_height
+            assert app.query("#migrate-cache").nodes == []
+            assert app.query(".option-control").nodes == []
+            assert app.query("#compare-source-path").nodes == []
+            assert app.query("#compare-dest-path").nodes == []
+
+    asyncio.run(run_test())
+
+
+@pytest.mark.parametrize("operation", ("compare", "restore"))
+def test_operation_panel_does_not_scroll_when_controls_fit(tmp_path, operation):
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)) as pilot:
+            app.select_operation(operation)
+            await pilot.pause()
+            assert app.query_one("#operation-panel").max_scroll_y == 0
 
     asyncio.run(run_test())
 
@@ -139,7 +156,23 @@ def test_transfer_options_use_configuration_performance_values(tmp_path):
             assert app.query("#workers").nodes == []
             assert app.query("#batch").nodes == []
 
+            app.select_operation("migrate")
+            assert app.query_one("#folder").has_class("hidden")
+
     asyncio.run(run_test())
+
+
+def test_run_request_does_not_flatten_configuration_into_os_environment(tmp_path):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        'SRC_IMAP_HOST="imap.example.com"\nSRC_IMAP_USERNAME="user"\nSRC_IMAP_PASSWORD="secret"\n',
+        encoding="utf-8",
+    )
+    app = ImapToolsApp(env_path)
+    request = app._make_run_request("backup", RunOptions(environment={"SRC_LOCAL_PATH": ""}))
+    assert request.environment == {"SRC_LOCAL_PATH": ""}
+    assert "SRC_IMAP_HOST" not in request.environment
+    assert "SRC_IMAP_PASSWORD" not in request.environment
 
 
 def test_count_defaults_to_imap_and_has_no_local_override(tmp_path):
@@ -162,16 +195,16 @@ def test_count_defaults_to_imap_and_has_no_local_override(tmp_path):
             assert not count_options.get_option_at_index(0).disabled
             assert count_options.get_option_at_index(1).disabled
             default_options = app.run_options()
-            assert default_options.environment == {"BACKUP_LOCAL_PATH": "", "SRC_LOCAL_PATH": ""}
+            assert default_options.target == "source"
+            assert default_options.environment == {}
 
             count_mode.value = "local"
             local = app.run_options()
-            assert local.environment == {}
+            assert local.target == "local"
 
             count_mode.value = "source"
             imap = app.run_options()
-            assert imap.environment["BACKUP_LOCAL_PATH"] == ""
-            assert imap.environment["SRC_LOCAL_PATH"] == ""
+            assert imap.target == "source"
 
     asyncio.run(run_test())
 
@@ -197,7 +230,7 @@ def test_count_source_imap_accepts_empty_local_path_overrides(tmp_path):
     asyncio.run(run_test())
 
 
-def test_count_destination_account_is_enabled_and_mapped_when_configured(tmp_path):
+def test_count_destination_account_is_enabled_and_selected_when_configured(tmp_path):
     async def run_test():
         env_path = tmp_path / ".env"
         env_path.write_text(
@@ -211,9 +244,8 @@ def test_count_destination_account_is_enabled_and_mapped_when_configured(tmp_pat
             assert not count_mode.query_one(OptionList).get_option_at_index(1).disabled
             count_mode.value = "destination"
             options = app.run_options()
-            assert options.environment["IMAP_HOST"] == "dest.example.com"
-            assert options.environment["IMAP_USERNAME"] == "dest-user"
-            assert options.environment["IMAP_PASSWORD"] == "dest-secret"
+            assert options.target == "destination"
+            assert options.environment == {}
 
     asyncio.run(run_test())
 
@@ -236,7 +268,38 @@ def test_selected_operation_highlights_required_and_missing_configuration(tmp_pa
             assert not source_host.has_class("missing-setting")
             assert backup_path.has_class("required-setting")
             assert backup_path.has_class("missing-setting")
+            assert app.query_one("#env-src-oauth2-client-id").has_class("required-setting")
+            assert app.query_one("#env-src-oauth2-client-secret").has_class("required-setting")
+            assert app.query_one("#env-src-account-type").has_class("required-setting")
             assert not unrelated.has_class("required-setting")
+
+    asyncio.run(run_test())
+
+
+def test_count_highlights_all_authentication_options_for_selected_account(tmp_path):
+    async def run_test():
+        env_path = tmp_path / ".env"
+        env_path.write_text(
+            'SRC_IMAP_HOST="src.example.com"\nSRC_IMAP_USERNAME="source"\nSRC_IMAP_PASSWORD="secret"\n'
+            'DEST_IMAP_HOST="dest.example.com"\nDEST_IMAP_USERNAME="destination"\nDEST_IMAP_PASSWORD="secret"\n',
+            encoding="utf-8",
+        )
+        app = ImapToolsApp(env_path)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            for name in (
+                "src-imap-password",
+                "src-oauth2-client-id",
+                "src-oauth2-client-secret",
+                "src-account-type",
+            ):
+                assert app.query_one(f"#env-{name}").has_class("required-setting")
+            assert not app.query_one("#env-dest-oauth2-client-id").has_class("required-setting")
+
+            app.query_one("#count-mode", Select).value = "destination"
+            await pilot.pause()
+            assert app.query_one("#env-dest-oauth2-client-id").has_class("required-setting")
+            assert not app.query_one("#env-src-oauth2-client-id").has_class("required-setting")
 
     asyncio.run(run_test())
 
@@ -333,6 +396,7 @@ def test_autosave_enables_selected_operation_without_restart(tmp_path):
         )
         app = ImapToolsApp(env_path)
         async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
             app.select_operation("backup")
             run_button = app.query_one("#run-operation", Button)
             assert run_button.disabled
@@ -345,7 +409,7 @@ def test_autosave_enables_selected_operation_without_restart(tmp_path):
     asyncio.run(run_test())
 
 
-def test_history_reuses_live_output_panel(tmp_path, monkeypatch):
+def test_history_uses_single_output_panel(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "load_records", lambda: [])
     monkeypatch.setattr(app_module, "read_log", lambda run_id: f"history for {run_id}\nsecond line\n")
 
@@ -356,10 +420,8 @@ def test_history_reuses_live_output_panel(tmp_path, monkeypatch):
             table.add_row("count", "completed", "now", key="run-1")
             await pilot.pause()
 
-            assert app.query_one("#output-tabs", TabbedContent).active == "history-output-tab"
-            assert app.query("#history-log-panel").nodes == []
-
-            app.show_live_output()
-            assert app.query_one("#output-tabs", TabbedContent).active == "live-output-tab"
+            assert app.selected_output_id == "run-1"
+            assert app.query_one("#output-log", RichLog).lines
+            assert not app.query("TabbedContent").nodes
 
     asyncio.run(run_test())

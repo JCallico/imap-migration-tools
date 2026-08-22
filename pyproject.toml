@@ -24,13 +24,14 @@ dependencies = [
     "google-auth-oauthlib",
     "msal",
     "msal-extensions>=1.3.1",
+    "python-dotenv>=1.2.1",
 ]
 
 [project.optional-dependencies]
-dotenv = ["python-dotenv>=1.2.1"]
+# Backward-compatible alias; dotenv support is included in the base package.
+dotenv = []
 tui = [
     "platformdirs>=3.6,<5",
-    "python-dotenv>=1.2.1",
     "textual>=8.2,<9",
 ]
 
