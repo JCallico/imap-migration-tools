@@ -18,7 +18,7 @@ Screen {
 }
 
 #sidebar {
-    width: 30;
+    width: 40;
     min-width: 24;
     height: 100%;
 }
@@ -49,8 +49,10 @@ Screen {
 
 .resize-handle {
     background: #252525;
-    color: #777777;
+    color: #aaaaaa;
     padding: 0;
+    content-align: center middle;
+    text-style: bold;
 }
 
 .resize-handle:hover, .resize-handle:focus, .resize-handle.dragging {
@@ -94,7 +96,7 @@ Screen {
     min-height: 20;
 }
 
-ConfirmationModal {
+ConfirmationModal, InformationModal {
     align: center middle;
     background: $imap-black 55%;
 }
@@ -107,6 +109,36 @@ ConfirmationModal {
     background: $imap-panel;
     border: solid $imap-yellow;
     padding: 0 1;
+}
+
+#info-dialog {
+    width: 78;
+    max-width: 92%;
+    height: 28;
+    max-height: 85%;
+    background: $imap-panel;
+    border: solid $imap-green;
+    border-title-color: $imap-green;
+    padding: 0 1;
+}
+
+#info-body {
+    height: 1fr;
+    scrollbar-background: $imap-black;
+    scrollbar-color: $imap-line;
+}
+
+#info-content {
+    width: 100%;
+    height: auto;
+    color: #dddddd;
+}
+
+#info-footer {
+    width: 100%;
+    height: 1;
+    color: $imap-muted;
+    content-align: right middle;
 }
 
 .hidden {

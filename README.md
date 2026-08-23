@@ -74,8 +74,8 @@ python -m pip install "imap-migration-tools[tui]"
 imap-tools
 ```
 
-The interface provides a guided autosaving `.env` form, operation-specific configuration readiness checks, separate
-live and historical output, cancellation, and local run history. Existing commands remain available and are launched
+The interface provides a guided autosaving `.env` form, operation-specific configuration readiness checks, one
+history-backed output view, cancellation, and local run history. Existing commands remain available and are launched
 as isolated subprocesses by the interface.
 
 To run the TUI directly from the project folder without installing the package, first install the development
@@ -88,13 +88,18 @@ PYTHONPATH=src .venv/bin/python -m tui.app
 The TUI is currently beta software. Review the generated command in the Output panel and verify backups and counts
 before enabling destructive options.
 
-Drag the thin separators between panels to resize adjacent columns or rows. Separators are also keyboard accessible:
-focus one with `Tab`, then use the arrow keys to resize it. Minimum pane sizes prevent a panel from disappearing.
+Drag the visible `│` and `─` separators between panels to resize adjacent columns or rows. Separators are also
+keyboard accessible: focus one with `Tab`, then use the arrow keys shown in the footer. Double-click a separator to
+reset it, or press `Alt+0` to reset the complete layout. Customized panel sizes are restored on the next launch, and
+minimum pane sizes prevent a panel from disappearing.
+
+Press `F2` for the complete keyboard reference or `F1` for general application help. Both references open over
+the workspace and may be scrolled without leaving the current configuration or run context.
 
 The interface discovers `.env` from the current directory and its parents, using the same precedence as the scripts:
-per-run choices, existing OS environment variables, `.env`, then defaults. Passwords and OAuth client secrets can be
-saved only after a warning; new `.env` files and saved history use owner-only permissions where the platform supports
-them. Destructive options require typing `DELETE` before a run starts.
+per-run choices, existing OS environment variables, `.env`, then defaults. Passwords and OAuth client secrets are
+masked in the form; new `.env` files and saved history use owner-only permissions where the platform supports them.
+Destructive options require typing `DELETE` before a run starts.
 
 Basic password authentication needs no additional authentication package. OAuth2 provider and encrypted cache
 dependencies are installed by the project. See [Installation](docs/installation.md) for platform and source setup.

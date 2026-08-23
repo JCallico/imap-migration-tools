@@ -37,6 +37,7 @@ from tui.config import (
     validate,
 )
 from tui.history import HistoryWriter, Redactor, delete_record, load_records, new_record, read_log
+from tui.layout import default_layout_path, load_layout, save_layout
 from tui.operations import (
     OPERATION_BY_NAME,
     OPERATIONS,
@@ -140,6 +141,76 @@ class ConfirmationModal(ModalScreen[bool]):
         self.action_yes()
 
 
+KEY_REFERENCE = """GLOBAL
+Alt+1 … Alt+5   select Count, Compare, Backup, Restore, or Migrate
+Alt+C           focus Configuration
+Alt+O           focus Operation
+Alt+L           focus Output filter
+Alt+R           run the selected operation
+Alt+0           reset the complete panel layout
+F1              open general help
+F2              open this keyboard reference
+Alt+Q           quit
+
+NAVIGATION AND CONTROLS
+Tab / Shift+Tab move between controls
+Enter / Space   activate the focused tool, button, or checkbox
+Arrow keys      change selections and navigate tables
+PgUp / PgDn     scroll long forms and output
+
+RESIZING
+Arrow keys      resize when a separator is focused (←/→ or ↑/↓)
+Double-click    reset one separator
+
+DIALOGS
+Y / N           answer a confirmation
+Enter           accept the default action
+Esc             cancel or close"""
+
+GENERAL_HELP = """IMAP Migration Tools provides one workspace for configuring and running mailbox operations.
+
+1. CONFIGURE
+Enter account, authentication, local-path, and operation settings in Configuration. Changes are validated and saved automatically to the discovered .env file. Fields needed by the selected operation are highlighted; missing values receive stronger warning styling.
+
+2. SELECT A TOOL
+Choose Count, Compare, Backup, Restore, or Migrate in Tools. The icon on the right indicates whether the current configuration is ready. Operation contains only choices specific to that run; shared settings remain in Configuration.
+
+3. RUN
+Review the Operation choices and use its run button or Alt+R. Destructive settings require an explicit confirmation. Cancel requests graceful shutdown; force stop becomes available if cleanup does not finish.
+
+4. REVIEW
+Every run is added to History immediately. Selecting a History row loads its sanitized log into Output. While the active row remains selected, Output follows the command in real time. Export saves the selected log in the project directory.
+
+LAYOUT
+Drag the visible separators to resize panels, or focus a separator and use its indicated arrow keys. Double-click resets one separator; Alt+0 resets the full layout. Customized sizes persist between launches.
+
+Configuration secrets are masked in the form and redacted from persisted run logs."""
+
+
+class InformationModal(ModalScreen[None]):
+    """Centered, scrollable reference dialog displayed above the workspace."""
+
+    BINDINGS = [Binding("escape,enter", "close", "close", show=False, priority=True)]
+
+    def __init__(self, title: str, content: str) -> None:
+        super().__init__()
+        self.dialog_title = title
+        self.content = content
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="info-dialog"):
+            with VerticalScroll(id="info-body"):
+                yield Static(self.content, id="info-content", markup=False)
+            yield Static("Enter/Esc: close", id="info-footer")
+
+    def on_mount(self) -> None:
+        self.query_one("#info-dialog").border_title = self.dialog_title
+        self.query_one("#info-body").focus()
+
+    def action_close(self) -> None:
+        self.dismiss(None)
+
+
 OPERATION_SWITCHES: dict[str, tuple[str, ...]] = {
     "count": (),
     "compare": (),
@@ -182,6 +253,11 @@ class ImapToolsApp(App[None]):
     CSS_PATH = "styles.tcss"
     TITLE = "IMAP Migration Tools"
     ENABLE_COMMAND_PALETTE = False
+    DEFAULT_KEY_LEGEND = (
+        "[bold #388bff]Alt+1-5[/] tool   [bold #388bff]Alt+C/O/L[/] config/operation/log   "
+        "[bold #44dd55]Alt+R[/] run   [bold #e6d84a]drag/arrows[/] resize   "
+        "[bold #d45cff]F1/F2[/] help/keys   [bold #ff4d4d]Alt+Q[/] quit"
+    )
     BINDINGS = [
         Binding("alt+1", "select_operation('count')", "count", show=False, priority=True),
         Binding("alt+2", "select_operation('compare')", "compare", show=False, priority=True),
@@ -192,13 +268,18 @@ class ImapToolsApp(App[None]):
         Binding("alt+o", "focus_operation", "operation", show=False, priority=True),
         Binding("alt+l", "focus_log", "log", show=False, priority=True),
         Binding("alt+r", "start_selected", "run", show=False, priority=True),
+        Binding("alt+0", "reset_layout", "reset layout", show=False, priority=True),
+        Binding("f1", "show_help", "help", show=False, priority=True),
+        Binding("f2", "show_keys", "keys", show=False, priority=True),
         Binding("alt+q", "request_quit", "quit", show=False, priority=True),
     ]
 
-    def __init__(self, env_path: Path | None = None) -> None:
+    def __init__(self, env_path: Path | None = None, layout_path: Path | None = None) -> None:
         super().__init__()
         self.working_directory = Path.cwd()
         self.env_path = env_path or discover_env()
+        self.layout_path = layout_path or default_layout_path()
+        self.layout_path_explicit = layout_path is not None
         self.runner = OperationRunner()
         self.selected_operation: OperationName = "count"
         self.progress = ProgressState()
@@ -326,12 +407,7 @@ class ImapToolsApp(App[None]):
                         yield Button("cancel", id="cancel-run", disabled=True)
                         yield Button("force stop", id="force-stop", disabled=True)
                         yield Button("clear output", id="clear-output")
-        yield Static(
-            "[bold #388bff]Alt+1-5[/] tool   [bold #388bff]Alt+C/O/L[/] config/operation/log   "
-            "[bold #44dd55]Alt+R[/] run   [bold #e6d84a]drag/arrows[/] resize   "
-            "[bold #ff4d4d]Alt+Q[/] quit",
-            id="key-legend",
-        )
+        yield Static(self.DEFAULT_KEY_LEGEND, id="key-legend")
 
     def on_mount(self) -> None:
         titles = {
@@ -348,14 +424,68 @@ class ImapToolsApp(App[None]):
         self.refresh_configuration()
         self.refresh_history()
         self.select_operation("count")
+        self.call_after_refresh(self.initialize_layout)
         self.call_after_refresh(self.enable_configuration_autosave)
+
+    def resize_handles(self) -> list[ResizeHandle]:
+        """Return splitters in dependency order for deterministic restoration."""
+        return [
+            self.query_one("#center-sidebar-handle", ResizeHandle),
+            self.query_one("#sidebar-right-handle", ResizeHandle),
+            self.query_one("#tools-operation-handle", ResizeHandle),
+            self.query_one("#operation-history-handle", ResizeHandle),
+        ]
+
+    def initialize_layout(self) -> None:
+        """Capture defaults and restore saved wide-screen panel sizes."""
+        if self.has_class("narrow"):
+            return
+        handles = self.resize_handles()
+        for handle in handles:
+            handle.capture_default()
+        if self.is_headless and not self.layout_path_explicit:
+            return
+        saved = load_layout(self.layout_path)
+        for handle in handles:
+            if handle.id in saved:
+                handle.restore_before_size(saved[handle.id])
+
+    def save_current_layout(self) -> None:
+        """Persist the current leading-pane size for every splitter."""
+        if self.has_class("narrow") or (self.is_headless and not self.layout_path_explicit):
+            return
+        sizes = {handle.id: handle.before_size for handle in self.resize_handles() if handle.id}
+        try:
+            save_layout(self.layout_path, sizes)
+        except OSError as exc:
+            self.notify(f"Could not save panel layout: {exc}", severity="warning")
+
+    @on(ResizeHandle.Changed)
+    def splitter_changed(self) -> None:
+        self.call_after_refresh(self.save_current_layout)
+
+    @on(ResizeHandle.Focused)
+    def splitter_focused(self, event: ResizeHandle.Focused) -> None:
+        arrows = "←/→" if event.orientation == "vertical" else "↑/↓"
+        self.query_one("#key-legend", Static).update(
+            f"[bold #e6d84a]{arrows}[/] resize   [bold #44dd55]double-click[/] reset splitter   "
+            "[bold #388bff]Alt+0[/] reset layout"
+        )
+
+    @on(ResizeHandle.Blurred)
+    def splitter_blurred(self) -> None:
+        self.query_one("#key-legend", Static).update(self.DEFAULT_KEY_LEGEND)
 
     def enable_configuration_autosave(self) -> None:
         self.configuration_autosave_enabled = True
         self.query_one("#config-panel").border_subtitle = "autosave"
 
     def on_resize(self, event: Resize) -> None:
-        self.set_class(event.size.width < 120, "narrow")
+        was_narrow = self.has_class("narrow")
+        is_narrow = event.size.width < 134
+        self.set_class(is_narrow, "narrow")
+        if was_narrow and not is_narrow and self.is_mounted:
+            self.call_after_refresh(self.initialize_layout)
 
     def on_unmount(self) -> None:
         if self.configuration_save_timer is not None:
@@ -797,6 +927,30 @@ class ImapToolsApp(App[None]):
 
     def action_start_selected(self) -> None:
         self.prepare_run()
+
+    def action_reset_layout(self) -> None:
+        self.query_one("#center-column").styles.width = "2fr"
+        self.query_one("#sidebar").styles.width = 40
+        self.query_one("#right-column").styles.width = "3fr"
+        self.query_one("#tools-panel").styles.height = 7
+        self.query_one("#operation-panel").styles.height = OPERATION_PANEL_HEIGHTS[self.selected_operation]
+        self.query_one("#history-panel").styles.height = "1fr"
+        self.call_after_refresh(self.save_current_layout)
+        self.notify("Panel layout reset")
+
+    def action_show_keys(self) -> None:
+        self.show_information("Keyboard shortcuts", KEY_REFERENCE)
+
+    def action_show_help(self) -> None:
+        self.show_information("Help", GENERAL_HELP)
+
+    def show_information(self, title: str, content: str) -> None:
+        """Open one reference dialog, replacing an existing reference dialog."""
+        screen = InformationModal(title, content)
+        if isinstance(self.screen, InformationModal):
+            self.switch_screen(screen)
+        else:
+            self.push_screen(screen)
 
     def action_request_quit(self) -> None:
         if self.configuration_autosave_enabled and not self.save_configuration():

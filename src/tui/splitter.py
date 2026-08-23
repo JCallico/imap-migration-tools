@@ -6,6 +6,7 @@ from typing import Literal
 
 from textual import events
 from textual.binding import Binding
+from textual.message import Message
 from textual.widgets import Static
 
 Orientation = Literal["vertical", "horizontal"]
@@ -13,6 +14,19 @@ Orientation = Literal["vertical", "horizontal"]
 
 class ResizeHandle(Static, can_focus=True):
     """Resize the widgets immediately before and after this handle."""
+
+    class Changed(Message):
+        """Posted after a user completes a resize or reset."""
+
+    class Focused(Message):
+        """Posted when keyboard resize guidance should be shown."""
+
+        def __init__(self, orientation: Orientation) -> None:
+            super().__init__()
+            self.orientation = orientation
+
+    class Blurred(Message):
+        """Posted when keyboard resize guidance should be hidden."""
 
     BINDINGS = [
         Binding("left", "nudge_width(-2)", "shrink", show=False),
@@ -31,7 +45,9 @@ class ResizeHandle(Static, can_focus=True):
         minimum_after: int = 8,
         id: str | None = None,
     ) -> None:
-        super().__init__("", id=id, classes=f"resize-handle {orientation}-handle")
+        super().__init__(
+            "│" if orientation == "vertical" else "─", id=id, classes=f"resize-handle {orientation}-handle"
+        )
         self.before_id = before_id
         self.after_id = after_id
         self.orientation = orientation
@@ -40,6 +56,7 @@ class ResizeHandle(Static, can_focus=True):
         self._grabbed_at: int | None = None
         self._before_at_grab = 0
         self._after_at_grab = 0
+        self._default_sizes: tuple[int, int] | None = None
 
     def _widgets(self):
         return self.app.query_one(f"#{self.before_id}"), self.app.query_one(f"#{self.after_id}")
@@ -49,6 +66,11 @@ class ResizeHandle(Static, can_focus=True):
         if self.orientation == "vertical":
             return before.region.width, after.region.width
         return before.region.height, after.region.height
+
+    @property
+    def before_size(self) -> int:
+        """Return the rendered size of the leading pane."""
+        return self._sizes()[0]
 
     def resize_pair(self, before_size: int, after_size: int) -> None:
         """Set adjacent pane sizes while enforcing both minimums."""
@@ -65,17 +87,49 @@ class ResizeHandle(Static, can_focus=True):
             before.styles.height = bounded_before
             after.styles.height = bounded_after
 
+    def capture_default(self) -> None:
+        """Remember the CSS-derived startup sizes for later resets."""
+        if self._default_sizes is None:
+            self._default_sizes = self._sizes()
+
+    def restore_before_size(self, before_size: int) -> None:
+        """Restore a persisted leading-pane size within the current space."""
+        current_before, current_after = self._sizes()
+        total = current_before + current_after
+        self.resize_pair(before_size, total - before_size)
+
+    def reset(self, *, notify: bool = True) -> None:
+        """Restore this splitter's startup sizes."""
+        if self._default_sizes is None:
+            return
+        self.resize_pair(*self._default_sizes)
+        if notify:
+            self.post_message(self.Changed())
+
     def action_nudge_width(self, amount: int) -> None:
         if self.orientation != "vertical":
             return
         before, after = self._sizes()
         self.resize_pair(before + amount, after - amount)
+        self.post_message(self.Changed())
 
     def action_nudge_height(self, amount: int) -> None:
         if self.orientation != "horizontal":
             return
         before, after = self._sizes()
         self.resize_pair(before + amount, after - amount)
+        self.post_message(self.Changed())
+
+    def on_focus(self) -> None:
+        self.post_message(self.Focused(self.orientation))
+
+    def on_blur(self) -> None:
+        self.post_message(self.Blurred())
+
+    def on_click(self, event: events.Click) -> None:
+        if event.button == 1 and event.chain == 2:
+            self.reset()
+            event.stop()
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         if event.button != 1:
@@ -100,4 +154,5 @@ class ResizeHandle(Static, can_focus=True):
         self.release_mouse()
         self._grabbed_at = None
         self.remove_class("dragging")
+        self.post_message(self.Changed())
         event.stop()

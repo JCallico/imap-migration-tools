@@ -8,13 +8,13 @@ import pytest
 from textual.widgets import Button, Checkbox, DataTable, Input, OptionList, RichLog, Select, Static
 
 import tui.app as app_module
-from tui.app import ConfirmationModal, ImapToolsApp
+from tui.app import ConfirmationModal, ImapToolsApp, InformationModal
 from tui.config import read_env
 from tui.operations import RunOptions
 
 
 @pytest.mark.parametrize(
-    ("size", "narrow"), [((60, 20), True), ((80, 24), True), ((120, 40), False), ((180, 50), False)]
+    ("size", "narrow"), [((60, 20), True), ((80, 24), True), ((130, 40), True), ((134, 40), False), ((180, 50), False)]
 )
 def test_app_uses_one_responsive_workspace(tmp_path, size, narrow):
     async def run_test():
@@ -54,6 +54,71 @@ def test_alt_o_focuses_operation_panel(tmp_path):
         async with app.run_test(size=(160, 40)) as pilot:
             await pilot.press("alt+o")
             assert app.focused is app.query_one("#count-mode")
+
+    asyncio.run(run_test())
+
+
+@pytest.mark.parametrize(
+    ("shortcut", "title", "expected"),
+    (("f2", "Keyboard shortcuts", "Alt+1"), ("f1", "Help", "CONFIGURE")),
+)
+def test_help_shortcuts_open_centered_reference_dialog(tmp_path, shortcut, title, expected):
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)) as pilot:
+            original_screen = app.screen
+            app.query_one("#env-src-imap-host", Input).focus()
+            await pilot.press(shortcut)
+            await pilot.pause()
+
+            assert isinstance(app.screen, InformationModal)
+            assert original_screen in app.screen_stack
+            dialog = app.screen.query_one("#info-dialog")
+            assert dialog.border_title == title
+            assert expected in app.screen.query_one("#info-content", Static).content
+            assert dialog.region.center == app.screen.region.center
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.screen is original_screen
+
+    asyncio.run(run_test())
+
+
+def test_footer_advertises_help_and_keys(tmp_path):
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            footer = str(app.query_one("#key-legend", Static).render())
+            assert "F1/F2" in footer
+            assert "help/keys" in footer
+
+    asyncio.run(run_test())
+
+
+def test_information_shortcuts_replace_existing_popup(tmp_path):
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)) as pilot:
+            original_screen = app.screen
+            await pilot.press("f1")
+            await pilot.pause()
+            first_popup = app.screen
+            assert isinstance(first_popup, InformationModal)
+            assert first_popup.query_one("#info-dialog").border_title == "Help"
+
+            await pilot.press("f2")
+            await pilot.pause()
+            assert isinstance(app.screen, InformationModal)
+            assert app.screen is not first_popup
+            assert app.screen.query_one("#info-dialog").border_title == "Keyboard shortcuts"
+            assert len(app.screen_stack) == 2
+
+            await pilot.press("escape")
+            await pilot.pause()
+            assert app.screen is original_screen
+            assert len(app.screen_stack) == 1
 
     asyncio.run(run_test())
 
