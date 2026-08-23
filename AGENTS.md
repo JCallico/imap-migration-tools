@@ -86,14 +86,20 @@ dependencies locally and cause collection failures in the clean CI matrix.
 
 Do not stage or commit changes automatically. Only create a commit when the user explicitly asks for one.
 
-Run the focused tests for changed code first, then the full suite when practical. Before every commit, always run:
+Run focused tests while iterating. After the final edit and before every commit or push, always run the full test suite
+and the complete lint, format, and whitespace sequence:
 
 ```bash
+PYTHONPATH=src .venv/bin/python -m pytest test/ -v
 .venv/bin/python -m ruff check src/ tools/ test/
 .venv/bin/python -m ruff format --check src/ tools/ test/
 git diff --check
 ```
 
-If the formatter check reports files, run `ruff format` on those files, then rerun the complete check sequence. Do not rely on `ruff check` alone: it does not enforce the CI formatter check.
+Any code, test, configuration, or documentation edit after this sequence invalidates it; rerun the full sequence before
+committing or pushing. If the formatter check reports files, run `ruff format` on those files, then rerun the complete
+sequence. Do not rely on `ruff check` alone: it does not enforce the CI formatter check. In restricted environments,
+obtain permission for the full suite's loopback mock servers instead of accepting socket-related failures or substituting
+only focused tests.
 
 For user-facing changes, verify the relevant README examples and the `.env.example` template match the implementation.

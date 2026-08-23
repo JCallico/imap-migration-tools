@@ -1119,6 +1119,7 @@ def test_remaining_layout_reload_history_and_quit_branches(tmp_path, monkeypatch
             monkeypatch.setattr(app_module, "read_log", lambda _run_id: "first\nmatching line\n")
             app.query_one("#output-filter", Input).value = "matching"
             app.filter_output()
+            await pilot.pause()
             assert len(app.query_one("#output-log", RichLog).lines) == 1
 
             monkeypatch.setattr(app_module.Path, "write_text", Mock(side_effect=OSError("disk full")))
