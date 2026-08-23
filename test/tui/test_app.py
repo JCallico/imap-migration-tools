@@ -9,7 +9,7 @@ from textual.widgets import Button, Checkbox, DataTable, Input, Label, OptionLis
 
 import tui.app as app_module
 from tui.app import OPERATION_PANEL_HEIGHTS, ConfirmationModal, ImapToolsApp, InformationModal
-from tui.config import read_env
+from tui.config import FIELDS, read_env
 from tui.history import RunRecord
 from tui.layout import load_layout
 from tui.operations import RunOptions
@@ -533,17 +533,114 @@ def test_count_highlights_all_authentication_options_for_selected_account(tmp_pa
     asyncio.run(run_test())
 
 
-def test_configuration_changes_are_autosaved(tmp_path):
+def test_configuration_changes_are_autosaved(tmp_path, monkeypatch):
+    for field in FIELDS:
+        monkeypatch.delenv(field.name, raising=False)
+
     async def run_test():
         env_path = tmp_path / ".env"
         app = ImapToolsApp(env_path)
         async with app.run_test(size=(160, 40)) as pilot:
             await pilot.pause()
             app.query_one("#env-src-imap-password").value = "secret-value"
+            await pilot.pause()
+            assert app.query_one("#config-panel").border_subtitle == "● saving…"
             await pilot.pause(0.7)
             assert read_env(env_path)["SRC_IMAP_PASSWORD"] == "secret-value"
-            assert app.query_one("#config-panel").border_subtitle == "saved"
+            assert app.query_one("#config-panel").border_subtitle == "✓ saved"
             assert app.query("#save-form").nodes == []
+
+            await pilot.pause(1.5)
+            assert app.query_one("#config-panel").border_subtitle == ".env · autosave"
+
+    asyncio.run(run_test())
+
+
+def test_configuration_neutral_status_reports_environment_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAX_WORKERS", "7")
+
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            assert app.query_one("#config-panel").border_subtitle == "ENV override active"
+
+    asyncio.run(run_test())
+
+
+def test_configuration_invalid_status_remains_visible(tmp_path):
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#env-max-workers", Input).value = "0"
+            await pilot.pause(0.7)
+            assert app.query_one("#config-panel").border_subtitle == "✗ invalid: MAX_WORKERS"
+
+    asyncio.run(run_test())
+
+
+def test_valid_external_env_edit_reloads_form_and_readiness(tmp_path):
+    async def run_test():
+        env_path = tmp_path / ".env"
+        env_path.write_text('SRC_IMAP_HOST="old.example.com"\n', encoding="utf-8")
+        app = ImapToolsApp(env_path)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            env_path.write_text(
+                'SRC_IMAP_HOST="new.example.com"\nSRC_IMAP_USERNAME="user"\nSRC_IMAP_PASSWORD="secret"\n',
+                encoding="utf-8",
+            )
+            await pilot.pause(1.1)
+
+            assert app.query_one("#env-src-imap-host", Input).value == "new.example.com"
+            assert app.query_one("#env-src-imap-username", Input).value == "user"
+            assert app.query_one("#config-panel").border_subtitle == "✓ external .env reloaded"
+            assert not app.query_one("#run-operation", Button).disabled
+
+            env_path.write_text(
+                'SRC_IMAP_HOST="second.example.com"\nSRC_IMAP_USERNAME="other"\nSRC_IMAP_PASSWORD="new-secret"\n',
+                encoding="utf-8",
+            )
+            await pilot.pause(1.1)
+
+            assert app.query_one("#env-src-imap-host", Input).value == "second.example.com"
+            assert app.query_one("#env-src-imap-username", Input).value == "other"
+            assert app.configuration_watch_timer is not None
+
+    asyncio.run(run_test())
+
+
+def test_invalid_external_env_edit_leaves_form_unchanged(tmp_path):
+    async def run_test():
+        env_path = tmp_path / ".env"
+        env_path.write_text('MAX_WORKERS="4"\n', encoding="utf-8")
+        app = ImapToolsApp(env_path)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            env_path.write_text('MAX_WORKERS="0"\n', encoding="utf-8")
+            await pilot.pause(1.1)
+
+            assert app.query_one("#env-max-workers", Input).value == "4"
+            assert app.query_one("#config-panel").border_subtitle == "✗ external .env invalid"
+
+    asyncio.run(run_test())
+
+
+def test_valid_external_env_wins_over_pending_autosave(tmp_path):
+    async def run_test():
+        env_path = tmp_path / ".env"
+        env_path.write_text('SRC_IMAP_HOST="initial.example.com"\n', encoding="utf-8")
+        app = ImapToolsApp(env_path)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#env-src-imap-host", Input).value = "pending.example.com"
+            env_path.write_text('SRC_IMAP_HOST="external.example.com"\n', encoding="utf-8")
+            await pilot.pause(0.7)
+
+            assert read_env(env_path)["SRC_IMAP_HOST"] == "external.example.com"
+            assert app.query_one("#env-src-imap-host", Input).value == "external.example.com"
+            assert app.query_one("#config-panel").border_subtitle == "✓ external .env reloaded"
 
     asyncio.run(run_test())
 

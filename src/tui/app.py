@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections import deque
 from datetime import datetime, timezone
+from hashlib import sha256
 from pathlib import Path
 
 from textual import on, work
@@ -33,6 +34,7 @@ from tui.config import (
     discover_env,
     effective_values,
     read_env,
+    read_valid_env,
     save_form,
     validate,
 )
@@ -291,6 +293,11 @@ class ImapToolsApp(App[None]):
         self.pending_payload: object | None = None
         self.configuration_autosave_enabled = False
         self.configuration_save_timer: Timer | None = None
+        self.configuration_status_timer: Timer | None = None
+        self.configuration_watch_timer: Timer | None = None
+        self.configuration_reload_in_progress = False
+        self.configuration_file_digest = self.env_digest()
+        self.configuration_rejected_digest: str | None = None
 
     def compose(self) -> ComposeResult:
         values = self.values()
@@ -541,7 +548,95 @@ class ImapToolsApp(App[None]):
 
     def enable_configuration_autosave(self) -> None:
         self.configuration_autosave_enabled = True
-        self.query_one("#config-panel").border_subtitle = "autosave"
+        self.show_neutral_configuration_status()
+        self.configuration_watch_timer = self.set_interval(1.0, self.check_external_configuration)
+
+    def env_digest(self) -> str:
+        """Return a content fingerprint for the current env file."""
+        try:
+            return sha256(self.env_path.read_bytes()).hexdigest()
+        except OSError:
+            return "missing"
+
+    def check_external_configuration(self) -> None:
+        """Reload a valid env file when its content changes outside the TUI."""
+        digest = self.env_digest()
+        if digest == self.configuration_file_digest:
+            if self.configuration_rejected_digest is not None:
+                self.configuration_rejected_digest = None
+                self.show_neutral_configuration_status()
+            return
+        if digest == self.configuration_rejected_digest:
+            return
+        self.reload_external_configuration(digest)
+
+    def reload_external_configuration(self, digest: str) -> bool:
+        """Validate and apply an external env change without overwriting it."""
+        if digest == "missing":
+            self.reject_external_configuration(digest, "the .env file is missing")
+            return False
+        try:
+            file_values = read_valid_env(self.env_path)
+        except (OSError, ValueError) as exc:
+            self.reject_external_configuration(digest, str(exc))
+            return False
+        form_values = {field.name: file_values.get(field.name, field.default) for field in FIELDS}
+        errors = validate(form_values)
+        if errors:
+            name, message = next(iter(errors.items()))
+            self.reject_external_configuration(digest, f"{name}: {message}")
+            return False
+
+        pending_edit = self.configuration_save_timer is not None
+        if self.configuration_save_timer is not None:
+            self.configuration_save_timer.stop()
+            self.configuration_save_timer = None
+        self.configuration_file_digest = digest
+        self.configuration_rejected_digest = None
+        self.configuration_reload_in_progress = True
+        with self.prevent(Input.Changed, Select.Changed, Checkbox.Changed):
+            for field in FIELDS:
+                widget = self.query_one(f"#{_field_id(field.name)}")
+                value = form_values[field.name]
+                if isinstance(widget, Checkbox):
+                    widget.value = value.lower() == "true"
+                elif isinstance(widget, Select):
+                    widget.value = value if value else Select.BLANK
+                else:
+                    widget.value = value
+        self.call_after_refresh(self.finish_external_configuration_reload)
+        self.set_configuration_status("✓ external .env reloaded", reset_after=1.5)
+        if pending_edit:
+            self.notify("External .env reloaded; the pending form edit was discarded", severity="warning")
+        return True
+
+    def reject_external_configuration(self, digest: str, detail: str) -> None:
+        """Keep the form unchanged and report one warning per rejected file version."""
+        self.configuration_rejected_digest = digest
+        self.set_configuration_status("✗ external .env invalid")
+        self.notify(f"External .env not loaded: {detail}", severity="error")
+
+    def finish_external_configuration_reload(self) -> None:
+        """Resume form events and refresh configuration-dependent UI state."""
+        self.configuration_reload_in_progress = False
+        self.refresh_configuration()
+        self.select_operation(self.selected_operation)
+
+    def set_configuration_status(self, status: str, reset_after: float | None = None) -> None:
+        """Display Configuration save state and optionally return to neutral."""
+        if self.configuration_status_timer is not None:
+            self.configuration_status_timer.stop()
+            self.configuration_status_timer = None
+        self.query_one("#config-panel").border_subtitle = status
+        if reset_after is not None:
+            self.configuration_status_timer = self.set_timer(reset_after, self.show_neutral_configuration_status)
+
+    def show_neutral_configuration_status(self) -> None:
+        """Show autosave status while making OS environment precedence visible."""
+        self.configuration_status_timer = None
+        override_active = any(field.name in os.environ for field in FIELDS)
+        status = "ENV override active" if override_active else ".env · autosave"
+        self.query_one("#config-panel").border_subtitle = status
 
     def on_resize(self, event: Resize) -> None:
         was_responsive = self.has_class("narrow") or self.has_class("medium")
@@ -594,6 +689,12 @@ class ImapToolsApp(App[None]):
         if self.configuration_save_timer is not None:
             self.configuration_save_timer.stop()
             self.configuration_save_timer = None
+        if self.configuration_status_timer is not None:
+            self.configuration_status_timer.stop()
+            self.configuration_status_timer = None
+        if self.configuration_watch_timer is not None:
+            self.configuration_watch_timer.stop()
+            self.configuration_watch_timer = None
 
     def values(self) -> dict[str, str]:
         return {name: item.value for name, item in effective_values(self.env_path).items()}
@@ -810,11 +911,11 @@ class ImapToolsApp(App[None]):
             self.exit()
 
     def schedule_configuration_save(self, delay: float = 0.6) -> None:
-        if not self.configuration_autosave_enabled:
+        if not self.configuration_autosave_enabled or self.configuration_reload_in_progress:
             return
         if self.configuration_save_timer is not None:
             self.configuration_save_timer.stop()
-        self.query_one("#config-panel").border_subtitle = "unsaved"
+        self.set_configuration_status("● saving…")
         self.configuration_save_timer = self.set_timer(delay, self.save_configuration)
 
     def save_configuration(self) -> bool:
@@ -823,22 +924,28 @@ class ImapToolsApp(App[None]):
             self.configuration_save_timer = None
         if not self.query("#config-form").nodes:
             return False
+        digest = self.env_digest()
+        if digest != self.configuration_file_digest:
+            self.reload_external_configuration(digest)
+            return False
         values = self.form_values()
         errors = validate(values)
         if errors:
             name, message = next(iter(errors.items()))
-            self.query_one("#config-panel").border_subtitle = f"invalid: {name}"
+            self.set_configuration_status(f"✗ invalid: {name}")
             self.notify(f"{name}: {message}", severity="error")
             return False
         try:
             save_form(self.env_path, values)
         except (OSError, ValueError) as exc:
-            self.query_one("#config-panel").border_subtitle = "save failed"
+            self.set_configuration_status("✗ save failed")
             self.notify(f"Unable to save: {exc}", severity="error")
             return False
+        self.configuration_file_digest = self.env_digest()
+        self.configuration_rejected_digest = None
         self.refresh_configuration()
         self.select_operation(self.selected_operation)
-        self.query_one("#config-panel").border_subtitle = "saved"
+        self.set_configuration_status("✓ saved", reset_after=1.5)
         return True
 
     @on(Input.Changed, "#config-form Input")

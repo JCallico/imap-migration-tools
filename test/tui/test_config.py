@@ -13,6 +13,7 @@ from tui.config import (
     discover_env,
     effective_values,
     read_env,
+    read_valid_env,
     render_new_env,
     save_form,
     save_raw,
@@ -89,6 +90,17 @@ def test_raw_save_rejects_invalid_syntax(tmp_path):
     else:
         raise AssertionError("Invalid syntax was accepted")
     assert path.read_text(encoding="utf-8") == "GOOD=original\n"
+
+
+def test_read_valid_env_rejects_invalid_syntax(tmp_path):
+    path = tmp_path / ".env"
+    path.write_text('MAX_WORKERS="unterminated\n', encoding="utf-8")
+    try:
+        read_valid_env(path)
+    except ValueError as exc:
+        assert "Invalid .env syntax" in str(exc)
+    else:
+        raise AssertionError("Invalid syntax was accepted")
 
 
 def test_discover_env_walks_parents(tmp_path):

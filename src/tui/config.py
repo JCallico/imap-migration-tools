@@ -124,6 +124,15 @@ def read_env(path: Path) -> dict[str, str]:
     return {key: value or "" for key, value in dotenv_values(path).items()}
 
 
+def read_valid_env(path: Path) -> dict[str, str]:
+    """Parse an env file after rejecting malformed dotenv syntax."""
+    with path.open(encoding="utf-8") as stream:
+        invalid = [binding.original.line for binding in parse_stream(stream) if binding.error]
+    if invalid:
+        raise ValueError(f"Invalid .env syntax on line {invalid[0]}")
+    return read_env(path)
+
+
 def effective_values(path: Path, overrides: dict[str, str] | None = None) -> dict[str, EffectiveValue]:
     """Resolve values using TUI, OS, env-file, then schema defaults."""
     file_values = read_env(path)

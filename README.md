@@ -107,6 +107,10 @@ per-run choices, existing OS environment variables, `.env`, then defaults. Passw
 masked in the form; new `.env` files and saved history use owner-only permissions where the platform supports them.
 Destructive options require typing `DELETE` before a run starts.
 
+The TUI checks `.env` for external edits once per second. Valid changes automatically repopulate Configuration and
+refresh operation readiness. Invalid files leave the current form untouched and display an error. If an external edit
+arrives while a form autosave is pending, the valid external file takes precedence so it is not overwritten.
+
 Basic password authentication needs no additional authentication package. OAuth2 provider and encrypted cache
 dependencies are installed by the project. See [Installation](docs/installation.md) for platform and source setup.
 
