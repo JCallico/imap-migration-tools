@@ -289,6 +289,7 @@ class ImapToolsApp(App[None]):
         self.current_run_id: str | None = None
         self.selected_output_id: str | None = None
         self.history_writer: HistoryWriter | None = None
+        self.cancellation_requested = False
         self.pending_action = ""
         self.pending_payload: object | None = None
         self.configuration_autosave_enabled = False
@@ -901,6 +902,7 @@ class ImapToolsApp(App[None]):
         if action == "run":
             self.start_operation(payload)  # type: ignore[arg-type]
         elif action == "force-stop":
+            self.cancellation_requested = True
             self.runner.terminate()
         elif action == "delete-history":
             delete_record(str(payload))
@@ -1016,6 +1018,7 @@ class ImapToolsApp(App[None]):
         values = self.values()
         redactor = Redactor([values.get(name, "") for name in SECRET_NAMES])
         record = new_record(operation.name)
+        self.cancellation_requested = False
         self.current_run_id = record.run_id
         self.selected_output_id = record.run_id
         try:
@@ -1038,7 +1041,7 @@ class ImapToolsApp(App[None]):
         exit_code = -1
         try:
             exit_code = await self.runner.run(request, receive)
-            record.status = "completed" if exit_code == 0 else "failed"
+            record.status = "cancelled" if self.cancellation_requested else "completed" if exit_code == 0 else "failed"
             record.exit_code = exit_code
         except Exception as exc:
             record.status = "failed"
@@ -1057,7 +1060,8 @@ class ImapToolsApp(App[None]):
             self.query_one("#force-stop", Button).disabled = True
             self.query_one("#run-operation", Button).disabled = not readiness(operation.name, self.values()).ready
             self.refresh_history(self.selected_output_id)
-            self.notify(f"{operation.title} {record.status}", severity="information" if exit_code == 0 else "error")
+            severity = "warning" if record.status == "cancelled" else "information" if exit_code == 0 else "error"
+            self.notify(f"{operation.title} {record.status}", severity=severity)
 
     def _make_run_request(self, operation: OperationName, options: RunOptions) -> RunRequest:
         """Build a request containing only genuine per-operation environment overrides."""
@@ -1071,6 +1075,7 @@ class ImapToolsApp(App[None]):
 
     @work(exclusive=True, group="cancellation")
     async def cancel_operation(self) -> None:
+        self.cancellation_requested = True
         self.notify("Cancellation requested; waiting for cleanup", severity="warning")
         if not await self.runner.interrupt():
             self.query_one("#force-stop", Button).disabled = False

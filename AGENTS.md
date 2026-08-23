@@ -84,7 +84,9 @@ dependencies locally and cause collection failures in the clean CI matrix.
 
 ## Verification before handoff
 
-Do not stage or commit changes automatically. Only create a commit when the user explicitly asks for one.
+Never stage, commit, or push changes automatically. Only perform each operation when the user explicitly asks for that
+specific operation. A request to edit, fix, test, or otherwise prepare changes does not authorize staging, committing, or
+pushing them.
 
 Run focused tests while iterating. After the final edit and before every commit or push, always run the full test suite
 and the complete lint, format, and whitespace sequence:

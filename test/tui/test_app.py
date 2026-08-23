@@ -477,6 +477,49 @@ def test_operation_lifecycle_streams_output_and_finalizes_history(tmp_path, monk
     asyncio.run(run_test())
 
 
+def test_cancelled_operation_is_not_recorded_as_completed(tmp_path, monkeypatch):
+    records = []
+
+    class FakeWriter:
+        def __init__(self, record, _redactor):
+            self.record = record
+            records.append(record)
+
+        def write(self, line):
+            return line
+
+        def close(self):
+            pass
+
+    class GracefullyCancelledRunner:
+        active = True
+
+        async def run(self, _request, _receive):
+            while self.active:
+                await asyncio.sleep(0)
+            return 0
+
+        async def interrupt(self):
+            self.active = False
+            return True
+
+    monkeypatch.setattr(app_module, "HistoryWriter", FakeWriter)
+
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        app.runner = GracefullyCancelledRunner()
+        async with app.run_test(size=(160, 40)):
+            app.start_operation(RunOptions())
+            await asyncio.sleep(0)
+            app.cancel_operation()
+            await app.workers.wait_for_complete()
+
+            assert records[0].status == "cancelled"
+            assert records[0].exit_code == 0
+
+    asyncio.run(run_test())
+
+
 def test_operation_lifecycle_records_runner_and_history_failures(tmp_path, monkeypatch):
     class FailingWriter:
         def __init__(self, *_args):
