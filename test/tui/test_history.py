@@ -1,6 +1,7 @@
 """Tests for sanitized run history."""
 
 import os
+from unittest.mock import Mock
 
 from tui import history
 
@@ -62,3 +63,22 @@ def test_history_prunes_old_runs_by_count(tmp_path, monkeypatch):
     assert newer.exists()
     assert not older.exists()
     assert not (tmp_path / "older.log").exists()
+
+
+def test_history_writer_ignores_permission_hardening_failures(tmp_path, monkeypatch):
+    monkeypatch.setattr(history, "history_dir", lambda: tmp_path)
+    chmod = Mock(side_effect=OSError("unsupported"))
+    monkeypatch.setattr(history.os, "chmod", chmod)
+
+    writer = history.HistoryWriter(history.new_record("count"), history.Redactor([]))
+    writer.save()
+    writer.close()
+
+    assert chmod.call_count >= 2
+    assert writer.summary_path.exists()
+
+
+def test_history_directory_ignores_permission_hardening_failure(tmp_path, monkeypatch):
+    monkeypatch.setattr(history, "user_data_path", lambda *_args: tmp_path)
+    monkeypatch.setattr("pathlib.Path.chmod", Mock(side_effect=OSError("unsupported")))
+    assert history.history_dir() == tmp_path / "history"

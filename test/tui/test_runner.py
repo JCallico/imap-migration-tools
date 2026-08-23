@@ -6,7 +6,7 @@ import asyncio
 import sys
 from unittest.mock import AsyncMock, Mock
 
-from tui.runner import OperationRunner, RunRequest
+from tui.runner import OperationRunner, RunRequest, _display_environment
 
 
 def test_runner_streams_stdout_and_stderr(tmp_path):
@@ -97,5 +97,26 @@ def test_runner_streams_final_line_without_newline(tmp_path):
 
         assert await runner.run(request, receive) == 0
         assert lines[-1] == "tail"
+
+    asyncio.run(exercise())
+
+
+def test_display_environment_skips_empty_non_path_values():
+    assert _display_environment({"IMAP_HOST": "", "BACKUP_LOCAL_PATH": ""}) == ["BACKUP_LOCAL_PATH=''"]
+
+
+def test_windows_interrupt_and_terminate_use_process_methods(monkeypatch):
+    async def exercise():
+        runner = OperationRunner()
+        process = Mock(pid=123, returncode=None)
+        process.wait = AsyncMock(return_value=0)
+        runner.process = process
+        monkeypatch.setattr("tui.runner.os.name", "nt")
+        monkeypatch.setattr("tui.runner.signal.CTRL_BREAK_EVENT", 99, raising=False)
+
+        assert await runner.interrupt()
+        process.send_signal.assert_called_once_with(99)
+        runner.terminate()
+        process.terminate.assert_called_once()
 
     asyncio.run(exercise())

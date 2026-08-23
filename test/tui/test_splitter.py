@@ -117,3 +117,24 @@ def test_layout_is_restored_and_alt_zero_resets_it(tmp_path):
             assert load_layout(layout_path)["center-sidebar-handle"] == default_width
 
     asyncio.run(run_test())
+
+
+def test_splitter_guard_branches_and_horizontal_rendering(tmp_path):
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env", tmp_path / "layout.json")
+        async with app.run_test(size=(180, 50)) as pilot:
+            await pilot.pause()
+            vertical = app.query_one("#center-sidebar-handle", ResizeHandle)
+            horizontal = app.query_one("#operation-history-handle", ResizeHandle)
+
+            before = vertical.before_size
+            vertical.resize_pair(1, 1)
+            assert vertical.before_size == before
+
+            vertical._default_sizes = None
+            vertical.reset()
+            vertical.action_nudge_height(1)
+            horizontal.action_nudge_width(1)
+            assert str(horizontal.render()) == "─"
+
+    asyncio.run(run_test())

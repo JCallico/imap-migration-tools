@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, OptionList, RichLog, Select, Static
@@ -885,5 +886,310 @@ def test_history_uses_single_output_panel(tmp_path, monkeypatch):
             assert app.selected_output_id == "run-1"
             assert app.query_one("#output-log", RichLog).lines
             assert not app.query("TabbedContent").nodes
+
+    asyncio.run(run_test())
+
+
+def test_tool_button_checkbox_and_delete_confirmation_branches(tmp_path, monkeypatch):
+    notifications = []
+
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)) as pilot:
+            tool = app.query_one("#tool-compare")
+            tool.action_press()
+            assert app.selected_operation == "compare"
+            tool.on_click()
+
+            empty_checkbox = app_module.AsciiCheckbox("")
+            await app.mount(empty_checkbox)
+            assert empty_checkbox.render().plain == "[ ]"
+
+            app.request_confirmation("test", "Danger", None, True)
+            await pilot.pause()
+            modal = app.screen
+            assert isinstance(modal, ConfirmationModal)
+            monkeypatch.setattr(modal, "notify", lambda message, **_kwargs: notifications.append(message))
+            modal.action_yes()
+            assert notifications == ["Type DELETE exactly to confirm"]
+            modal.query_one("#confirm-input", Input).value = "DELETE"
+            modal.delete_submitted()
+            await pilot.pause()
+            assert app.pending_action == ""
+
+    asyncio.run(run_test())
+
+
+def test_external_configuration_missing_invalid_and_rejection_reset(tmp_path, monkeypatch):
+    notifications = []
+
+    async def run_test():
+        env_path = tmp_path / ".env"
+        env_path.write_text('MAX_WORKERS="4"\n', encoding="utf-8")
+        app = ImapToolsApp(env_path)
+        async with app.run_test(size=(160, 40)) as pilot:
+            monkeypatch.setattr(app, "notify", lambda message, **_kwargs: notifications.append(message))
+            await pilot.pause()
+
+            env_path.unlink()
+            assert not app.reload_external_configuration("missing")
+            assert "missing" in notifications[-1]
+
+            env_path.write_text('BROKEN="unterminated\n', encoding="utf-8")
+            invalid_digest = app.env_digest()
+            assert not app.reload_external_configuration(invalid_digest)
+            rejected = app.configuration_rejected_digest
+            app.check_external_configuration()
+            assert app.configuration_rejected_digest == rejected
+
+            app.configuration_file_digest = app.env_digest()
+            app.check_external_configuration()
+            assert app.configuration_rejected_digest is None
+
+    asyncio.run(run_test())
+
+
+def test_compare_run_options_cover_imap_and_local_modes(tmp_path):
+    async def run_test():
+        env_path = tmp_path / ".env"
+        env_path.write_text(
+            f'SRC_LOCAL_PATH="{tmp_path / "source"}"\nDEST_LOCAL_PATH="{tmp_path / "destination"}"\n',
+            encoding="utf-8",
+        )
+        app = ImapToolsApp(env_path)
+        async with app.run_test(size=(160, 40)) as pilot:
+            app.select_operation("compare")
+            source = app.query_one("#compare-source-mode", Select)
+            destination = app.query_one("#compare-dest-mode", Select)
+
+            source.value = "local"
+            destination.value = "imap"
+            await pilot.pause()
+            options = app.run_options()
+            assert options.source_path.endswith("source")
+            assert options.environment == {"DEST_LOCAL_PATH": ""}
+
+            source.value = "imap"
+            destination.value = "local"
+            await pilot.pause()
+            options = app.run_options()
+            assert options.destination_path.endswith("destination")
+            assert options.environment == {"SRC_LOCAL_PATH": ""}
+
+    asyncio.run(run_test())
+
+
+def test_confirmation_dispatches_force_delete_and_quit(tmp_path, monkeypatch):
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)):
+            app.runner = Mock(active=True)
+            app.runner.terminate = Mock()
+            monkeypatch.setattr(app, "refresh_history", Mock())
+            monkeypatch.setattr(app_module, "delete_record", Mock())
+            monkeypatch.setattr(app, "exit", Mock())
+
+            app.pending_action = "force-stop"
+            app.confirmation_dismissed(True)
+            app.runner.terminate.assert_called_once()
+
+            app.pending_action = "delete-history"
+            app.pending_payload = "run-1"
+            app.confirmation_dismissed(True)
+            app_module.delete_record.assert_called_once_with("run-1")
+            app.refresh_history.assert_called_once()
+
+            app.pending_action = "quit"
+            app.confirmation_dismissed(True)
+            assert app.runner.terminate.call_count == 2
+            app.exit.assert_called_once()
+
+            app.pending_action = "quit"
+            app.confirmation_dismissed(False)
+            assert app.pending_action == ""
+
+    asyncio.run(run_test())
+
+
+def test_save_prepare_cancel_history_export_and_focus_error_paths(tmp_path, monkeypatch):
+    notifications = []
+
+    async def run_test():
+        env_path = tmp_path / ".env"
+        env_path.write_text('SRC_LOCAL_PATH=""\nDEST_LOCAL_PATH=""\n', encoding="utf-8")
+        app = ImapToolsApp(env_path, tmp_path / "layout.json")
+        async with app.run_test(size=(160, 40)) as pilot:
+            monkeypatch.setattr(app, "notify", lambda message, **_kwargs: notifications.append(message))
+            await pilot.pause()
+
+            monkeypatch.setattr(app_module, "save_form", Mock(side_effect=OSError("read only")))
+            assert not app.save_configuration()
+            assert notifications[-1] == "Unable to save: read only"
+            monkeypatch.undo()
+
+    asyncio.run(run_test())
+
+    async def run_more():
+        monkeypatch.setattr(app_module, "load_records", lambda: [])
+        app = ImapToolsApp(tmp_path / ".env", tmp_path / "layout.json")
+        app.working_directory = tmp_path
+        async with app.run_test(size=(160, 40)) as pilot:
+            monkeypatch.setattr(app, "notify", lambda message, **_kwargs: notifications.append(message))
+            monkeypatch.setattr(app, "save_configuration", lambda: True)
+            monkeypatch.setattr(app, "selected_operation_readiness", lambda: app_module.Readiness(True, "ready"))
+            app.runner = Mock(active=True)
+            app.prepare_run()
+            assert notifications[-1] == "An operation is already running"
+
+            app.runner = Mock(active=False)
+            app.select_operation("compare")
+            app.query_one("#compare-source-mode", Select).value = "local"
+            app.query_one("#compare-dest-mode", Select).value = "imap"
+            app.prepare_run()
+            assert notifications[-1] == "SRC_LOCAL_PATH requires a path for local mode"
+
+            app.runner.interrupt = AsyncMock(return_value=False)
+            app.cancel_operation()
+            await app.workers.wait_for_complete()
+            assert not app.query_one("#force-stop", Button).disabled
+
+            assert app.selected_history_id() is None
+            app.view_history()
+            app.export_history()
+
+            table = app.query_one("#history-table", DataTable)
+            table.add_row("count", "done", "now", key="run-1")
+            table.move_cursor(row=0)
+            await pilot.pause()
+            assert app.selected_history_id() == "run-1"
+            monkeypatch.setattr(app_module, "read_log", lambda _run_id: "saved log\n")
+            app.export_history()
+            assert (tmp_path / "imap-tools-run-1.log").read_text(encoding="utf-8") == "saved log\n"
+
+            app.action_focus_config()
+            app.action_focus_log()
+            app.action_start_selected()
+            await pilot.pause()
+
+    asyncio.run(run_more())
+
+
+def test_remaining_layout_reload_history_and_quit_branches(tmp_path, monkeypatch):
+    notifications = []
+
+    async def run_test():
+        env_path = tmp_path / ".env"
+        env_path.write_text(
+            'DEST_IMAP_HOST="dest.example.com"\nDEST_IMAP_USERNAME="dest"\nDEST_IMAP_PASSWORD="secret"\n',
+            encoding="utf-8",
+        )
+        app = ImapToolsApp(env_path, tmp_path / "layout.json")
+        app.working_directory = tmp_path
+        async with app.run_test(size=(180, 50)) as pilot:
+            monkeypatch.setattr(app, "notify", lambda message, **_kwargs: notifications.append(message))
+            await pilot.pause()
+
+            labeled_checkbox = app_module.AsciiCheckbox("enabled")
+            await app.mount(labeled_checkbox)
+            assert "enabled" in labeled_checkbox.render().plain
+
+            app.add_class("narrow")
+            app.save_current_layout()
+            app.remove_class("narrow")
+            monkeypatch.setattr(app_module, "save_layout", Mock(side_effect=OSError("layout read only")))
+            app.save_current_layout()
+            assert notifications[-1] == "Could not save panel layout: layout read only"
+
+            pending = Mock()
+            app.configuration_save_timer = pending
+            env_path.write_text('MAX_WORKERS="8"\n', encoding="utf-8")
+            assert app.reload_external_configuration(app.env_digest())
+            pending.stop.assert_called_once()
+            assert "pending form edit was discarded" in notifications[-1]
+
+            count_mode = app.query_one("#count-mode", Select)
+            count_mode.value = "destination"
+            app.update_count_destination_option({})
+            assert count_mode.value == "source"
+
+            records = [RunRecord("run-1", "count", "2026-08-23T12:00:00", status="completed")]
+            monkeypatch.setattr(app_module, "load_records", lambda: records)
+            app.refresh_history("run-1")
+            assert app.selected_history_id() == "run-1"
+            monkeypatch.setattr(app_module, "read_log", lambda _run_id: "first\nmatching line\n")
+            app.query_one("#output-filter", Input).value = "matching"
+            app.filter_output()
+            assert len(app.query_one("#output-log", RichLog).lines) == 1
+
+            monkeypatch.setattr(app_module.Path, "write_text", Mock(side_effect=OSError("disk full")))
+            app.export_history()
+            assert notifications[-1] == "Could not export: disk full"
+
+            app.add_class("narrow")
+            app.action_reset_layout()
+            assert notifications[-1] == "Could not reset panel layout: layout read only"
+
+            app.configuration_autosave_enabled = True
+            monkeypatch.setattr(app, "save_configuration", lambda: False)
+            monkeypatch.setattr(app, "exit", Mock())
+            app.action_request_quit()
+            app.exit.assert_not_called()
+
+            monkeypatch.setattr(app, "save_configuration", lambda: True)
+            app.runner = Mock(active=False)
+            app.action_request_quit()
+            app.exit.assert_called_once()
+
+            app.runner = Mock(active=True)
+            monkeypatch.setattr(app, "request_confirmation", Mock())
+            app.action_request_quit()
+            app.request_confirmation.assert_called_once()
+
+    asyncio.run(run_test())
+
+
+def test_button_and_confirmation_dispatch_branches(tmp_path, monkeypatch):
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)):
+            monkeypatch.setattr(app, "prepare_run", Mock())
+            monkeypatch.setattr(app, "cancel_operation", Mock())
+            monkeypatch.setattr(app, "request_confirmation", Mock())
+            monkeypatch.setattr(app, "export_history", Mock())
+            monkeypatch.setattr(app, "selected_history_id", lambda: "run-1")
+
+            for button_id in (
+                "tool-backup",
+                "run-operation",
+                "cancel-run",
+                "force-stop",
+                "clear-output",
+                "export-history",
+                "delete-history",
+            ):
+                app.button_pressed(Button.Pressed(Button("test", id=button_id)))
+
+            assert app.selected_operation == "backup"
+            app.prepare_run.assert_called_once()
+            app.cancel_operation.assert_called_once()
+            assert app.request_confirmation.call_count == 2
+            app.export_history.assert_called_once()
+
+            start = Mock()
+            monkeypatch.setattr(app, "start_operation", start)
+            options = RunOptions()
+            app.pending_action = "run"
+            app.pending_payload = options
+            app.confirmation_dismissed(True)
+            start.assert_called_once_with(options)
+
+            old_timer = Mock()
+            new_timer = Mock()
+            app.configuration_autosave_enabled = True
+            app.configuration_save_timer = old_timer
+            monkeypatch.setattr(app, "set_timer", lambda *_args: new_timer)
+            app.schedule_configuration_save()
+            old_timer.stop.assert_called_once()
+            assert app.configuration_save_timer is new_timer
 
     asyncio.run(run_test())

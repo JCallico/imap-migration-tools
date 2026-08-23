@@ -6,6 +6,7 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
 from dotenv import dotenv_values
 
 from tui.config import (
@@ -123,3 +124,18 @@ def test_effective_precedence(tmp_path, monkeypatch):
 def test_validation_rejects_bad_types_and_placeholders():
     errors = validate({"MAX_WORKERS": "0", "GMAIL_MODE": "perhaps", "SRC_IMAP_PASSWORD": "your-app-password"})
     assert set(errors) == {"MAX_WORKERS", "GMAIL_MODE", "SRC_IMAP_PASSWORD"}
+
+
+def test_discovery_defaults_to_new_file_and_validation_rejects_choice(tmp_path):
+    assert discover_env(tmp_path) == tmp_path / ".env"
+    assert validate({"SRC_ACCOUNT_TYPE": "invalid"})["SRC_ACCOUNT_TYPE"].startswith("Choose one of:")
+
+
+def test_save_form_removes_temporary_file_when_replace_fails(tmp_path, monkeypatch):
+    path = tmp_path / ".env"
+    monkeypatch.setattr("tui.config.os.replace", lambda *_args: (_ for _ in ()).throw(OSError("replace failed")))
+
+    with pytest.raises(OSError, match="replace failed"):
+        save_form(path, {})
+
+    assert list(tmp_path.iterdir()) == []

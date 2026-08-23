@@ -84,6 +84,29 @@ def test_missing_account_authentication_highlights_both_choices():
     assert {"SRC_IMAP_PASSWORD", "SRC_OAUTH2_CLIENT_ID", "BACKUP_LOCAL_PATH"} == missing
 
 
+def test_count_alias_and_compare_local_required_settings():
+    count = {"IMAP_HOST": "imap.example.com", "IMAP_USERNAME": "user"}
+    required, missing = required_settings("count", count)
+    assert required == {"IMAP_HOST", "IMAP_USERNAME", "OAUTH2_CLIENT_ID"}
+    assert missing == {"OAUTH2_CLIENT_ID"}
+
+    compare = {"SRC_LOCAL_PATH": "/source", "DEST_LOCAL_PATH": "/destination"}
+    required, missing = required_settings("compare", compare)
+    assert required == {"SRC_LOCAL_PATH", "DEST_LOCAL_PATH"}
+    assert missing == set()
+
+    required, missing = required_settings("count", {"BACKUP_LOCAL_PATH": "/backup"})
+    assert required == {"BACKUP_LOCAL_PATH"}
+    assert missing == set()
+
+    _required, missing = required_settings("count", {})
+    assert {"SRC_IMAP_HOST", "SRC_IMAP_USERNAME", "SRC_IMAP_PASSWORD", "SRC_OAUTH2_CLIENT_ID"} <= missing
+
+
+def test_account_without_any_authentication_is_not_ready():
+    assert not readiness("backup", {"SRC_IMAP_HOST": "imap.example.com", "SRC_IMAP_USERNAME": "user"}).ready
+
+
 @pytest.mark.parametrize(
     ("operation", "prefixes"),
     (("backup", ("SRC",)), ("restore", ("DEST",)), ("migrate", ("SRC", "DEST")), ("compare", ("SRC", "DEST"))),
