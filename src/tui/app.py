@@ -148,11 +148,11 @@ Alt+1 … Alt+5   select Count, Compare, Backup, Restore, or Migrate
 Alt+C           focus Configuration
 Alt+O           focus Operation
 Alt+L           focus Output filter
-Alt+R           run the selected operation
+F5              run the selected operation
 Alt+0           reset the complete panel layout
 F1              open general help
 F2              open this keyboard reference
-Alt+Q           quit
+F10             quit
 
 NAVIGATION AND CONTROLS
 Tab / Shift+Tab move between controls
@@ -178,7 +178,7 @@ Enter account, authentication, local-path, and operation settings in Configurati
 Choose Count, Compare, Backup, Restore, or Migrate in Tools. The icon on the right indicates whether the current configuration is ready. Operation contains only choices specific to that run; shared settings remain in Configuration.
 
 3. RUN
-Review the Operation choices and use its run button or Alt+R. Destructive settings require an explicit confirmation. Cancel requests graceful shutdown; force stop becomes available if cleanup does not finish.
+Review the Operation choices and use its run button or F5. Destructive settings require an explicit confirmation. Cancel requests graceful shutdown; force stop becomes available if cleanup does not finish.
 
 4. REVIEW
 Every run is added to History immediately. Selecting a History row loads its sanitized log into Output. While the active row remains selected, Output follows the command in real time. Export saves the selected log in the project directory.
@@ -257,8 +257,8 @@ class ImapToolsApp(App[None]):
     ENABLE_COMMAND_PALETTE = False
     DEFAULT_KEY_LEGEND = (
         "[bold #388bff]Alt+1-5[/] tool   [bold #388bff]Alt+C/O/L[/] config/operation/log   "
-        "[bold #44dd55]Alt+R[/] run   [bold #e6d84a]drag/arrows[/] resize   "
-        "[bold #d45cff]F1/F2[/] help/keys   [bold #ff4d4d]Alt+Q[/] quit"
+        "[bold #44dd55]F5[/] run   [bold #e6d84a]drag/arrows[/] resize   "
+        "[bold #d45cff]F1/F2[/] help/keys   [bold #ff4d4d]F10[/] quit"
     )
     BINDINGS = [
         Binding("alt+1", "select_operation('count')", "count", show=False, priority=True),
@@ -269,11 +269,11 @@ class ImapToolsApp(App[None]):
         Binding("alt+c", "focus_config", "config", show=False, priority=True),
         Binding("alt+o", "focus_operation", "operation", show=False, priority=True),
         Binding("alt+l", "focus_log", "log", show=False, priority=True),
-        Binding("alt+r", "start_selected", "run", show=False, priority=True),
+        Binding("f5", "start_selected", "run", show=False, priority=True),
         Binding("alt+0", "reset_layout", "reset layout", show=False, priority=True),
         Binding("f1", "show_help", "help", show=False, priority=True),
         Binding("f2", "show_keys", "keys", show=False, priority=True),
-        Binding("alt+q", "request_quit", "quit", show=False, priority=True),
+        Binding("f10", "request_quit", "quit", show=False, priority=True),
     ]
 
     def __init__(self, env_path: Path | None = None, layout_path: Path | None = None) -> None:

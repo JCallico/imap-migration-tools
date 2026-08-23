@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+from textual import events
 from textual.widgets import Static
 
 from tui.app import OPERATION_PANEL_HEIGHTS, ImapToolsApp
@@ -136,5 +137,10 @@ def test_splitter_guard_branches_and_horizontal_rendering(tmp_path):
             vertical.action_nudge_height(1)
             horizontal.action_nudge_width(1)
             assert str(horizontal.render()) == "─"
+
+            ignored_down = events.MouseDown(vertical, 0, 0, 0, 0, 2, False, False, False)
+            vertical.on_mouse_down(ignored_down)
+            vertical.on_mouse_up(events.MouseUp(vertical, 0, 0, 0, 0, 1, False, False, False))
+            assert vertical._grabbed_at is None
 
     asyncio.run(run_test())

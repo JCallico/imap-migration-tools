@@ -203,6 +203,27 @@ def test_footer_advertises_help_and_keys(tmp_path):
             footer = str(app.query_one("#key-legend", Static).render())
             assert "F1/F2" in footer
             assert "help/keys" in footer
+            assert "F5" in footer
+            assert "F10" in footer
+            assert "Alt+R" not in footer
+            assert "Alt+Q" not in footer
+
+    asyncio.run(run_test())
+
+
+def test_function_keys_run_and_request_quit(tmp_path, monkeypatch):
+    calls = []
+
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)) as pilot:
+            monkeypatch.setattr(app, "action_start_selected", lambda: calls.append("run"))
+            monkeypatch.setattr(app, "action_request_quit", lambda: calls.append("quit"))
+
+            await pilot.press("f5", "f10")
+            await pilot.pause()
+
+            assert calls == ["run", "quit"]
 
     asyncio.run(run_test())
 
@@ -1194,3 +1215,17 @@ def test_button_and_confirmation_dispatch_branches(tmp_path, monkeypatch):
             assert app.configuration_save_timer is new_timer
 
     asyncio.run(run_test())
+
+
+def test_unmounted_and_entrypoint_guard_branches(tmp_path, monkeypatch):
+    app = ImapToolsApp(tmp_path / ".env")
+    monkeypatch.setattr(app, "query_one_optional", lambda _selector: None)
+    app.apply_responsive_layout(narrow=True)
+    monkeypatch.setattr(app, "query", lambda _selector: Mock(nodes=[]))
+    assert not app.save_configuration()
+
+    launched = Mock()
+    fake_app = Mock(run=launched)
+    monkeypatch.setattr(app_module, "ImapToolsApp", lambda: fake_app)
+    app_module.main()
+    launched.assert_called_once()

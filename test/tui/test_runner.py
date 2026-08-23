@@ -120,3 +120,24 @@ def test_windows_interrupt_and_terminate_use_process_methods(monkeypatch):
         process.terminate.assert_called_once()
 
     asyncio.run(exercise())
+
+
+def test_windows_runner_starts_a_new_process_group(tmp_path, monkeypatch):
+    async def exercise():
+        runner = OperationRunner()
+        process = Mock(returncode=0)
+        process.stdout = Mock()
+        process.stdout.read = AsyncMock(return_value=b"")
+        process.wait = AsyncMock(return_value=0)
+        create = AsyncMock(return_value=process)
+        monkeypatch.setattr("tui.runner.os.name", "nt")
+        monkeypatch.setattr("tui.runner.subprocess.CREATE_NEW_PROCESS_GROUP", 512, raising=False)
+        monkeypatch.setattr("tui.runner.asyncio.create_subprocess_exec", create)
+
+        async def receive(_line):
+            pass
+
+        assert await runner.run(RunRequest(["command"], tmp_path, {}), receive) == 0
+        assert create.call_args.kwargs["creationflags"] == 512
+
+    asyncio.run(exercise())
