@@ -48,6 +48,18 @@ pipx ensurepath
 pipx install imap-migration-tools
 ```
 
+Encrypted persistent OAuth2 token caching on Linux uses PyGObject and the system libsecret service. Install the native
+build and runtime libraries before selecting the `linux-keyring` extra. On Ubuntu or Debian:
+
+```bash
+sudo apt-get install gcc libcairo2-dev libgirepository-2.0-dev pkg-config python3-dev gir1.2-secret-1
+pipx install "imap-migration-tools[linux-keyring]"
+```
+
+Use your distribution's equivalent GObject introspection, Cairo, and libsecret packages on other Linux systems. If the
+extra or encrypted secret service is unavailable, OAuth authentication continues with process-local token caching and
+does not fall back to plaintext persistence.
+
 ### Windows
 
 Install Python from [python.org](https://www.python.org/downloads/windows/) and enable **Add Python to PATH**. Then run

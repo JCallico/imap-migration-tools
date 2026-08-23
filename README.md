@@ -111,8 +111,9 @@ The TUI checks `.env` for external edits once per second. Valid changes automati
 refresh operation readiness. Invalid files leave the current form untouched and display an error. If an external edit
 arrives while a form autosave is pending, the valid external file takes precedence so it is not overwritten.
 
-Basic password authentication needs no additional authentication package. OAuth2 provider and encrypted cache
-dependencies are installed by the project. See [Installation](docs/installation.md) for platform and source setup.
+Basic password authentication needs no additional authentication package. OAuth2 provider dependencies are installed
+by the project. Encrypted persistent caching on Linux requires the `linux-keyring` extra and native system libraries.
+See [Installation](docs/installation.md) for platform and source setup.
 
 ## Quick start
 

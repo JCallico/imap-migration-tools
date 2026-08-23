@@ -13,6 +13,17 @@ python3 -m venv .venv
 Python 3.9 and newer are supported. Read [AGENTS.md](../AGENTS.md) before contributing; it documents repository
 conventions, public compatibility requirements, and subsystem ownership.
 
+On Linux, developers who need to exercise encrypted persistent OAuth2 caching must install the native GObject
+introspection, Cairo, and libsecret prerequisites described in [Installation](installation.md), then install the
+optional keyring backend into the source environment:
+
+```bash
+.venv/bin/python -m pip install -e ".[linux-keyring]"
+```
+
+The base development environment omits PyGObject so project installation and CI remain portable on minimal or
+headless Linux systems. OAuth2 continues with process-local caching when the optional encrypted backend is absent.
+
 ## Repository layout
 
 | Location | Responsibility |
