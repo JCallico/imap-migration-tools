@@ -404,6 +404,142 @@ def test_run_request_does_not_flatten_configuration_into_os_environment(tmp_path
     assert "SRC_IMAP_PASSWORD" not in request.environment
 
 
+def test_operation_lifecycle_streams_output_and_finalizes_history(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text('SRC_IMAP_PASSWORD="very-secret"\n', encoding="utf-8")
+    records = []
+
+    class FakeWriter:
+        def __init__(self, record, redactor):
+            self.record = record
+            self.redactor = redactor
+            self.closed = False
+            records.append(self)
+
+        def write(self, line):
+            return self.redactor(line)
+
+        def close(self):
+            self.closed = True
+
+    class FakeRunner:
+        active = False
+
+        async def run(self, request, receive):
+            assert request.command[2:4] == ["-m", "imap_backup"]
+            await receive("SAVED very-secret")
+            await receive("SKIPPED existing message")
+            return 0
+
+    monkeypatch.setattr(app_module, "HistoryWriter", FakeWriter)
+
+    async def run_test():
+        app = ImapToolsApp(env_path)
+        app.runner = FakeRunner()
+        async with app.run_test(size=(160, 40)) as pilot:
+            app.select_operation("backup")
+            app.start_operation(RunOptions())
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            writer = records[0]
+            assert writer.record.status == "completed"
+            assert writer.record.exit_code == 0
+            assert writer.record.copied == 1
+            assert writer.record.skipped == 1
+            assert writer.closed
+            assert list(app.log_lines) == ["SAVED [REDACTED]", "SKIPPED existing message"]
+            assert app.history_writer is None
+            assert app.query_one("#cancel-run", Button).disabled
+
+    asyncio.run(run_test())
+
+
+def test_operation_lifecycle_records_runner_and_history_failures(tmp_path, monkeypatch):
+    class FailingWriter:
+        def __init__(self, *_args):
+            raise OSError("history is read-only")
+
+    class FailingRunner:
+        active = False
+
+        async def run(self, _request, _receive):
+            raise RuntimeError("runner exploded")
+
+    monkeypatch.setattr(app_module, "HistoryWriter", FailingWriter)
+
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        app.runner = FailingRunner()
+        async with app.run_test(size=(160, 40)):
+            app.start_operation(RunOptions())
+            await app.workers.wait_for_complete()
+
+            assert "TUI runner error: runner exploded" in app.log_lines
+            assert app.history_writer is None
+            assert app.query_one("#cancel-run", Button).disabled
+
+    asyncio.run(run_test())
+
+
+def test_prepare_run_rejects_invalid_and_missing_operation_values(tmp_path, monkeypatch):
+    notifications = []
+
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)):
+            monkeypatch.setattr(app, "notify", lambda message, **_kwargs: notifications.append(message))
+            monkeypatch.setattr(app, "save_configuration", lambda: False)
+            app.prepare_run()
+            assert notifications == []
+
+            monkeypatch.setattr(app, "save_configuration", lambda: True)
+            app.prepare_run()
+            assert notifications[-1] == "Configure the src account"
+
+            monkeypatch.setattr(app, "selected_operation_readiness", lambda: app_module.Readiness(True, "ready"))
+            monkeypatch.setattr(app, "run_options", lambda: RunOptions(workers=0))
+            app.prepare_run()
+            assert notifications[-1] == "Workers and batch size must be positive"
+
+            monkeypatch.setattr(app, "run_options", lambda: (_ for _ in ()).throw(ValueError))
+            app.prepare_run()
+            assert notifications[-1] == "Workers and batch size must be positive integers"
+
+    asyncio.run(run_test())
+
+
+def test_prepare_run_destructive_confirmation_names_both_accounts(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        'SRC_IMAP_HOST="source.example.com"\nSRC_IMAP_USERNAME="source"\nSRC_IMAP_PASSWORD="secret"\n'
+        'DEST_IMAP_HOST="dest.example.com"\nDEST_IMAP_USERNAME="destination"\nDEST_IMAP_PASSWORD="secret"\n'
+        'DELETE_FROM_SOURCE="true"\nDEST_DELETE="true"\n',
+        encoding="utf-8",
+    )
+    confirmations = []
+
+    async def run_test():
+        app = ImapToolsApp(env_path)
+        async with app.run_test(size=(160, 40)):
+            app.select_operation("migrate")
+            monkeypatch.setattr(
+                app,
+                "request_confirmation",
+                lambda action, message, payload, require_delete=False: confirmations.append(
+                    (action, message, payload, require_delete)
+                ),
+            )
+            app.prepare_run()
+            action, message, _payload, require_delete = confirmations[0]
+            assert action == "run"
+            assert "source source@source.example.com" in message
+            assert "destination destination@dest.example.com" in message
+            assert require_delete
+
+    asyncio.run(run_test())
+
+
 def test_count_defaults_to_imap_and_has_no_local_override(tmp_path):
     async def run_test():
         env_path = tmp_path / ".env"

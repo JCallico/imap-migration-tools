@@ -53,6 +53,37 @@ def test_backup_required_settings_identify_missing_path():
     assert missing == {"BACKUP_LOCAL_PATH"}
 
 
+def test_account_authentication_supports_password_and_provider_oauth():
+    google = {
+        "SRC_IMAP_HOST": "imap.gmail.com",
+        "SRC_IMAP_USERNAME": "user@gmail.com",
+        "SRC_OAUTH2_CLIENT_ID": "client-id",
+    }
+    _required, missing = required_settings("backup", google)
+    assert missing == {"SRC_OAUTH2_CLIENT_SECRET", "BACKUP_LOCAL_PATH"}
+    assert not readiness("backup", google).ready
+
+    google["SRC_OAUTH2_CLIENT_SECRET"] = "client-secret"
+    google["BACKUP_LOCAL_PATH"] = "/backup"
+    assert readiness("backup", google).ready
+
+    microsoft = {
+        "SRC_IMAP_HOST": "outlook.office365.com",
+        "SRC_IMAP_USERNAME": "user@example.com",
+        "SRC_OAUTH2_CLIENT_ID": "client-id",
+        "BACKUP_LOCAL_PATH": "/backup",
+    }
+    _required, missing = required_settings("backup", microsoft)
+    assert missing == set()
+    assert readiness("backup", microsoft).ready
+
+
+def test_missing_account_authentication_highlights_both_choices():
+    values = {"SRC_IMAP_HOST": "imap.example.com", "SRC_IMAP_USERNAME": "user"}
+    _required, missing = required_settings("backup", values)
+    assert {"SRC_IMAP_PASSWORD", "SRC_OAUTH2_CLIENT_ID", "BACKUP_LOCAL_PATH"} == missing
+
+
 @pytest.mark.parametrize(
     ("operation", "prefixes"),
     (("backup", ("SRC",)), ("restore", ("DEST",)), ("migrate", ("SRC", "DEST")), ("compare", ("SRC", "DEST"))),
@@ -152,3 +183,18 @@ def test_output_parser_is_best_effort():
     parse_output("unfamiliar output remains harmless", state)
     assert (state.current, state.total) == (4, 10)
     assert (state.copied, state.skipped, state.failed) == (1, 1, 1)
+
+
+def test_output_parser_handles_percentage_folder_and_deletion():
+    state = ProgressState()
+    parse_output("Progress: 42.8%", state)
+    parse_output("Processing Folder: Projects -", state)
+    parse_output("DELETED old message", state)
+    assert (state.current, state.total) == (42, 100)
+    assert state.phase == "Folder: Projects"
+    assert state.deleted == 1
+
+
+def test_unknown_switch_is_ignored():
+    command = build_command(OPERATION_BY_NAME["backup"], RunOptions(switches={"UNKNOWN": True}))
+    assert "UNKNOWN" not in " ".join(command)

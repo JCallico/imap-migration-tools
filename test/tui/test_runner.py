@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from unittest.mock import AsyncMock, Mock
 
 from tui.runner import OperationRunner, RunRequest
 
@@ -45,5 +46,56 @@ def test_runner_interrupts_process_group(tmp_path):
         await asyncio.wait_for(ready.wait(), 5)
         assert await runner.interrupt()
         assert await task != 0
+
+    asyncio.run(exercise())
+
+
+def test_interrupt_without_active_process_is_already_complete():
+    assert asyncio.run(OperationRunner().interrupt())
+
+
+def test_interrupt_timeout_enables_force_stop(monkeypatch):
+    async def exercise():
+        runner = OperationRunner()
+        process = Mock(pid=123, returncode=None)
+        process.wait = AsyncMock()
+        runner.process = process
+        monkeypatch.setattr("tui.runner.os.killpg", Mock())
+
+        async def timeout(_awaitable, timeout):
+            assert timeout == 5
+            _awaitable.close()
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr("tui.runner.asyncio.wait_for", timeout)
+        assert not await runner.interrupt()
+
+    asyncio.run(exercise())
+
+
+def test_interrupt_and_terminate_ignore_disappeared_process(monkeypatch):
+    async def exercise():
+        runner = OperationRunner()
+        runner.process = Mock(pid=123, returncode=None)
+        killpg = Mock(side_effect=ProcessLookupError)
+        monkeypatch.setattr("tui.runner.os.killpg", killpg)
+        assert await runner.interrupt()
+        runner.terminate()
+        assert killpg.call_count == 2
+
+    asyncio.run(exercise())
+
+
+def test_runner_streams_final_line_without_newline(tmp_path):
+    async def exercise():
+        lines = []
+        runner = OperationRunner()
+        request = RunRequest([sys.executable, "-u", "-c", "print('tail', end='')"], tmp_path, {})
+
+        async def receive(line):
+            lines.append(line)
+
+        assert await runner.run(request, receive) == 0
+        assert lines[-1] == "tail"
 
     asyncio.run(exercise())
