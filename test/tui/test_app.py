@@ -5,28 +5,137 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from textual.widgets import Button, Checkbox, DataTable, Input, OptionList, RichLog, Select, Static
+from textual.widgets import Button, Checkbox, DataTable, Input, Label, OptionList, RichLog, Select, Static
 
 import tui.app as app_module
-from tui.app import ConfirmationModal, ImapToolsApp, InformationModal
+from tui.app import OPERATION_PANEL_HEIGHTS, ConfirmationModal, ImapToolsApp, InformationModal
 from tui.config import read_env
+from tui.history import RunRecord
+from tui.layout import load_layout
 from tui.operations import RunOptions
+from tui.splitter import ResizeHandle
 
 
 @pytest.mark.parametrize(
-    ("size", "narrow"), [((60, 20), True), ((80, 24), True), ((130, 40), True), ((134, 40), False), ((180, 50), False)]
+    ("size", "mode"),
+    [
+        ((60, 20), "narrow"),
+        ((89, 30), "narrow"),
+        ((90, 40), "medium"),
+        ((140, 40), "medium"),
+        ((141, 40), "wide"),
+        ((180, 50), "wide"),
+    ],
 )
-def test_app_uses_one_responsive_workspace(tmp_path, size, narrow):
+def test_app_uses_one_responsive_workspace(tmp_path, size, mode):
     async def run_test():
         app = ImapToolsApp(tmp_path / ".env")
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
             assert len(app.screen_stack) == 1
             assert len(app.query(".panel")) == 5
-            assert app.has_class("narrow") is narrow
-            if not narrow:
+            assert app.has_class("narrow") is (mode == "narrow")
+            assert app.has_class("medium") is (mode == "medium")
+            if mode == "wide":
                 assert app.query_one("#center-column").region.x < app.query_one("#sidebar").region.x
                 assert app.query_one("#sidebar").region.x < app.query_one("#right-column").region.x
+            elif mode == "medium":
+                assert app.query_one("#center-column").region.x < app.query_one("#sidebar").region.x
+                assert app.query_one("#right-column").region.y > app.query_one("#center-column").region.y
+            else:
+                widths = {
+                    app.query_one("#center-column").region.width,
+                    app.query_one("#sidebar").region.width,
+                    app.query_one("#right-column").region.width,
+                }
+                assert len(widths) == 1
+
+    asyncio.run(run_test())
+
+
+def test_wide_splitter_dimensions_are_cleared_in_narrow_mode_and_restored(tmp_path):
+    async def run_test():
+        layout_path = tmp_path / "layout.json"
+        app = ImapToolsApp(tmp_path / ".env", layout_path)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await pilot.pause()
+            handle = app.query_one("#center-sidebar-handle", ResizeHandle)
+            handle.focus()
+            await pilot.press("right", "right")
+            await pilot.pause()
+            customized_width = app.query_one("#center-column").region.width
+
+            await pilot.resize_terminal(80, 40)
+            await pilot.pause()
+            assert app.has_class("narrow")
+            widths = {
+                app.query_one("#center-column").region.width,
+                app.query_one("#sidebar").region.width,
+                app.query_one("#right-column").region.width,
+            }
+            assert len(widths) == 1
+            assert app.query_one("#tools-panel").region.height == 7
+            assert app.query_one("#history-panel").region.height == 12
+            assert app.query_one("#monitor-panel").region.height >= 18
+
+            await pilot.resize_terminal(180, 50)
+            await pilot.pause()
+            assert not app.has_class("narrow")
+            assert not app.has_class("medium")
+            assert app.query_one("#center-column").region.width == customized_width
+
+    asyncio.run(run_test())
+
+
+def test_narrow_operation_height_and_layout_reset_remain_responsive(tmp_path):
+    async def run_test():
+        layout_path = tmp_path / "layout.json"
+        app = ImapToolsApp(tmp_path / ".env", layout_path)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await pilot.pause()
+            handle = app.query_one("#center-sidebar-handle", ResizeHandle)
+            handle.focus()
+            await pilot.press("right")
+            await pilot.pause()
+            assert load_layout(layout_path)
+
+            await pilot.resize_terminal(80, 40)
+            await pilot.pause()
+            app.select_operation("compare")
+            await pilot.pause()
+            assert app.query_one("#operation-panel").region.height == OPERATION_PANEL_HEIGHTS["compare"]
+            assert app.query_one("#sidebar").region.height == 19 + OPERATION_PANEL_HEIGHTS["compare"]
+
+            await pilot.press("alt+0")
+            await pilot.pause()
+            widths = {
+                app.query_one("#center-column").region.width,
+                app.query_one("#sidebar").region.width,
+                app.query_one("#right-column").region.width,
+            }
+            assert len(widths) == 1
+            assert load_layout(layout_path) == {}
+
+    asyncio.run(run_test())
+
+
+def test_reset_layout_keeps_full_history_started_column_visible(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        app_module,
+        "load_records",
+        lambda: [RunRecord("run-1", "migrate", "2026-08-23T12:34:56+00:00", status="completed")],
+    )
+
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env", tmp_path / "layout.json")
+        async with app.run_test(size=(180, 50)) as pilot:
+            await pilot.pause()
+            await pilot.press("alt+0")
+            await pilot.pause()
+            table = app.query_one("#history-table", DataTable)
+            started = list(table.columns.values())[2]
+            assert started.width == len("2026-08-23T12:34:56")
+            assert table.virtual_size.width <= table.region.width
 
     asyncio.run(run_test())
 
@@ -142,9 +251,15 @@ def test_configuration_is_one_form_populated_with_defaults(tmp_path):
             await pilot.pause()
             assert app.query_one("#config-panel").border_title == "Configuration"
             section_titles = list(app.query(".group-title"))
-            assert len(section_titles) == 10
+            assert len(section_titles) == 9
             assert all(title.region.height == 1 for title in section_titles)
             assert all("imap-count aliases" not in str(title.render()) for title in section_titles)
+            assert all("Microsoft account type overrides" not in str(title.render()) for title in section_titles)
+            oauth_title = next(title for title in section_titles if str(title.render()).strip().endswith("OAuth2"))
+            assert oauth_title.region.y < app.query_one("#env-src-account-type").region.y
+            assert (
+                app.query_one("#env-dest-account-type").region.y < app.query_one("#env-oauth2-cache-enabled").region.y
+            )
             assert app.query("#env-imap-host").nodes == []
             assert app.query("#env-oauth2-client-id").nodes == []
             assert app.query("#config-tabs").nodes == []
@@ -185,7 +300,7 @@ def test_sidebar_keeps_simplified_operations_compact(tmp_path):
             app.select_operation("migrate")
             await pilot.pause()
 
-            assert app.query_one("#operation-panel").region.height == count_height
+            assert app.query_one("#operation-panel").region.height > count_height
             assert app.query("#migrate-cache").nodes == []
             assert app.query(".option-control").nodes == []
             assert app.query("#compare-source-path").nodes == []
@@ -194,7 +309,7 @@ def test_sidebar_keeps_simplified_operations_compact(tmp_path):
     asyncio.run(run_test())
 
 
-@pytest.mark.parametrize("operation", ("compare", "restore"))
+@pytest.mark.parametrize("operation", ("count", "compare", "backup", "restore", "migrate"))
 def test_operation_panel_does_not_scroll_when_controls_fit(tmp_path, operation):
     async def run_test():
         app = ImapToolsApp(tmp_path / ".env")
@@ -202,6 +317,55 @@ def test_operation_panel_does_not_scroll_when_controls_fit(tmp_path, operation):
             app.select_operation(operation)
             await pilot.pause()
             assert app.query_one("#operation-panel").max_scroll_y == 0
+
+    asyncio.run(run_test())
+
+
+def test_migrate_shows_fixed_account_endpoints(tmp_path):
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(180, 50)) as pilot:
+            app.select_operation("migrate")
+            await pilot.pause()
+
+            source = app.query_one("#migrate-source-mode", Select)
+            destination = app.query_one("#migrate-dest-mode", Select)
+            assert source.value == "imap"
+            assert destination.value == "imap"
+            assert source.disabled
+            assert destination.disabled
+            assert not source.has_class("hidden")
+            assert not destination.has_class("hidden")
+            assert all(widget.has_class("hidden") for widget in app.query(".compare-control"))
+
+    asyncio.run(run_test())
+
+
+@pytest.mark.parametrize(
+    ("operation", "source_id", "source_value", "destination_id", "destination_value"),
+    (
+        ("backup", "#backup-source-mode", "source", "#backup-dest-mode", "local"),
+        ("restore", "#restore-source-mode", "local", "#restore-dest-mode", "destination"),
+    ),
+)
+def test_transfer_operations_show_fixed_endpoints(
+    tmp_path, operation, source_id, source_value, destination_id, destination_value
+):
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(180, 50)) as pilot:
+            app.select_operation(operation)
+            await pilot.pause()
+
+            source = app.query_one(source_id, Select)
+            destination = app.query_one(destination_id, Select)
+            assert source.value == source_value
+            assert destination.value == destination_value
+            assert source.disabled
+            assert destination.disabled
+            assert not source.has_class("hidden")
+            assert not destination.has_class("hidden")
+            assert not app.query_one(".folder-label").has_class("hidden")
 
     asyncio.run(run_test())
 
@@ -215,7 +379,7 @@ def test_transfer_options_use_configuration_performance_values(tmp_path):
             await pilot.pause()
             app.select_operation("backup")
             options = app.run_options()
-            assert app.query_one(".folder-label").has_class("hidden")
+            assert not app.query_one(".folder-label").has_class("hidden")
             assert options.workers == 7
             assert options.batch == 25
             assert app.query("#workers").nodes == []
@@ -252,7 +416,7 @@ def test_count_defaults_to_imap_and_has_no_local_override(tmp_path):
         async with app.run_test(size=(160, 40)) as pilot:
             await pilot.pause()
             assert app.query("#count-path").nodes == []
-            assert app.query(".count-control.control-label").nodes == []
+            assert str(app.query_one(".count-control.control-label", Label).render()) == "Source"
 
             count_mode = app.query_one("#count-mode", Select)
             assert count_mode.value == "source"

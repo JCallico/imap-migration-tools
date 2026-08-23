@@ -18,7 +18,7 @@ Screen {
 }
 
 #sidebar {
-    width: 40;
+    width: 47;
     min-width: 24;
     height: 100%;
 }
@@ -330,24 +330,60 @@ DataTable > .datatable--cursor {
     padding: 0 1;
 }
 
+.medium #workspace {
+    layout: grid;
+    grid-size: 2 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: 29 1fr;
+    overflow-y: auto;
+}
+
+.medium #center-column, .medium #sidebar {
+    width: 100%;
+    min-width: 0;
+    height: 29;
+}
+
+.medium #right-column {
+    column-span: 2;
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+    min-height: 18;
+}
+
+.medium .resize-handle, .narrow .resize-handle {
+    display: none;
+}
+
 .narrow #workspace {
     layout: vertical;
     overflow-y: auto;
 }
 
 .narrow #sidebar, .narrow #center-column, .narrow #right-column {
-    width: 100% !important;
+    width: 100%;
     min-width: 0;
     height: auto;
 }
 
-.narrow .vertical-handle {
-    display: none;
+.narrow #center-column {
+    height: 24;
 }
 
-.narrow #tools-panel, .narrow #history-panel, .narrow #config-panel, .narrow #operation-panel,
-.narrow #monitor-panel {
-    width: 100%;
+.narrow #tools-panel {
+    height: 7;
+}
+
+.narrow #history-panel {
+    height: 12;
+    min-height: 12;
+}
+
+.narrow #right-column {
     height: 18;
-    min-height: 8;
+}
+
+.narrow #monitor-panel {
+    min-height: 18;
 }

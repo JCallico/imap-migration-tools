@@ -239,11 +239,11 @@ OPERATION_SWITCHES: dict[str, tuple[str, ...]] = {
 }
 
 OPERATION_PANEL_HEIGHTS: dict[OperationName, int] = {
-    "count": 5,
+    "count": 6,
     "compare": 8,
-    "backup": 5,
-    "restore": 6,
-    "migrate": 5,
+    "backup": 10,
+    "restore": 10,
+    "migrate": 8,
 }
 
 
@@ -352,6 +352,7 @@ class ImapToolsApp(App[None]):
                     id="tools-operation-handle",
                 )
                 with VerticalScroll(id="operation-panel", classes="panel"):
+                    yield Label("Source", classes="count-control control-label")
                     yield Select(
                         (
                             ("source account", "source"),
@@ -364,21 +365,81 @@ class ImapToolsApp(App[None]):
                         id="count-mode",
                         classes="count-control",
                     )
-                    yield Label("Source side", classes="compare-control control-label")
+                    yield Label("Source", classes="compare-control control-label")
                     yield Select(
-                        (("automatic", "auto"), ("source IMAP", "imap"), ("local path", "local")),
+                        (("automatic", "auto"), ("source account", "imap"), ("local backup", "local")),
                         value="auto",
                         compact=True,
                         id="compare-source-mode",
                         classes="compare-control",
                     )
-                    yield Label("Destination side", classes="compare-control control-label")
+                    yield Label("Destination", classes="compare-control control-label")
                     yield Select(
-                        (("automatic", "auto"), ("destination IMAP", "imap"), ("local path", "local")),
+                        (("automatic", "auto"), ("destination account", "imap"), ("local backup", "local")),
                         value="auto",
                         compact=True,
                         id="compare-dest-mode",
                         classes="compare-control",
+                    )
+                    yield Label("Source", classes="migrate-control control-label")
+                    yield Select(
+                        (("source account", "imap"),),
+                        value="imap",
+                        allow_blank=False,
+                        compact=True,
+                        disabled=True,
+                        id="migrate-source-mode",
+                        classes="migrate-control",
+                    )
+                    yield Label("Destination", classes="migrate-control control-label")
+                    yield Select(
+                        (("destination account", "imap"),),
+                        value="imap",
+                        allow_blank=False,
+                        compact=True,
+                        disabled=True,
+                        id="migrate-dest-mode",
+                        classes="migrate-control",
+                    )
+                    yield Label("Source", classes="backup-control control-label")
+                    yield Select(
+                        (("source account", "source"),),
+                        value="source",
+                        allow_blank=False,
+                        compact=True,
+                        disabled=True,
+                        id="backup-source-mode",
+                        classes="backup-control",
+                    )
+                    yield Label("Destination", classes="backup-control control-label")
+                    yield Select(
+                        (("local backup", "local"),),
+                        value="local",
+                        allow_blank=False,
+                        compact=True,
+                        disabled=True,
+                        id="backup-dest-mode",
+                        classes="backup-control",
+                    )
+                    yield Label("Source", classes="restore-control control-label")
+                    yield Select(
+                        (("local backup", "local"),),
+                        value="local",
+                        allow_blank=False,
+                        compact=True,
+                        disabled=True,
+                        id="restore-source-mode",
+                        classes="restore-control",
+                    )
+                    yield Label("Destination", classes="restore-control control-label")
+                    yield Select(
+                        (("destination account", "destination"),),
+                        value="destination",
+                        allow_blank=False,
+                        compact=True,
+                        disabled=True,
+                        id="restore-dest-mode",
+                        classes="restore-control",
                     )
                     yield Label("Only this folder", classes="transfer-control control-label folder-label")
                     yield Input(id="folder", placeholder="leave empty for all folders", classes="transfer-control")
@@ -420,7 +481,9 @@ class ImapToolsApp(App[None]):
         for widget_id, title in titles.items():
             self.query_one(f"#{widget_id}").border_title = title
         history = self.query_one("#history-table", DataTable)
-        history.add_columns("operation", "status", "started")
+        history.add_column("operation", width=9)
+        history.add_column("status", width=9)
+        history.add_column("started", width=19)
         self.refresh_configuration()
         self.refresh_history()
         self.select_operation("count")
@@ -438,7 +501,7 @@ class ImapToolsApp(App[None]):
 
     def initialize_layout(self) -> None:
         """Capture defaults and restore saved wide-screen panel sizes."""
-        if self.has_class("narrow"):
+        if self.has_class("narrow") or self.has_class("medium"):
             return
         handles = self.resize_handles()
         for handle in handles:
@@ -452,7 +515,7 @@ class ImapToolsApp(App[None]):
 
     def save_current_layout(self) -> None:
         """Persist the current leading-pane size for every splitter."""
-        if self.has_class("narrow") or (self.is_headless and not self.layout_path_explicit):
+        if self.has_class("narrow") or self.has_class("medium") or (self.is_headless and not self.layout_path_explicit):
             return
         sizes = {handle.id: handle.before_size for handle in self.resize_handles() if handle.id}
         try:
@@ -481,11 +544,51 @@ class ImapToolsApp(App[None]):
         self.query_one("#config-panel").border_subtitle = "autosave"
 
     def on_resize(self, event: Resize) -> None:
-        was_narrow = self.has_class("narrow")
-        is_narrow = event.size.width < 134
+        was_responsive = self.has_class("narrow") or self.has_class("medium")
+        is_narrow = event.size.width < 90
+        is_medium = 90 <= event.size.width < 141
         self.set_class(is_narrow, "narrow")
-        if was_narrow and not is_narrow and self.is_mounted:
-            self.call_after_refresh(self.initialize_layout)
+        self.set_class(is_medium, "medium")
+        if is_narrow or is_medium:
+            self.apply_responsive_layout(is_narrow)
+        elif was_responsive and self.is_mounted:
+            self.restore_wide_layout()
+
+    def apply_responsive_layout(self, narrow: bool) -> None:
+        """Remove splitter dimensions and apply medium or narrow panel sizing."""
+        for widget_id in ("center-column", "sidebar", "right-column"):
+            widget = self.query_one_optional(f"#{widget_id}")
+            if widget is not None:
+                widget.styles.width = None
+                widget.styles.height = None
+        operation = self.query_one_optional("#operation-panel")
+        if operation is None:
+            return
+        operation.styles.height = OPERATION_PANEL_HEIGHTS[self.selected_operation]
+        self.query_one("#tools-panel").styles.height = 7
+        if narrow:
+            self.query_one("#center-column").styles.height = 24
+            self.query_one("#sidebar").styles.height = 19 + OPERATION_PANEL_HEIGHTS[self.selected_operation]
+            self.query_one("#history-panel").styles.height = 12
+            self.query_one("#right-column").styles.height = 18
+        else:
+            self.query_one("#center-column").styles.height = 29
+            self.query_one("#sidebar").styles.height = 29
+            self.query_one("#history-panel").styles.height = "1fr"
+            self.query_one("#right-column").styles.height = "1fr"
+
+    def restore_wide_layout(self) -> None:
+        """Restore CSS defaults, followed by the user's persisted desktop sizes."""
+        self.query_one("#center-column").styles.width = "2fr"
+        self.query_one("#sidebar").styles.width = 47
+        self.query_one("#right-column").styles.width = "3fr"
+        self.query_one("#center-column").styles.height = "100%"
+        self.query_one("#sidebar").styles.height = "100%"
+        self.query_one("#right-column").styles.height = "100%"
+        self.query_one("#tools-panel").styles.height = 7
+        self.query_one("#operation-panel").styles.height = OPERATION_PANEL_HEIGHTS[self.selected_operation]
+        self.query_one("#history-panel").styles.height = "1fr"
+        self.call_after_refresh(self.initialize_layout)
 
     def on_unmount(self) -> None:
         if self.configuration_save_timer is not None:
@@ -551,6 +654,8 @@ class ImapToolsApp(App[None]):
         spec = OPERATION_BY_NAME[operation]
         self.query_one("#operation-panel").border_title = f"Operation · {spec.title}"
         self.query_one("#operation-panel").styles.height = OPERATION_PANEL_HEIGHTS[operation]
+        if self.has_class("narrow"):
+            self.query_one("#sidebar").styles.height = 19 + OPERATION_PANEL_HEIGHTS[operation]
         self.highlight_required_settings()
         run_button = self.query_one("#run-operation", Button)
         run_button.label = f"run {operation}"
@@ -559,9 +664,15 @@ class ImapToolsApp(App[None]):
             widget.set_class(operation != "count", "hidden")
         for widget in self.query(".compare-control"):
             widget.set_class(operation != "compare", "hidden")
+        for widget in self.query(".migrate-control"):
+            widget.set_class(operation != "migrate", "hidden")
+        for widget in self.query(".backup-control"):
+            widget.set_class(operation != "backup", "hidden")
+        for widget in self.query(".restore-control"):
+            widget.set_class(operation != "restore", "hidden")
         for widget in self.query(".transfer-control"):
             widget.set_class(operation not in {"backup", "restore"}, "hidden")
-        self.query_one(".folder-label").set_class(operation != "restore", "hidden")
+        self.query_one(".folder-label").set_class(operation not in {"backup", "restore"}, "hidden")
         for candidate in OPERATIONS:
             self.query_one(f"#tool-{candidate.name}", ToolButton).set_class(candidate.name == operation, "selected")
 
@@ -929,8 +1040,18 @@ class ImapToolsApp(App[None]):
         self.prepare_run()
 
     def action_reset_layout(self) -> None:
+        if self.has_class("narrow") or self.has_class("medium"):
+            if not self.is_headless or self.layout_path_explicit:
+                try:
+                    save_layout(self.layout_path, {})
+                except OSError as exc:
+                    self.notify(f"Could not reset panel layout: {exc}", severity="warning")
+                    return
+            self.apply_responsive_layout(self.has_class("narrow"))
+            self.notify("Panel layout reset")
+            return
         self.query_one("#center-column").styles.width = "2fr"
-        self.query_one("#sidebar").styles.width = 40
+        self.query_one("#sidebar").styles.width = 47
         self.query_one("#right-column").styles.width = "3fr"
         self.query_one("#tools-panel").styles.height = 7
         self.query_one("#operation-panel").styles.height = OPERATION_PANEL_HEIGHTS[self.selected_operation]

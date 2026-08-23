@@ -48,7 +48,6 @@ def test_schema_sections_match_env_example_order():
         "Destination Account",
         "OAuth2",
         "Local paths",
-        "Microsoft account type overrides",
         "Shared options",
         "Migration options",
         "Backup options",

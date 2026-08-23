@@ -78,6 +78,8 @@ The interface provides a guided autosaving `.env` form, operation-specific confi
 history-backed output view, cancellation, and local run history. Existing commands remain available and are launched
 as isolated subprocesses by the interface.
 
+![IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels](docs/images/tui-overview.jpg)
+
 To run the TUI directly from the project folder without installing the package, first install the development
 dependencies in `.venv`, then run:
 
@@ -92,6 +94,10 @@ Drag the visible `│` and `─` separators between panels to resize adjacent co
 keyboard accessible: focus one with `Tab`, then use the arrow keys shown in the footer. Double-click a separator to
 reset it, or press `Alt+0` to reset the complete layout. Customized panel sizes are restored on the next launch, and
 minimum pane sizes prevent a panel from disappearing.
+
+At 90–140 terminal columns the workspace uses a two-column layout with Output across the bottom. Below 90 columns,
+panels use a full-width stacked layout with compact Tools, Operation, and History sections. Desktop splitter sizes are
+preserved when entering either responsive layout and restored when the terminal becomes wide again.
 
 Press `F2` for the complete keyboard reference or `F1` for general application help. Both references open over
 the workspace and may be scrolled without leaving the current configuration or run context.
