@@ -43,16 +43,18 @@ class ResizeHandle(Static, can_focus=True):
         *,
         minimum_before: int = 8,
         minimum_after: int = 8,
+        marker: str | None = None,
+        flexible_after: bool = False,
         id: str | None = None,
     ) -> None:
-        super().__init__(
-            "│" if orientation == "vertical" else "─", id=id, classes=f"resize-handle {orientation}-handle"
-        )
+        marker = marker or ("│" if orientation == "vertical" else "─")
+        super().__init__(marker, id=id, classes=f"resize-handle {orientation}-handle")
         self.before_id = before_id
         self.after_id = after_id
         self.orientation = orientation
         self.minimum_before = minimum_before
         self.minimum_after = minimum_after
+        self.flexible_after = flexible_after
         self._grabbed_at: int | None = None
         self._before_at_grab = 0
         self._after_at_grab = 0
@@ -82,7 +84,7 @@ class ResizeHandle(Static, can_focus=True):
         before, after = self._widgets()
         if self.orientation == "vertical":
             before.styles.width = bounded_before
-            after.styles.width = bounded_after
+            after.styles.width = "1fr" if self.flexible_after else bounded_after
         else:
             before.styles.height = bounded_before
             after.styles.height = bounded_after

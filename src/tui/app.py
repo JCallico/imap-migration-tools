@@ -38,6 +38,7 @@ from tui.config import (
     save_form,
     validate,
 )
+from tui.display import DISPLAY_MODES, DisplayProfile, has_limited_color, resolve_display_profile
 from tui.history import HistoryWriter, Redactor, delete_record, load_records, new_record, read_log
 from tui.layout import default_layout_path, load_layout, save_layout
 from tui.operations import (
@@ -276,8 +277,14 @@ class ImapToolsApp(App[None]):
         Binding("f10", "request_quit", "quit", show=False, priority=True),
     ]
 
-    def __init__(self, env_path: Path | None = None, layout_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        env_path: Path | None = None,
+        layout_path: Path | None = None,
+        display_profile: DisplayProfile | None = None,
+    ) -> None:
         super().__init__()
+        self.display_profile = display_profile or resolve_display_profile()
         self.working_directory = Path.cwd()
         self.env_path = env_path or discover_env()
         self.layout_path = layout_path or default_layout_path()
@@ -311,7 +318,8 @@ class ImapToolsApp(App[None]):
                         for field in FIELDS:
                             if field.group != group:
                                 group = field.group
-                                yield Label(f"── {group} ", classes="group-title")
+                                prefix = "--" if self.display_profile.mode == "ascii" else "──"
+                                yield Label(f"{prefix} {group} ", classes="group-title")
                             yield Label(field.label, id=f"label-{_field_id(field.name)}", classes="field-label")
                             value = current.get(field.name, field.default)
                             if field.kind == "boolean":
@@ -343,6 +351,7 @@ class ImapToolsApp(App[None]):
                 "vertical",
                 minimum_before=38,
                 minimum_after=22,
+                marker=self.display_profile.vertical_separator,
                 id="center-sidebar-handle",
             )
             with Vertical(id="sidebar"):
@@ -357,6 +366,7 @@ class ImapToolsApp(App[None]):
                     "horizontal",
                     minimum_before=7,
                     minimum_after=5,
+                    marker=self.display_profile.horizontal_separator,
                     id="tools-operation-handle",
                 )
                 with VerticalScroll(id="operation-panel", classes="panel"):
@@ -453,7 +463,12 @@ class ImapToolsApp(App[None]):
                     yield Input(id="folder", placeholder="leave empty for all folders", classes="transfer-control")
                     yield Button("run count", id="run-operation", variant="success", classes="wide-action")
                 yield ResizeHandle(
-                    "operation-panel", "history-panel", "horizontal", minimum_before=5, id="operation-history-handle"
+                    "operation-panel",
+                    "history-panel",
+                    "horizontal",
+                    minimum_before=5,
+                    marker=self.display_profile.horizontal_separator,
+                    id="operation-history-handle",
                 )
                 with Vertical(id="history-panel", classes="panel"):
                     yield DataTable(id="history-table", cursor_type="row")
@@ -466,6 +481,8 @@ class ImapToolsApp(App[None]):
                 "vertical",
                 minimum_before=22,
                 minimum_after=40,
+                marker=self.display_profile.vertical_separator,
+                flexible_after=True,
                 id="sidebar-right-handle",
             )
             with Vertical(id="right-column"):
@@ -479,11 +496,15 @@ class ImapToolsApp(App[None]):
         yield Static(self.DEFAULT_KEY_LEGEND, id="key-legend")
 
     def on_mount(self) -> None:
+        self.set_class(self.display_profile.mode == "ascii", "ascii-mode")
+        limited_color = self.display_profile.limited_color or has_limited_color(self.console.color_system)
+        self.set_class(limited_color, "limited-color")
+        separator = " - " if self.display_profile.mode == "ascii" else " · "
         titles = {
             "tools-panel": "Tools",
             "history-panel": "History",
             "config-panel": "Configuration",
-            "operation-panel": "Operation · Count",
+            "operation-panel": f"Operation{separator}Count",
             "monitor-panel": "Output",
         }
         for widget_id, title in titles.items():
@@ -537,7 +558,10 @@ class ImapToolsApp(App[None]):
 
     @on(ResizeHandle.Focused)
     def splitter_focused(self, event: ResizeHandle.Focused) -> None:
-        arrows = "←/→" if event.orientation == "vertical" else "↑/↓"
+        if self.display_profile.mode == "ascii":
+            arrows = "left/right" if event.orientation == "vertical" else "up/down"
+        else:
+            arrows = "←/→" if event.orientation == "vertical" else "↑/↓"
         self.query_one("#key-legend", Static).update(
             f"[bold #e6d84a]{arrows}[/] resize   [bold #44dd55]double-click[/] reset splitter   "
             "[bold #388bff]Alt+0[/] reset layout"
@@ -606,7 +630,7 @@ class ImapToolsApp(App[None]):
                 else:
                     widget.value = value
         self.call_after_refresh(self.finish_external_configuration_reload)
-        self.set_configuration_status("✓ external .env reloaded", reset_after=1.5)
+        self.set_configuration_status(f"{self.display_profile.success} external .env reloaded", reset_after=1.5)
         if pending_edit:
             self.notify("External .env reloaded; the pending form edit was discarded", severity="warning")
         return True
@@ -614,7 +638,7 @@ class ImapToolsApp(App[None]):
     def reject_external_configuration(self, digest: str, detail: str) -> None:
         """Keep the form unchanged and report one warning per rejected file version."""
         self.configuration_rejected_digest = digest
-        self.set_configuration_status("✗ external .env invalid")
+        self.set_configuration_status(f"{self.display_profile.error} external .env invalid")
         self.notify(f"External .env not loaded: {detail}", severity="error")
 
     def finish_external_configuration_reload(self) -> None:
@@ -636,7 +660,8 @@ class ImapToolsApp(App[None]):
         """Show autosave status while making OS environment precedence visible."""
         self.configuration_status_timer = None
         override_active = any(field.name in os.environ for field in FIELDS)
-        status = "ENV override active" if override_active else ".env · autosave"
+        separator = " - " if self.display_profile.mode == "ascii" else " · "
+        status = "ENV override active" if override_active else f".env{separator}autosave"
         self.query_one("#config-panel").border_subtitle = status
 
     def on_resize(self, event: Resize) -> None:
@@ -717,10 +742,10 @@ class ImapToolsApp(App[None]):
         for operation in OPERATIONS:
             state = readiness(operation.name, values)
             color = "#44dd55" if state.ready else "#777777"
-            marker = "✓" if state.ready else "○"
+            marker = self.display_profile.ready if state.ready else self.display_profile.missing
             label = "Ready" if state.ready else "Missing configuration"
             if state.warning:
-                marker = "⚠"
+                marker = self.display_profile.warning
                 label = "Destructive options enabled"
                 color = "#ffcc33"
             indicator = self.query_one(f"#ready-{operation.name}", Static)
@@ -754,7 +779,8 @@ class ImapToolsApp(App[None]):
     def select_operation(self, operation: OperationName) -> None:
         self.selected_operation = operation
         spec = OPERATION_BY_NAME[operation]
-        self.query_one("#operation-panel").border_title = f"Operation · {spec.title}"
+        separator = " - " if self.display_profile.mode == "ascii" else " · "
+        self.query_one("#operation-panel").border_title = f"Operation{separator}{spec.title}"
         self.query_one("#operation-panel").styles.height = OPERATION_PANEL_HEIGHTS[operation]
         if self.has_class("narrow"):
             self.query_one("#sidebar").styles.height = 19 + OPERATION_PANEL_HEIGHTS[operation]
@@ -805,7 +831,10 @@ class ImapToolsApp(App[None]):
                 guidance = f"Provide either a password or OAuth2 client ID for {operation}"
             elif field.name.endswith(("_IMAP_PASSWORD", "_OAUTH2_CLIENT_ID", "_OAUTH2_CLIENT_SECRET", "_ACCOUNT_TYPE")):
                 guidance = f"Authentication option for {operation}"
-            control.tooltip = f"Missing — {guidance}" if is_missing else guidance if is_required else None
+            missing_separator = " - " if self.display_profile.mode == "ascii" else " — "
+            control.tooltip = (
+                f"Missing{missing_separator}{guidance}" if is_missing else guidance if is_required else None
+            )
 
     def selected_operation_readiness(self):
         values = self.values()
@@ -917,7 +946,8 @@ class ImapToolsApp(App[None]):
             return
         if self.configuration_save_timer is not None:
             self.configuration_save_timer.stop()
-        self.set_configuration_status("● saving…")
+        suffix = "..." if self.display_profile.mode == "ascii" else "…"
+        self.set_configuration_status(f"{self.display_profile.saving} saving{suffix}")
         self.configuration_save_timer = self.set_timer(delay, self.save_configuration)
 
     def save_configuration(self) -> bool:
@@ -934,20 +964,20 @@ class ImapToolsApp(App[None]):
         errors = validate(values)
         if errors:
             name, message = next(iter(errors.items()))
-            self.set_configuration_status(f"✗ invalid: {name}")
+            self.set_configuration_status(f"{self.display_profile.error} invalid: {name}")
             self.notify(f"{name}: {message}", severity="error")
             return False
         try:
             save_form(self.env_path, values)
         except (OSError, ValueError) as exc:
-            self.set_configuration_status("✗ save failed")
+            self.set_configuration_status(f"{self.display_profile.error} save failed")
             self.notify(f"Unable to save: {exc}", severity="error")
             return False
         self.configuration_file_digest = self.env_digest()
         self.configuration_rejected_digest = None
         self.refresh_configuration()
         self.select_operation(self.selected_operation)
-        self.set_configuration_status("✓ saved", reset_after=1.5)
+        self.set_configuration_status(f"{self.display_profile.success} saved", reset_after=1.5)
         return True
 
     @on(Input.Changed, "#config-form Input")
@@ -1194,9 +1224,19 @@ class ImapToolsApp(App[None]):
             self.exit()
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     """Launch the full-screen workspace."""
-    ImapToolsApp().run()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Full-screen interface for IMAP Migration Tools")
+    parser.add_argument(
+        "--display-mode",
+        choices=DISPLAY_MODES,
+        default=os.environ.get("IMAP_TOOLS_DISPLAY_MODE", "auto"),
+        help="terminal compatibility profile (default: IMAP_TOOLS_DISPLAY_MODE or auto)",
+    )
+    args = parser.parse_args(argv)
+    ImapToolsApp(display_profile=resolve_display_profile(args.display_mode)).run()
 
 
 if __name__ == "__main__":

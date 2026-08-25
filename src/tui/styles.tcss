@@ -273,7 +273,7 @@ ContentSwitcher {
 
 .missing-setting-label {
     color: $imap-yellow;
-    text-style: bold;
+    text-style: bold underline;
 }
 
 .wide-action {
@@ -298,6 +298,7 @@ DataTable > .datatable--header {
 DataTable > .datatable--cursor {
     background: #173217;
     color: #ffffff;
+    text-style: bold;
 }
 
 .compact-actions {
@@ -328,6 +329,61 @@ DataTable > .datatable--cursor {
     background: $imap-black;
     color: #bbbbbb;
     padding: 0 1;
+}
+
+.ascii-mode .panel {
+    border: ascii $imap-line;
+}
+
+.ascii-mode .panel:focus-within {
+    border: ascii $imap-green;
+}
+
+.ascii-mode #confirm-dialog {
+    border: ascii $imap-yellow;
+}
+
+.ascii-mode #info-dialog {
+    border: ascii $imap-green;
+}
+
+.limited-color .panel:focus-within {
+    border-title-style: bold reverse;
+}
+
+.limited-color Button:hover,
+.limited-color Button:focus,
+.limited-color Button.selected,
+.limited-color .tool-button:hover,
+.limited-color .tool-button:focus,
+.limited-color .tool-button.selected,
+.limited-color .resize-handle:hover,
+.limited-color .resize-handle:focus,
+.limited-color .resize-handle.dragging,
+.limited-color DataTable > .datatable--cursor {
+    text-style: bold reverse;
+}
+
+.limited-color Input:focus {
+    text-style: bold;
+}
+
+.limited-color Select:focus {
+    text-style: bold reverse;
+}
+
+.limited-color .required-setting,
+.limited-color .required-setting-label {
+    text-style: bold;
+}
+
+.limited-color .missing-setting,
+.limited-color .missing-setting-label {
+    text-style: bold reverse;
+}
+
+.limited-color Button:disabled {
+    text-style: dim;
 }
 
 .medium #workspace {

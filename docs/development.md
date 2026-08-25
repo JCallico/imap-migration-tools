@@ -37,6 +37,24 @@ headless Linux systems. OAuth2 continues with process-local caching when the opt
 | `src/utils/` | Shared utilities, including `.env` loading |
 | `test/` | Unit and local IMAP integration tests mirroring the source tree |
 
+## TUI display compatibility
+
+Terminal capability handling is centralized in `src/tui/display.py`. Keep semantic status markers and separator
+characters in `DisplayProfile`; do not introduce display-specific Unicode literals directly in widgets. Textual's
+built-in `ascii` border type supplies portable `+`, `-`, and `|` borders.
+
+Use `imap-tools --display-mode ascii` to exercise compatibility rendering. `IMAP_TOOLS_DISPLAY_MODE` accepts `auto`,
+`standard`, or `ascii`; the command-line option takes precedence. Automatic detection intentionally switches only for
+`TERM=dumb` or a non-UTF-8 locale because terminal capability variables are frequently incomplete. `NO_COLOR` and the
+resolved Textual color system enable color-independent fallback styling without forcing ASCII when Unicode remains
+available.
+
+When changing TUI state presentation, verify both standard and ASCII profiles. Every state must have a textual or
+bold/reverse-video cue; foreground or subtle background color differences may only reinforce that cue.
+
+Wide-layout persistence stores leading divider positions. Keep the rightmost Output column flexible so it consumes all
+remaining workspace width after restoring settings or resizing the terminal; do not restore it as a fixed cell width.
+
 ## Run tests
 
 The source tree is not installed during direct test execution, so set `PYTHONPATH`:

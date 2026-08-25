@@ -93,7 +93,8 @@ before enabling destructive options.
 Drag the visible `│` and `─` separators between panels to resize adjacent columns or rows. Separators are also
 keyboard accessible: focus one with `Tab`, then use the arrow keys shown in the footer. Double-click a separator to
 reset it, or press `Alt+0` to reset the complete layout. Customized panel sizes are restored on the next launch, and
-minimum pane sizes prevent a panel from disappearing.
+minimum pane sizes prevent a panel from disappearing. In wide layouts, the saved left-side divider positions remain
+fixed while Output absorbs any width added or removed when the terminal is resized.
 
 At 90–140 terminal columns the workspace uses a two-column layout with Output across the bottom. Below 90 columns,
 panels use a full-width stacked layout with compact Tools, Operation, and History sections. Desktop splitter sizes are
@@ -101,6 +102,19 @@ preserved when entering either responsive layout and restored when the terminal 
 
 Press `F2` for the complete keyboard reference or `F1` for general application help. Both references open over
 the workspace and may be scrolled without leaving the current configuration or run context.
+
+For terminals with limited Unicode support, launch the interface in ASCII compatibility mode. It uses `+`, `-`, and
+`|` borders, ASCII status markers, and bold or reverse-video state cues that do not depend on color:
+
+```bash
+imap-tools --display-mode ascii
+```
+
+The equivalent persistent shell setting is `IMAP_TOOLS_DISPLAY_MODE=ascii`. Supported values are `auto`, `standard`,
+and `ascii`. The default `auto` mode selects ASCII for `TERM=dumb` or a non-UTF-8 locale; use the explicit option when
+a terminal reports inaccurate capabilities. `NO_COLOR` is honored in every mode. Textual's detected standard or
+colorless output also enables the same high-contrast, color-independent state styling while Textual handles color-depth
+conversion.
 
 The interface discovers `.env` from the current directory and its parents, using the same precedence as the scripts:
 per-run choices, existing OS environment variables, `.env`, then defaults. Passwords and OAuth client secrets are

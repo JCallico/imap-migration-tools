@@ -6,6 +6,7 @@ import pytest
 
 import tui
 import tui.app
+from tui.display import resolve_display_profile
 
 
 def test_main_launches_textual_application(monkeypatch):
@@ -43,3 +44,36 @@ def test_main_reraises_unrelated_import_failure(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", missing_unrelated)
     with pytest.raises(ModuleNotFoundError, match="unrelated"):
         tui.main()
+
+
+def test_app_main_resolves_cli_display_mode(monkeypatch):
+    launched = []
+
+    class FakeApp:
+        def __init__(self, *, display_profile):
+            launched.append(display_profile)
+
+        def run(self):
+            launched.append("run")
+
+    monkeypatch.setattr(tui.app, "ImapToolsApp", FakeApp)
+    tui.app.main(["--display-mode", "ascii"])
+
+    assert launched == [resolve_display_profile("ascii"), "run"]
+
+
+def test_app_main_uses_environment_display_mode(monkeypatch):
+    launched = []
+
+    class FakeApp:
+        def __init__(self, *, display_profile):
+            launched.append(display_profile)
+
+        def run(self):
+            launched.append("run")
+
+    monkeypatch.setenv("IMAP_TOOLS_DISPLAY_MODE", "standard")
+    monkeypatch.setattr(tui.app, "ImapToolsApp", FakeApp)
+    tui.app.main([])
+
+    assert launched == [resolve_display_profile("standard"), "run"]

@@ -11,6 +11,7 @@ from textual.widgets import Button, Checkbox, DataTable, Input, Label, OptionLis
 import tui.app as app_module
 from tui.app import OPERATION_PANEL_HEIGHTS, ConfirmationModal, ImapToolsApp, InformationModal
 from tui.config import FIELDS, read_env
+from tui.display import resolve_display_profile
 from tui.history import RunRecord
 from tui.layout import load_layout
 from tui.operations import RunOptions
@@ -84,6 +85,29 @@ def test_wide_splitter_dimensions_are_cleared_in_narrow_mode_and_restored(tmp_pa
             assert not app.has_class("narrow")
             assert not app.has_class("medium")
             assert app.query_one("#center-column").region.width == customized_width
+
+    asyncio.run(run_test())
+
+
+def test_output_column_absorbs_width_after_saved_layout_restore_and_resize(tmp_path):
+    async def run_test():
+        layout_path = tmp_path / "layout.json"
+        layout_path.write_text(
+            '{"version": 1, "splitters": {"center-sidebar-handle": 60, "sidebar-right-handle": 42}}\n',
+            encoding="utf-8",
+        )
+        app = ImapToolsApp(tmp_path / ".env", layout_path)
+        async with app.run_test(size=(180, 50)) as pilot:
+            await pilot.pause()
+            right = app.query_one("#right-column")
+            initial_width = right.region.width
+            assert right.region.right == app.query_one("#workspace").content_region.right
+
+            await pilot.resize_terminal(240, 50)
+            await pilot.pause()
+
+            assert right.region.width == initial_width + 60
+            assert right.region.right == app.query_one("#workspace").content_region.right
 
     asyncio.run(run_test())
 
@@ -262,6 +286,48 @@ def test_tools_use_icons_for_readiness(tmp_path):
             indicator = app.query_one("#ready-count", Static)
             assert str(indicator.render()) == "○"
             assert str(indicator.tooltip).startswith("Missing configuration:")
+
+    asyncio.run(run_test())
+
+
+def test_ascii_mode_uses_portable_symbols_borders_and_fallback_styles(tmp_path, monkeypatch):
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env", display_profile=resolve_display_profile("ascii"))
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+
+            assert app.has_class("ascii-mode")
+            assert app.has_class("limited-color")
+            assert app.query_one("#config-panel").styles.border_top[0] == "ascii"
+            assert str(app.query_one("#center-sidebar-handle", ResizeHandle).render()) == "|"
+            assert str(app.query_one("#tools-operation-handle", ResizeHandle).render()) == "-"
+            assert str(app.query_one("#ready-count", Static).render()) == "--"
+            assert app.query_one("#operation-panel").border_title == "Operation - Count"
+            assert str(app.query_one(".group-title", Label).render()).startswith("-- ")
+
+            monkeypatch.setattr(app_module, "readiness", lambda *_args: app_module.Readiness(True, "ready"))
+            app.refresh_configuration()
+            assert str(app.query_one("#ready-count", Static).render()) == "OK"
+
+            monkeypatch.setattr(app_module, "readiness", lambda *_args: app_module.Readiness(True, "warning", True))
+            app.refresh_configuration()
+            assert str(app.query_one("#ready-count", Static).render()) == "!!"
+
+            app.set_configuration_status(f"{app.display_profile.error} invalid")
+            assert app.query_one("#config-panel").border_subtitle == "XX invalid"
+
+            missing = app.query_one("#env-src-imap-host")
+            missing.focus()
+            await pilot.pause()
+            assert missing.styles.text_style.bold
+            assert not missing.styles.text_style.underline
+            assert not missing.styles.text_style.reverse
+
+            missing.add_class("missing-setting")
+            app.query_one("#output-filter", Input).focus()
+            await pilot.pause()
+            assert missing.styles.text_style.bold
+            assert missing.styles.text_style.reverse
 
     asyncio.run(run_test())
 
@@ -1269,6 +1335,6 @@ def test_unmounted_and_entrypoint_guard_branches(tmp_path, monkeypatch):
 
     launched = Mock()
     fake_app = Mock(run=launched)
-    monkeypatch.setattr(app_module, "ImapToolsApp", lambda: fake_app)
-    app_module.main()
+    monkeypatch.setattr(app_module, "ImapToolsApp", lambda **_kwargs: fake_app)
+    app_module.main([])
     launched.assert_called_once()
