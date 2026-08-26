@@ -6,6 +6,7 @@ import json
 import os
 import re
 import stat
+import tempfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,11 +83,20 @@ class HistoryWriter:
         return sanitized
 
     def save(self) -> None:
-        self.summary_path.write_text(json.dumps(asdict(self.record), indent=2) + "\n", encoding="utf-8")
+        fd, temp_name = tempfile.mkstemp(prefix=f".{self.summary_path.name}.", dir=self.root, text=True)
+        temp_path = Path(temp_name)
         try:
-            os.chmod(self.summary_path, stat.S_IRUSR | stat.S_IWUSR)
-        except OSError:
-            pass
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(asdict(self.record), stream, indent=2)
+                stream.write("\n")
+            try:
+                os.chmod(temp_path, stat.S_IRUSR | stat.S_IWUSR)
+            except OSError:
+                pass
+            os.replace(temp_path, self.summary_path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
 
     def close(self) -> None:
         if not self._stream.closed:

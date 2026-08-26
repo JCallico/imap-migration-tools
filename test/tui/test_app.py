@@ -873,7 +873,7 @@ def test_valid_external_env_edit_reloads_form_and_readiness(tmp_path):
 
             assert app.query_one("#env-src-imap-host", Input).value == "second.example.com"
             assert app.query_one("#env-src-imap-username", Input).value == "other"
-            assert app.configuration_watch_timer is not None
+            assert app.filesystem_watch_timer is not None
 
     asyncio.run(run_test())
 
@@ -1016,6 +1016,61 @@ def test_history_uses_single_output_panel(tmp_path, monkeypatch):
             assert app.selected_output_id == "run-1"
             assert app.query_one("#output-log", RichLog).lines
             assert not app.query("TabbedContent").nodes
+
+    asyncio.run(run_test())
+
+
+def test_history_reloads_external_instance_changes_without_stealing_selection(tmp_path, monkeypatch):
+    history_root = tmp_path / "history"
+    history_root.mkdir()
+    monkeypatch.setattr(app_module, "history_dir", lambda: history_root)
+    monkeypatch.setattr("tui.history.history_dir", lambda: history_root)
+    existing = app_module.HistoryWriter(
+        RunRecord("run-existing", "count", "2026-08-23T12:00:00+00:00", status="completed"),
+        app_module.Redactor([]),
+    )
+    existing.close()
+
+    async def run_test():
+        app = ImapToolsApp(tmp_path / ".env")
+        async with app.run_test(size=(160, 40)) as pilot:
+            app.refresh_history("run-existing")
+            app.view_history("run-existing")
+            await pilot.pause()
+
+            external_record = RunRecord("run-external", "backup", "2026-08-23T13:00:00+00:00")
+            external = app_module.HistoryWriter(external_record, app_module.Redactor([]))
+            external.write("external instance output")
+            await pilot.pause(1.1)
+
+            table = app.query_one("#history-table", DataTable)
+            assert "run-external" not in {str(key.value) for key in table.rows}
+            assert app.selected_history_id() == "run-existing"
+            assert app.selected_output_id == "run-existing"
+
+            output_filter = app.query_one("#output-filter", Input)
+            output_filter.focus()
+            await pilot.pause()
+            external_record.status = "completed"
+            external_record.exit_code = 0
+            external.close()
+            await pilot.pause(1.1)
+            assert table.get_row("run-external")[1] == "completed"
+            assert app.selected_history_id() == "run-existing"
+            assert app.focused is output_filter
+
+            app.view_history("run-external")
+            assert any("external instance output" in line.text for line in app.query_one("#output-log", RichLog).lines)
+
+            table.move_cursor(row=table.get_row_index("run-existing"))
+            app.view_history("run-existing")
+            assert app.selected_output_id == "run-existing"
+            app_module.delete_record("run-existing")
+            await pilot.pause(1.1)
+            assert app.selected_output_id == "run-external"
+            assert app.selected_history_id() == "run-external"
+            assert app.focused is output_filter
+            assert any("external instance output" in line.text for line in app.query_one("#output-log", RichLog).lines)
 
     asyncio.run(run_test())
 
@@ -1294,7 +1349,6 @@ def test_button_and_confirmation_dispatch_branches(tmp_path, monkeypatch):
                 "run-operation",
                 "cancel-run",
                 "force-stop",
-                "clear-output",
                 "export-history",
                 "delete-history",
             ):

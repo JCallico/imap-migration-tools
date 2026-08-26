@@ -74,56 +74,21 @@ python -m pip install "imap-migration-tools[tui]"
 imap-tools
 ```
 
-The interface provides a guided autosaving `.env` form, operation-specific configuration readiness checks, one
-history-backed output view, cancellation, and local run history. Existing commands remain available and are launched
-as isolated subprocesses by the interface.
+The interface provides a guided autosaving `.env` form, operation readiness checks, live output, cancellation, and
+local run history.
 
 ![IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels](docs/images/tui-overview.jpg)
-
-To run the TUI directly from the project folder without installing the package, first install the development
-dependencies in `.venv`, then run:
-
-```bash
-PYTHONPATH=src .venv/bin/python -m tui.app
-```
 
 The TUI is currently beta software. Review the generated command in the Output panel and verify backups and counts
 before enabling destructive options.
 
-Drag the visible `│` and `─` separators between panels to resize adjacent columns or rows. Separators are also
-keyboard accessible: focus one with `Tab`, then use the arrow keys shown in the footer. Double-click a separator to
-reset it, or press `Alt+0` to reset the complete layout. Customized panel sizes are restored on the next launch, and
-minimum pane sizes prevent a panel from disappearing. In wide layouts, the saved left-side divider positions remain
-fixed while Output absorbs any width added or removed when the terminal is resized.
-
-At 90–140 terminal columns the workspace uses a two-column layout with Output across the bottom. Below 90 columns,
-panels use a full-width stacked layout with compact Tools, Operation, and History sections. Desktop splitter sizes are
-preserved when entering either responsive layout and restored when the terminal becomes wide again.
-
-Press `F2` for the complete keyboard reference or `F1` for general application help. Both references open over
-the workspace and may be scrolled without leaving the current configuration or run context.
-
-For terminals with limited Unicode support, launch the interface in ASCII compatibility mode. It uses `+`, `-`, and
-`|` borders, ASCII status markers, and bold or reverse-video state cues that do not depend on color:
-
-```bash
-imap-tools --display-mode ascii
-```
-
-The equivalent persistent shell setting is `IMAP_TOOLS_DISPLAY_MODE=ascii`. Supported values are `auto`, `standard`,
-and `ascii`. The default `auto` mode selects ASCII for `TERM=dumb` or a non-UTF-8 locale; use the explicit option when
-a terminal reports inaccurate capabilities. `NO_COLOR` is honored in every mode. Textual's detected standard or
-colorless output also enables the same high-contrast, color-independent state styling while Textual handles color-depth
-conversion.
-
 The interface discovers `.env` from the current directory and its parents, using the same precedence as the scripts:
 per-run choices, existing OS environment variables, `.env`, then defaults. Passwords and OAuth client secrets are
 masked in the form; new `.env` files and saved history use owner-only permissions where the platform supports them.
-Destructive options require typing `DELETE` before a run starts.
+Destructive options require typing `DELETE` before a run starts. Press `F1` for help or `F2` for the keyboard reference.
 
-The TUI checks `.env` for external edits once per second. Valid changes automatically repopulate Configuration and
-refresh operation readiness. Invalid files leave the current form untouched and display an error. If an external edit
-arrives while a form autosave is pending, the valid external file takes precedence so it is not overwritten.
+See the [Terminal interface guide](docs/tui.md) for responsive layouts, panel controls, ASCII mode, configuration
+reloads, and History behavior across multiple instances.
 
 Basic password authentication needs no additional authentication package. OAuth2 provider dependencies are installed
 by the project. Encrypted persistent caching on Linux requires the `linux-keyring` extra and native system libraries.
@@ -210,6 +175,7 @@ rules.
 ## Common workflows
 
 - [Migration, backup, restore, count, and comparison examples](docs/workflows.md)
+- [Full-screen terminal interface](docs/tui.md)
 - [OAuth2 setup for Microsoft and Google](docs/oauth2.md)
 - [Troubleshooting and operational safety](docs/troubleshooting.md)
 - [Development, testing, and CI](docs/development.md)

@@ -82,3 +82,21 @@ def test_history_directory_ignores_permission_hardening_failure(tmp_path, monkey
     monkeypatch.setattr(history, "user_data_path", lambda *_args: tmp_path)
     monkeypatch.setattr("pathlib.Path.chmod", Mock(side_effect=OSError("unsupported")))
     assert history.history_dir() == tmp_path / "history"
+
+
+def test_history_summary_save_is_atomic_and_cleans_failed_temporary_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(history, "history_dir", lambda: tmp_path)
+    writer = history.HistoryWriter(history.new_record("count"), history.Redactor([]))
+    original = writer.summary_path.read_text(encoding="utf-8")
+    monkeypatch.setattr(history.os, "replace", Mock(side_effect=OSError("replace failed")))
+
+    writer.record.status = "completed"
+    try:
+        writer.save()
+    except OSError as exc:
+        assert str(exc) == "replace failed"
+    else:
+        raise AssertionError("save should propagate replacement failure")
+
+    assert writer.summary_path.read_text(encoding="utf-8") == original
+    assert list(tmp_path.glob(f".{writer.summary_path.name}.*")) == []

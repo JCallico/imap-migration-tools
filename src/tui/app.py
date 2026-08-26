@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from collections import deque
 from datetime import datetime, timezone
-from hashlib import sha256
 from pathlib import Path
 
 from textual import on, work
@@ -39,7 +38,7 @@ from tui.config import (
     validate,
 )
 from tui.display import DISPLAY_MODES, DisplayProfile, has_limited_color, resolve_display_profile
-from tui.history import HistoryWriter, Redactor, delete_record, load_records, new_record, read_log
+from tui.history import HistoryWriter, Redactor, delete_record, history_dir, load_records, new_record, read_log
 from tui.layout import default_layout_path, load_layout, save_layout
 from tui.operations import (
     OPERATION_BY_NAME,
@@ -57,6 +56,7 @@ from tui.operations import (
 )
 from tui.runner import OperationRunner, RunRequest
 from tui.splitter import ResizeHandle
+from utils.filesystem_watch import FilesystemWatcher
 
 
 def _field_id(name: str) -> str:
@@ -302,8 +302,11 @@ class ImapToolsApp(App[None]):
         self.configuration_autosave_enabled = False
         self.configuration_save_timer: Timer | None = None
         self.configuration_status_timer: Timer | None = None
-        self.configuration_watch_timer: Timer | None = None
+        self.filesystem_watch_timer: Timer | None = None
         self.configuration_reload_in_progress = False
+        self.filesystem_watcher = FilesystemWatcher()
+        self.filesystem_watcher.watch_file("configuration", self.env_path)
+        self.filesystem_watcher.watch_directory("history", history_dir(), "*.json")
         self.configuration_file_digest = self.env_digest()
         self.configuration_rejected_digest: str | None = None
 
@@ -492,7 +495,6 @@ class ImapToolsApp(App[None]):
                     with Horizontal(classes="compact-actions"):
                         yield Button("cancel", id="cancel-run", disabled=True)
                         yield Button("force stop", id="force-stop", disabled=True)
-                        yield Button("clear output", id="clear-output")
         yield Static(self.DEFAULT_KEY_LEGEND, id="key-legend")
 
     def on_mount(self) -> None:
@@ -574,26 +576,31 @@ class ImapToolsApp(App[None]):
     def enable_configuration_autosave(self) -> None:
         self.configuration_autosave_enabled = True
         self.show_neutral_configuration_status()
-        self.configuration_watch_timer = self.set_interval(1.0, self.check_external_configuration)
+        self.filesystem_watch_timer = self.set_interval(1.0, self.check_external_filesystem)
 
     def env_digest(self) -> str:
         """Return a content fingerprint for the current env file."""
-        try:
-            return sha256(self.env_path.read_bytes()).hexdigest()
-        except OSError:
-            return "missing"
+        return str(self.filesystem_watcher.fingerprint("configuration"))
+
+    def check_external_filesystem(self) -> None:
+        """Dispatch changes from every registered filesystem target."""
+        self.check_external_configuration()
+        if self.filesystem_watcher.poll("history"):
+            self.refresh_history(self.selected_output_id)
 
     def check_external_configuration(self) -> None:
         """Reload a valid env file when its content changes outside the TUI."""
         digest = self.env_digest()
         if digest == self.configuration_file_digest:
+            self.filesystem_watcher.refresh("configuration")
             if self.configuration_rejected_digest is not None:
                 self.configuration_rejected_digest = None
                 self.show_neutral_configuration_status()
             return
         if digest == self.configuration_rejected_digest:
             return
-        self.reload_external_configuration(digest)
+        if self.filesystem_watcher.poll("configuration"):
+            self.reload_external_configuration(digest)
 
     def reload_external_configuration(self, digest: str) -> bool:
         """Validate and apply an external env change without overwriting it."""
@@ -617,6 +624,7 @@ class ImapToolsApp(App[None]):
             self.configuration_save_timer.stop()
             self.configuration_save_timer = None
         self.configuration_file_digest = digest
+        self.filesystem_watcher.refresh("configuration")
         self.configuration_rejected_digest = None
         self.configuration_reload_in_progress = True
         with self.prevent(Input.Changed, Select.Changed, Checkbox.Changed):
@@ -638,6 +646,7 @@ class ImapToolsApp(App[None]):
     def reject_external_configuration(self, digest: str, detail: str) -> None:
         """Keep the form unchanged and report one warning per rejected file version."""
         self.configuration_rejected_digest = digest
+        self.filesystem_watcher.refresh("configuration")
         self.set_configuration_status(f"{self.display_profile.error} external .env invalid")
         self.notify(f"External .env not loaded: {detail}", severity="error")
 
@@ -718,9 +727,9 @@ class ImapToolsApp(App[None]):
         if self.configuration_status_timer is not None:
             self.configuration_status_timer.stop()
             self.configuration_status_timer = None
-        if self.configuration_watch_timer is not None:
-            self.configuration_watch_timer.stop()
-            self.configuration_watch_timer = None
+        if self.filesystem_watch_timer is not None:
+            self.filesystem_watch_timer.stop()
+            self.filesystem_watch_timer = None
 
     def values(self) -> dict[str, str]:
         return {name: item.value for name, item in effective_values(self.env_path).items()}
@@ -767,14 +776,25 @@ class ImapToolsApp(App[None]):
 
     def refresh_history(self, select_run_id: str | None = None) -> None:
         table = self.query_one("#history-table", DataTable)
-        table.clear()
         selected_row: int | None = None
-        for row, record in enumerate(load_records()[:20]):
-            table.add_row(record.operation, record.status, record.started_at[:19], key=record.run_id)
-            if record.run_id == select_run_id:
-                selected_row = row
-        if selected_row is not None:
-            table.move_cursor(row=selected_row)
+        selected_run_id: str | None = None
+        records = [
+            record for record in load_records() if record.status != "running" or record.run_id == self.current_run_id
+        ][:20]
+        with self.prevent(DataTable.RowHighlighted):
+            table.clear()
+            for row, record in enumerate(records):
+                table.add_row(record.operation, record.status, record.started_at[:19], key=record.run_id)
+                if record.run_id == select_run_id:
+                    selected_row = row
+            if selected_row is not None:
+                table.move_cursor(row=selected_row)
+                selected_run_id = select_run_id
+            elif table.row_count:
+                selected_run_id = self.selected_history_id()
+        self.selected_output_id = selected_run_id
+        self.render_output()
+        self.filesystem_watcher.refresh("history")
 
     def select_operation(self, operation: OperationName) -> None:
         self.selected_operation = operation
@@ -913,8 +933,6 @@ class ImapToolsApp(App[None]):
             self.cancel_operation()
         elif button_id == "force-stop":
             self.request_confirmation("force-stop", "Type DELETE to terminate the process immediately.", None, True)
-        elif button_id == "clear-output":
-            self.query_one("#output-log", RichLog).clear()
         elif button_id == "export-history":
             self.export_history()
         elif button_id == "delete-history":
@@ -974,6 +992,7 @@ class ImapToolsApp(App[None]):
             self.notify(f"Unable to save: {exc}", severity="error")
             return False
         self.configuration_file_digest = self.env_digest()
+        self.filesystem_watcher.refresh("configuration")
         self.configuration_rejected_digest = None
         self.refresh_configuration()
         self.select_operation(self.selected_operation)

@@ -55,6 +55,17 @@ bold/reverse-video cue; foreground or subtle background color differences may on
 Wide-layout persistence stores leading divider positions. Keep the rightmost Output column flexible so it consumes all
 remaining workspace width after restoring settings or resizing the terminal; do not restore it as a fixed cell width.
 
+Filesystem observation is centralized in `src/utils/filesystem_watch.py`. The TUI uses one polling timer for the `.env`
+file and filtered history-directory targets; consumers must not implement independent polling or filesystem-event
+logic. Keep application decisions such as configuration validation and history selection restoration outside the
+watcher so its dependency-free polling backend can later be replaced without changing consumers.
+
+History summaries are shared across TUI instances and must be replaced atomically. Cross-instance refreshes must
+preserve the selected run by ID and ignore intermediate table highlight events. If the selected record was externally
+deleted or pruned, explicitly select an available replacement and render its log; suppressed highlight events must not
+leave Output out of sync with the table. Hide another instance's `running` record until its final summary is available,
+but continue showing the current instance's active run immediately. Rebuilding History must not move widget focus.
+
 ## Run tests
 
 The source tree is not installed during direct test execution, so set `PYTHONPATH`:
