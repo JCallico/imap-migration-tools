@@ -103,6 +103,31 @@ def test_count_alias_and_compare_local_required_settings():
     assert {"SRC_IMAP_HOST", "SRC_IMAP_USERNAME", "SRC_IMAP_PASSWORD", "SRC_OAUTH2_CLIENT_ID"} <= missing
 
 
+@pytest.mark.parametrize("authentication", ({"IMAP_PASSWORD": "secret"}, {"OAUTH2_CLIENT_ID": "client-id"}))
+def test_count_alias_readiness_accepts_either_authentication_choice(authentication):
+    values = {"IMAP_HOST": "imap.example.com", "IMAP_USERNAME": "user"} | authentication
+    state = readiness("count", values)
+
+    assert state.ready
+    assert state.detail == "Ready to run"
+
+
+def test_count_alias_readiness_explains_authentication_choice():
+    state = readiness("count", {"IMAP_HOST": "imap.example.com", "IMAP_USERNAME": "user"})
+
+    assert not state.ready
+    assert state.detail == "Missing: IMAP password or OAuth client ID"
+
+
+def test_count_rejects_a_missing_automatic_local_path(tmp_path):
+    missing_path = tmp_path / "missing"
+    state = readiness("count", {"SRC_LOCAL_PATH": str(missing_path)})
+
+    assert not state.ready
+    assert state.detail == "Missing: source path"
+    assert state.missing_fields == frozenset({"SRC_LOCAL_PATH"})
+
+
 def test_account_without_any_authentication_is_not_ready():
     state = readiness("backup", {"SRC_IMAP_HOST": "imap.example.com", "SRC_IMAP_USERNAME": "user"})
     assert not state.ready

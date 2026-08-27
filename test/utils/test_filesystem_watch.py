@@ -49,3 +49,12 @@ def test_refresh_advances_baseline_and_snapshot_errors_are_safe(tmp_path, monkey
 
     monkeypatch.setattr(Path, "glob", Mock(side_effect=OSError("unavailable")))
     assert directory_fingerprint(tmp_path, "*.json") == ()
+
+
+def test_directory_fingerprint_ignores_entry_removed_during_scan(tmp_path, monkeypatch):
+    vanished = Mock()
+    vanished.stat.side_effect = OSError("removed")
+    monkeypatch.setattr(Path, "glob", lambda _path, _pattern: iter((vanished,)))
+
+    assert directory_fingerprint(tmp_path, "*.json") == ()
+    vanished.stat.assert_called_once_with()

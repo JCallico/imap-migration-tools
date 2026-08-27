@@ -351,6 +351,9 @@ def test_ascii_mode_uses_portable_symbols_borders_and_fallback_styles(tmp_path, 
             assert app.query_one("#operation-panel").border_title == "Operation - Count"
             assert str(app.query_one(".group-title", Label).render()).startswith("-- ")
 
+            app.splitter_focused(ResizeHandle.Focused("horizontal"))
+            assert str(app.query_one("#key-legend", Static).render()).startswith("up/down resize")
+
             monkeypatch.setattr(app_module, "readiness", lambda *_args, **_kwargs: app_module.Readiness(True, "ready"))
             app.refresh_configuration()
             assert str(app.query_one("#ready-count", Static).render()) == "OK"
