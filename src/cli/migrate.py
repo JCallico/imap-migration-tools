@@ -129,11 +129,13 @@ def parse_arguments(argv=None, *, dotenv_keys=frozenset()):
     )
     parser.add_argument(
         "--migrate-cache",
+        default=os.getenv("MIGRATE_CACHE_DIR"),
         help="Path to directory for migration progress cache (enables incremental migration)",
     )
     parser.add_argument(
         "--full-migrate",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=os.getenv("FULL_MIGRATE", "false").lower() == "true",
         help="Force full migration (ignore cache for skipping), but still update cache if --migrate-cache provided",
     )
     args = parser.parse_args(argv)

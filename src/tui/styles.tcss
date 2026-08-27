@@ -1,0 +1,445 @@
+$imap-black: #050505;
+$imap-panel: #090909;
+$imap-line: #666666;
+$imap-green: #44dd55;
+$imap-yellow: #e6d84a;
+$imap-muted: #858585;
+
+Screen {
+    background: $imap-black;
+    color: #e5e5e5;
+    layout: vertical;
+}
+
+#workspace {
+    width: 100%;
+    height: 1fr;
+    padding: 0 1;
+}
+
+#sidebar {
+    width: 47;
+    min-width: 24;
+    height: 100%;
+}
+
+#center-column {
+    width: 2fr;
+    min-width: 44;
+    height: 100%;
+}
+
+#right-column {
+    width: 3fr;
+    min-width: 46;
+    height: 100%;
+}
+
+.panel {
+    background: $imap-panel;
+    border: solid $imap-line;
+    border-title-color: $imap-green;
+    padding: 0 1;
+    margin: 0;
+}
+
+.panel:focus-within {
+    border: solid $imap-green;
+}
+
+.resize-handle {
+    background: #252525;
+    color: #aaaaaa;
+    padding: 0;
+    content-align: center middle;
+    text-style: bold;
+}
+
+.resize-handle:hover, .resize-handle:focus, .resize-handle.dragging {
+    background: $imap-green;
+    color: $imap-black;
+}
+
+.vertical-handle {
+    width: 1;
+    height: 100%;
+}
+
+.horizontal-handle {
+    width: 100%;
+    height: 1;
+}
+
+#tools-panel {
+    height: 7;
+    min-height: 7;
+    padding: 0;
+}
+
+#history-panel {
+    height: 1fr;
+    min-height: 12;
+}
+
+#config-panel {
+    height: 100%;
+    min-height: 20;
+}
+
+#operation-panel {
+    height: 5;
+    min-height: 5;
+}
+
+#monitor-panel {
+    height: 1fr;
+    min-height: 20;
+}
+
+ConfirmationModal, InformationModal {
+    align: center middle;
+    background: $imap-black 55%;
+}
+
+#confirm-dialog {
+    width: 56;
+    max-width: 90%;
+    height: auto;
+    max-height: 10;
+    background: $imap-panel;
+    border: solid $imap-yellow;
+    padding: 0 1;
+}
+
+#info-dialog {
+    width: 78;
+    max-width: 92%;
+    height: 28;
+    max-height: 85%;
+    background: $imap-panel;
+    border: solid $imap-green;
+    border-title-color: $imap-green;
+    padding: 0 1;
+}
+
+#info-body {
+    height: 1fr;
+    scrollbar-background: $imap-black;
+    scrollbar-color: $imap-line;
+}
+
+#info-content {
+    width: 100%;
+    height: auto;
+    color: #dddddd;
+}
+
+#info-footer {
+    width: 100%;
+    height: 1;
+    color: $imap-muted;
+    content-align: right middle;
+}
+
+.hidden {
+    display: none;
+}
+
+Button {
+    min-width: 7;
+    height: 1;
+    border: none;
+    background: $imap-black;
+    color: #dddddd;
+    text-style: none;
+    padding: 0 1;
+}
+
+Button:hover, Button:focus, Button.selected {
+    background: #202020;
+    color: $imap-green;
+    text-style: bold;
+}
+
+Button:disabled {
+    color: #555555;
+    opacity: 1;
+}
+
+.tool-row {
+    width: 100%;
+    height: 1;
+}
+
+.tool-button {
+    width: 1fr;
+    height: 1;
+    padding: 0;
+    text-align: left;
+    content-align: left middle;
+    color: #dddddd;
+}
+
+.tool-button:hover, .tool-button:focus, .tool-button.selected {
+    background: #202020;
+    color: $imap-green;
+    text-style: bold;
+}
+
+.readiness {
+    width: 2;
+    height: 1;
+    content-align: right middle;
+    margin: 0;
+}
+
+Input, Select {
+    height: 1;
+    border: none;
+    background: #151515;
+    color: #eeeeee;
+    padding: 0 1;
+}
+
+Select > SelectCurrent {
+    height: 1;
+    border: none;
+    padding: 0 1;
+    background: #151515;
+}
+
+Input:focus, Select:focus {
+    background: #202020;
+    color: $imap-green;
+}
+
+AsciiCheckbox {
+    min-width: 4;
+    height: 1;
+    background: $imap-black;
+    margin: 0;
+    padding: 0;
+}
+
+AsciiCheckbox > .toggle--button {
+    color: $imap-muted;
+    background: $imap-black;
+}
+
+AsciiCheckbox.-on > .toggle--button {
+    color: $imap-green;
+    background: $imap-black;
+    text-style: bold;
+}
+
+ContentSwitcher {
+    background: $imap-black;
+}
+
+#config-form {
+    layout: grid;
+    grid-size: 2;
+    grid-columns: 20 1fr;
+    grid-rows: 1;
+    grid-gutter: 0 1;
+    padding: 0 1;
+}
+
+.group-title {
+    column-span: 2;
+    height: 1;
+    color: $imap-green;
+    text-style: bold;
+    margin: 0;
+}
+
+.field-label, .control-label {
+    height: 1;
+    color: #bbbbbb;
+}
+
+.required-setting, .required-setting-label {
+    background: #142414;
+}
+
+.required-setting-label {
+    color: $imap-green;
+    text-style: bold;
+}
+
+.missing-setting, .missing-setting-label {
+    background: #321818;
+}
+
+.missing-setting-label {
+    color: $imap-yellow;
+    text-style: bold underline;
+}
+
+.wide-action {
+    width: 100%;
+    margin-top: 1;
+}
+
+DataTable {
+    height: 1fr;
+    background: $imap-black;
+    color: #dddddd;
+    scrollbar-background: $imap-black;
+    scrollbar-color: $imap-line;
+}
+
+DataTable > .datatable--header {
+    background: $imap-black;
+    color: $imap-green;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: #173217;
+    color: #ffffff;
+    text-style: bold;
+}
+
+.compact-actions {
+    height: 1;
+}
+
+.compact-actions Button {
+    width: auto;
+    margin-right: 1;
+}
+
+#output-log {
+    height: 1fr;
+    background: $imap-black;
+    color: #dddddd;
+    scrollbar-background: $imap-black;
+    scrollbar-color: $imap-line;
+}
+
+#confirm-message {
+    height: 2;
+    color: $imap-yellow;
+}
+
+#key-legend {
+    height: 1;
+    width: 100%;
+    background: $imap-black;
+    color: #bbbbbb;
+    padding: 0 1;
+}
+
+.ascii-mode .panel {
+    border: ascii $imap-line;
+}
+
+.ascii-mode .panel:focus-within {
+    border: ascii $imap-green;
+}
+
+.ascii-mode #confirm-dialog {
+    border: ascii $imap-yellow;
+}
+
+.ascii-mode #info-dialog {
+    border: ascii $imap-green;
+}
+
+.limited-color .panel:focus-within {
+    border-title-style: bold reverse;
+}
+
+.limited-color Button:hover,
+.limited-color Button:focus,
+.limited-color Button.selected,
+.limited-color .tool-button:hover,
+.limited-color .tool-button:focus,
+.limited-color .tool-button.selected,
+.limited-color .resize-handle:hover,
+.limited-color .resize-handle:focus,
+.limited-color .resize-handle.dragging,
+.limited-color DataTable > .datatable--cursor {
+    text-style: bold reverse;
+}
+
+.limited-color Input:focus {
+    text-style: bold;
+}
+
+.limited-color Select:focus {
+    text-style: bold reverse;
+}
+
+.limited-color .required-setting,
+.limited-color .required-setting-label {
+    text-style: bold;
+}
+
+.limited-color .missing-setting,
+.limited-color .missing-setting-label {
+    text-style: bold reverse;
+}
+
+.limited-color Button:disabled {
+    text-style: dim;
+}
+
+.medium #workspace {
+    layout: grid;
+    grid-size: 2 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: 29 1fr;
+    overflow-y: auto;
+}
+
+.medium #center-column, .medium #sidebar {
+    width: 100%;
+    min-width: 0;
+    height: 29;
+}
+
+.medium #right-column {
+    column-span: 2;
+    width: 100%;
+    min-width: 0;
+    height: 1fr;
+    min-height: 18;
+}
+
+.medium .resize-handle, .narrow .resize-handle {
+    display: none;
+}
+
+.narrow #workspace {
+    layout: vertical;
+    overflow-y: auto;
+}
+
+.narrow #sidebar, .narrow #center-column, .narrow #right-column {
+    width: 100%;
+    min-width: 0;
+    height: auto;
+}
+
+.narrow #center-column {
+    height: 24;
+}
+
+.narrow #tools-panel {
+    height: 7;
+}
+
+.narrow #history-panel {
+    height: 12;
+    min-height: 12;
+}
+
+.narrow #right-column {
+    height: 18;
+}
+
+.narrow #monitor-panel {
+    min-height: 18;
+}

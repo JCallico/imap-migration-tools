@@ -317,6 +317,8 @@ def test_negative_boolean_options_override_enabled_environment():
         "APPLY_LABELS": "true",
         "APPLY_FLAGS": "true",
         "FULL_RESTORE": "true",
+        "FULL_MIGRATE": "true",
+        "MIGRATE_CACHE_DIR": "/tmp/migration-cache",
     }
 
     with temp_env(environment):
@@ -345,6 +347,7 @@ def test_negative_boolean_options_override_enabled_environment():
                 "--no-preserve-labels",
                 "--no-preserve-flags",
                 "--no-gmail-mode",
+                "--no-full-migrate",
             ]
         )
 
@@ -363,3 +366,5 @@ def test_negative_boolean_options_override_enabled_environment():
     assert migrate_args.preserve_labels is False
     assert migrate_args.preserve_flags is False
     assert migrate_args.gmail_mode is False
+    assert migrate_args.full_migrate is False
+    assert migrate_args.migrate_cache == "/tmp/migration-cache"

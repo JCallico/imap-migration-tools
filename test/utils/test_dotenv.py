@@ -1,4 +1,4 @@
-"""Tests for optional dotenv loading and configuration provenance."""
+"""Tests for dotenv loading and configuration provenance."""
 
 import builtins
 import os
@@ -8,8 +8,8 @@ from conftest import temp_env
 from utils.dotenv import load_dotenv
 
 
-def test_missing_optional_dependency_is_ignored(monkeypatch):
-    """Commands still run without dotenv support when the optional package is absent."""
+def test_source_checkout_without_installed_dependency_is_ignored(monkeypatch):
+    """Direct source execution remains usable when runtime dependencies were not installed."""
     real_import = builtins.__import__
 
     def import_without_dotenv(name, *args, **kwargs):

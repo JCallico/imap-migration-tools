@@ -14,7 +14,7 @@ authentication. Prefer an app password where supported, or configure OAuth2.
 `pipx` keeps command-line applications isolated from the system Python environment.
 
 ```bash
-pipx install "imap-migration-tools[dotenv]"
+pipx install imap-migration-tools
 ```
 
 The installed commands are:
@@ -27,18 +27,14 @@ imap-migrate
 imap-restore
 ```
 
-To add `.env` support to an existing pipx installation:
-
-```bash
-pipx inject imap-migration-tools python-dotenv
-```
+Automatic `.env` loading is included in the standard installation.
 
 ### macOS
 
 ```bash
 brew install python pipx
 pipx ensurepath
-pipx install "imap-migration-tools[dotenv]"
+pipx install imap-migration-tools
 ```
 
 ### Linux
@@ -49,8 +45,20 @@ Install Python with your distribution package manager, then install pipx. On Ubu
 sudo apt-get update
 sudo apt-get install python3 python3-venv pipx
 pipx ensurepath
-pipx install "imap-migration-tools[dotenv]"
+pipx install imap-migration-tools
 ```
+
+Encrypted persistent OAuth2 token caching on Linux uses PyGObject and the system libsecret service. Install the native
+build and runtime libraries before selecting the `linux-keyring` extra. On Ubuntu or Debian:
+
+```bash
+sudo apt-get install gcc libcairo2-dev libgirepository-2.0-dev pkg-config python3-dev gir1.2-secret-1
+pipx install "imap-migration-tools[linux-keyring]"
+```
+
+Use your distribution's equivalent GObject introspection, Cairo, and libsecret packages on other Linux systems. If the
+extra or encrypted secret service is unavailable, OAuth authentication continues with process-local token caching and
+does not fall back to plaintext persistence.
 
 ### Windows
 
@@ -60,7 +68,7 @@ from PowerShell:
 ```powershell
 py -m pip install --user pipx
 py -m pipx ensurepath
-pipx install "imap-migration-tools[dotenv]"
+pipx install imap-migration-tools
 ```
 
 ## Install in a virtual environment
@@ -68,7 +76,7 @@ pipx install "imap-migration-tools[dotenv]"
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install "imap-migration-tools[dotenv]"
+python -m pip install imap-migration-tools
 ```
 
 On Windows PowerShell, activate with:
@@ -86,7 +94,6 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e .
 python -m pip install -r requirements.txt
-python -m pip install python-dotenv
 ```
 
 Run source entry points with `PYTHONPATH=src` when the project is not installed:
@@ -95,10 +102,10 @@ Run source entry points with `PYTHONPATH=src` when the project is not installed:
 PYTHONPATH=src .venv/bin/python src/imap_count.py --help
 ```
 
-## Optional `.env` support
+## `.env` support
 
-The commands continue to work without `python-dotenv`; only automatic `.env` discovery is disabled. Install the
-optional extra when `.env` files are desired:
+Automatic `.env` discovery is included with the standard package. The former extra remains valid as a compatibility
+alias for existing installation scripts, but is no longer required:
 
 ```bash
 python -m pip install "imap-migration-tools[dotenv]"

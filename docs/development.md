@@ -8,11 +8,21 @@ cd imap-migration-tools
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pip install python-dotenv
 ```
 
 Python 3.9 and newer are supported. Read [AGENTS.md](../AGENTS.md) before contributing; it documents repository
 conventions, public compatibility requirements, and subsystem ownership.
+
+On Linux, developers who need to exercise encrypted persistent OAuth2 caching must install the native GObject
+introspection, Cairo, and libsecret prerequisites described in [Installation](installation.md), then install the
+optional keyring backend into the source environment:
+
+```bash
+.venv/bin/python -m pip install -e ".[linux-keyring]"
+```
+
+The base development environment omits PyGObject so project installation and CI remain portable on minimal or
+headless Linux systems. OAuth2 continues with process-local caching when the optional encrypted backend is absent.
 
 ## Repository layout
 
@@ -26,6 +36,41 @@ conventions, public compatibility requirements, and subsystem ownership.
 | `src/providers/` | Provider-specific behavior |
 | `src/utils/` | Shared utilities, including `.env` loading |
 | `test/` | Unit and local IMAP integration tests mirroring the source tree |
+
+## TUI display compatibility
+
+Terminal capability handling is centralized in `src/tui/display.py`. Keep semantic status markers and separator
+characters in `DisplayProfile`; do not introduce display-specific Unicode literals directly in widgets. Textual's
+built-in `ascii` border type supplies portable `+`, `-`, and `|` borders.
+
+Use `imap-tools --display-mode ascii` to exercise compatibility rendering. `IMAP_TOOLS_DISPLAY_MODE` accepts `auto`,
+`standard`, or `ascii`; the command-line option takes precedence. Automatic detection intentionally switches only for
+`TERM=dumb` or a non-UTF-8 locale because terminal capability variables are frequently incomplete. `NO_COLOR` and the
+resolved Textual color system enable color-independent fallback styling without forcing ASCII when Unicode remains
+available.
+
+When changing TUI state presentation, verify both standard and ASCII profiles. Every state must have a textual or
+bold/reverse-video cue; foreground or subtle background color differences may only reinforce that cue.
+
+Keep operation readiness in the pure evaluator in `src/tui/operations.py`. Its structured result is the single source
+for Run-button state, Tools markers, missing-field highlights, and floating readiness guidance. Mode-specific choices
+such as Count targets and Compare endpoints must be inputs to that evaluator rather than application-level overrides.
+Announce only meaningful readiness transitions so autosave cannot stack duplicate notifications, and do not obscure a
+run-completion notification with an immediate ready message.
+
+Wide-layout persistence stores leading divider positions. Keep the rightmost Output column flexible so it consumes all
+remaining workspace width after restoring settings or resizing the terminal; do not restore it as a fixed cell width.
+
+Filesystem observation is centralized in `src/utils/filesystem_watch.py`. The TUI uses one polling timer for the `.env`
+file and filtered history-directory targets; consumers must not implement independent polling or filesystem-event
+logic. Keep application decisions such as configuration validation and history selection restoration outside the
+watcher so its dependency-free polling backend can later be replaced without changing consumers.
+
+History summaries are shared across TUI instances and must be replaced atomically. Cross-instance refreshes must
+preserve the selected run by ID and ignore intermediate table highlight events. If the selected record was externally
+deleted or pruned, explicitly select an available replacement and render its log; suppressed highlight events must not
+leave Output out of sync with the table. Hide another instance's `running` record until its final summary is available,
+but continue showing the current instance's active run immediately. Rebuilding History must not move widget focus.
 
 ## Run tests
 
