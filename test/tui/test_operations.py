@@ -87,8 +87,8 @@ def test_missing_account_authentication_highlights_both_choices():
 def test_count_alias_and_compare_local_required_settings():
     count = {"IMAP_HOST": "imap.example.com", "IMAP_USERNAME": "user"}
     required, missing = required_settings("count", count)
-    assert required == {"IMAP_HOST", "IMAP_USERNAME", "OAUTH2_CLIENT_ID"}
-    assert missing == {"OAUTH2_CLIENT_ID"}
+    assert required == {"IMAP_HOST", "IMAP_USERNAME", "IMAP_PASSWORD", "OAUTH2_CLIENT_ID"}
+    assert missing == {"IMAP_PASSWORD", "OAUTH2_CLIENT_ID"}
 
     compare = {"SRC_LOCAL_PATH": "/source", "DEST_LOCAL_PATH": "/destination"}
     required, missing = required_settings("compare", compare)
@@ -104,7 +104,41 @@ def test_count_alias_and_compare_local_required_settings():
 
 
 def test_account_without_any_authentication_is_not_ready():
-    assert not readiness("backup", {"SRC_IMAP_HOST": "imap.example.com", "SRC_IMAP_USERNAME": "user"}).ready
+    state = readiness("backup", {"SRC_IMAP_HOST": "imap.example.com", "SRC_IMAP_USERNAME": "user"})
+    assert not state.ready
+    assert state.detail == "Missing: source password or OAuth client ID, backup path"
+
+
+def test_readiness_reports_ready_and_destructive_warnings(tmp_path):
+    values = account_values() | {"BACKUP_LOCAL_PATH": str(tmp_path)}
+    assert readiness("backup", values).detail == "Ready to run"
+
+    values.update({"DELETE_FROM_SOURCE": "true", "DEST_DELETE": "true"})
+    state = readiness("migrate", values)
+    assert state.ready
+    assert state.warning
+    assert state.warnings == ("source deletion enabled", "destination deletion enabled")
+    assert state.detail == "Warning: source deletion enabled, destination deletion enabled"
+
+
+def test_readiness_uses_explicit_count_and_compare_modes(tmp_path):
+    values = account_values() | {
+        "BACKUP_LOCAL_PATH": str(tmp_path),
+        "SRC_LOCAL_PATH": str(tmp_path / "missing-source"),
+        "DEST_LOCAL_PATH": str(tmp_path),
+    }
+    assert readiness("count", values, count_mode="source").ready
+    assert readiness("count", values, count_mode="local").ready
+
+    state = readiness(
+        "compare",
+        values,
+        compare_source_mode="local",
+        compare_destination_mode="local",
+    )
+    assert not state.ready
+    assert state.detail == "Missing: source path"
+    assert state.missing_fields == frozenset({"SRC_LOCAL_PATH"})
 
 
 @pytest.mark.parametrize(

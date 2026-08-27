@@ -290,6 +290,52 @@ def test_tools_use_icons_for_readiness(tmp_path):
     asyncio.run(run_test())
 
 
+def test_readiness_banner_and_run_button_share_central_state(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        'SRC_IMAP_HOST="src.example.com"\nSRC_IMAP_USERNAME="source"\nSRC_IMAP_PASSWORD="secret"\n'
+        'DEST_IMAP_HOST="dest.example.com"\nDEST_IMAP_USERNAME="destination"\nDEST_IMAP_PASSWORD="secret"\n',
+        encoding="utf-8",
+    )
+    notices = []
+
+    async def run_test():
+        app = ImapToolsApp(env_path)
+        monkeypatch.setattr(
+            app,
+            "notify",
+            lambda message, **kwargs: notices.append((message, kwargs.get("title"), kwargs.get("severity"))),
+        )
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            notices.clear()
+
+            app.select_operation("migrate")
+            assert notices == [("Ready to run", "Migrate", "information")]
+            assert not app.query_one("#run-operation", Button).disabled
+
+            env_path.write_text(env_path.read_text(encoding="utf-8") + 'DEST_DELETE="true"\n', encoding="utf-8")
+            app.refresh_configuration(announce_readiness=True)
+            app.refresh_configuration(announce_readiness=True)
+            assert notices[-1] == ("Warning: destination deletion enabled", "Migrate", "warning")
+            assert notices.count(notices[-1]) == 1
+            assert str(app.query_one("#ready-migrate", Static).render()) == "⚠"
+            assert not app.query_one("#run-operation", Button).disabled
+
+            env_path.write_text(
+                'SRC_IMAP_HOST="src.example.com"\nSRC_IMAP_USERNAME="source"\nSRC_IMAP_PASSWORD="secret"\n'
+                'DEST_IMAP_HOST="dest.example.com"\nDEST_IMAP_USERNAME="destination"\n',
+                encoding="utf-8",
+            )
+            app.refresh_configuration(announce_readiness=True)
+            assert notices[-1] == ("Missing: destination password or OAuth client ID", "Migrate", "error")
+            assert app.query_one("#run-operation", Button).disabled
+            assert app.query_one("#env-dest-imap-password").has_class("missing-setting")
+            assert app.query_one("#env-dest-oauth2-client-id").has_class("missing-setting")
+
+    asyncio.run(run_test())
+
+
 def test_ascii_mode_uses_portable_symbols_borders_and_fallback_styles(tmp_path, monkeypatch):
     async def run_test():
         app = ImapToolsApp(tmp_path / ".env", display_profile=resolve_display_profile("ascii"))
@@ -305,11 +351,13 @@ def test_ascii_mode_uses_portable_symbols_borders_and_fallback_styles(tmp_path, 
             assert app.query_one("#operation-panel").border_title == "Operation - Count"
             assert str(app.query_one(".group-title", Label).render()).startswith("-- ")
 
-            monkeypatch.setattr(app_module, "readiness", lambda *_args: app_module.Readiness(True, "ready"))
+            monkeypatch.setattr(app_module, "readiness", lambda *_args, **_kwargs: app_module.Readiness(True, "ready"))
             app.refresh_configuration()
             assert str(app.query_one("#ready-count", Static).render()) == "OK"
 
-            monkeypatch.setattr(app_module, "readiness", lambda *_args: app_module.Readiness(True, "warning", True))
+            monkeypatch.setattr(
+                app_module, "readiness", lambda *_args, **_kwargs: app_module.Readiness(True, "warning", True)
+            )
             app.refresh_configuration()
             assert str(app.query_one("#ready-count", Static).render()) == "!!"
 
@@ -626,7 +674,7 @@ def test_prepare_run_rejects_invalid_and_missing_operation_values(tmp_path, monk
 
             monkeypatch.setattr(app, "save_configuration", lambda: True)
             app.prepare_run()
-            assert notifications[-1] == "Configure the src account"
+            assert notifications[-1] == "Missing: source password or OAuth client ID, source host, source username"
 
             monkeypatch.setattr(app, "selected_operation_readiness", lambda: app_module.Readiness(True, "ready"))
             monkeypatch.setattr(app, "run_options", lambda: RunOptions(workers=0))

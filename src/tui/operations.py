@@ -34,6 +34,9 @@ class Readiness:
     ready: bool
     detail: str
     warning: bool = False
+    required_fields: frozenset[str] = frozenset()
+    missing_fields: frozenset[str] = frozenset()
+    warnings: tuple[str, ...] = ()
 
 
 def _auth(values: dict[str, str], prefix: str) -> bool:
@@ -73,7 +76,14 @@ def account_settings(values: dict[str, str], prefix: str) -> tuple[set[str], set
     return required, missing
 
 
-def required_settings(operation: OperationName, values: dict[str, str]) -> tuple[set[str], set[str]]:
+def required_settings(
+    operation: OperationName,
+    values: dict[str, str],
+    *,
+    count_mode: str = "auto",
+    compare_source_mode: str = "auto",
+    compare_destination_mode: str = "auto",
+) -> tuple[set[str], set[str]]:
     """Return relevant and currently missing configuration fields for an operation."""
     required: set[str] = set()
     missing: set[str] = set()
@@ -98,24 +108,33 @@ def required_settings(operation: OperationName, values: dict[str, str]) -> tuple
         add_account("SRC")
         add_account("DEST")
     elif operation == "count":
-        if values.get("BACKUP_LOCAL_PATH") or values.get("SRC_LOCAL_PATH"):
+        if count_mode == "local":
+            add_path("BACKUP_LOCAL_PATH")
+        elif count_mode in {"source", "destination"}:
+            add_account("DEST" if count_mode == "destination" else "SRC")
+        elif values.get("BACKUP_LOCAL_PATH") or values.get("SRC_LOCAL_PATH"):
             add_path("BACKUP_LOCAL_PATH" if values.get("BACKUP_LOCAL_PATH") else "SRC_LOCAL_PATH")
         elif any(values.get(name) for name in ("IMAP_HOST", "IMAP_USERNAME", "IMAP_PASSWORD", "OAUTH2_CLIENT_ID")):
             aliases = {"IMAP_HOST", "IMAP_USERNAME"}
             required.update(aliases)
             missing.update(name for name in aliases if not values.get(name))
-            auth = "IMAP_PASSWORD" if values.get("IMAP_PASSWORD") else "OAUTH2_CLIENT_ID"
-            required.add(auth)
-            if not values.get(auth):
-                missing.add(auth)
+            if values.get("IMAP_PASSWORD"):
+                required.add("IMAP_PASSWORD")
+            elif values.get("OAUTH2_CLIENT_ID"):
+                required.add("OAUTH2_CLIENT_ID")
+            else:
+                required.update({"IMAP_PASSWORD", "OAUTH2_CLIENT_ID"})
+                missing.update({"IMAP_PASSWORD", "OAUTH2_CLIENT_ID"})
         else:
             add_account("SRC")
     else:
-        if values.get("SRC_LOCAL_PATH"):
+        if compare_source_mode == "local" or (compare_source_mode == "auto" and values.get("SRC_LOCAL_PATH")):
             add_path("SRC_LOCAL_PATH")
         else:
             add_account("SRC")
-        if values.get("DEST_LOCAL_PATH"):
+        if compare_destination_mode == "local" or (
+            compare_destination_mode == "auto" and values.get("DEST_LOCAL_PATH")
+        ):
             add_path("DEST_LOCAL_PATH")
         else:
             add_account("DEST")
@@ -127,50 +146,119 @@ def account_ready(values: dict[str, str], prefix: str) -> bool:
     return _account(values, prefix)
 
 
-def readiness(operation: OperationName, values: dict[str, str]) -> Readiness:
+def _missing_details(missing: set[str]) -> tuple[str, ...]:
+    """Translate missing field names into concise, choice-aware guidance."""
+    remaining = set(missing)
+    details: list[str] = []
+    for prefix, label in (("SRC", "source"), ("DEST", "destination")):
+        password = f"{prefix}_IMAP_PASSWORD"
+        client_id = f"{prefix}_OAUTH2_CLIENT_ID"
+        if {password, client_id} <= remaining:
+            details.append(f"{label} password or OAuth client ID")
+            remaining.difference_update({password, client_id})
+    if {"IMAP_PASSWORD", "OAUTH2_CLIENT_ID"} <= remaining:
+        details.append("IMAP password or OAuth client ID")
+        remaining.difference_update({"IMAP_PASSWORD", "OAUTH2_CLIENT_ID"})
+    labels = {
+        "SRC_IMAP_HOST": "source host",
+        "SRC_IMAP_USERNAME": "source username",
+        "SRC_OAUTH2_CLIENT_SECRET": "source OAuth client secret",
+        "DEST_IMAP_HOST": "destination host",
+        "DEST_IMAP_USERNAME": "destination username",
+        "DEST_OAUTH2_CLIENT_SECRET": "destination OAuth client secret",
+        "IMAP_HOST": "IMAP host",
+        "IMAP_USERNAME": "IMAP username",
+        "IMAP_PASSWORD": "IMAP password",
+        "OAUTH2_CLIENT_ID": "OAuth client ID",
+        "BACKUP_LOCAL_PATH": "backup path",
+        "SRC_LOCAL_PATH": "source path",
+        "DEST_LOCAL_PATH": "destination path",
+    }
+    details.extend(labels.get(name, name.lower().replace("_", " ")) for name in sorted(remaining))
+    return tuple(details)
+
+
+def readiness(
+    operation: OperationName,
+    values: dict[str, str],
+    *,
+    count_mode: str = "auto",
+    compare_source_mode: str = "auto",
+    compare_destination_mode: str = "auto",
+) -> Readiness:
     """Determine whether an operation has its minimum configuration."""
+    required, missing = required_settings(
+        operation,
+        values,
+        count_mode=count_mode,
+        compare_source_mode=compare_source_mode,
+        compare_destination_mode=compare_destination_mode,
+    )
     source = _account(values, "SRC")
     destination = _account(values, "DEST")
     backup_path = values.get("BACKUP_LOCAL_PATH", "")
     if operation == "count":
-        local_path = backup_path or values.get("SRC_LOCAL_PATH", "")
-        if local_path:
-            exists = Path(local_path).expanduser().is_dir()
-            return Readiness(exists, "Local backup is ready" if exists else "The configured local path does not exist")
-        single = bool(
-            values.get("IMAP_HOST")
-            and values.get("IMAP_USERNAME")
-            and (values.get("IMAP_PASSWORD") or values.get("OAUTH2_CLIENT_ID"))
-        )
-        ready = bool(source or single)
-        return Readiness(ready, "IMAP source is ready" if ready else "Configure a local path or source account")
-    if operation == "backup":
+        if count_mode in {"source", "destination"}:
+            ready = destination if count_mode == "destination" else source
+        else:
+            local_path = backup_path or values.get("SRC_LOCAL_PATH", "")
+            if count_mode == "local" or (count_mode == "auto" and local_path):
+                ready = bool(local_path and Path(local_path).expanduser().is_dir())
+                if local_path and not ready:
+                    missing.add("BACKUP_LOCAL_PATH" if backup_path or count_mode == "local" else "SRC_LOCAL_PATH")
+            else:
+                single = bool(
+                    values.get("IMAP_HOST")
+                    and values.get("IMAP_USERNAME")
+                    and (values.get("IMAP_PASSWORD") or values.get("OAUTH2_CLIENT_ID"))
+                )
+                ready = bool(source or single)
+    elif operation == "backup":
         ready = bool(source and backup_path)
-        return Readiness(
-            ready, "Source and backup path are ready" if ready else "Configure the source account and backup path"
-        )
-    if operation == "restore":
+    elif operation == "restore":
         exists = bool(backup_path and Path(backup_path).expanduser().is_dir())
         ready = bool(destination and exists)
-        return Readiness(
-            ready,
-            "Backup and destination are ready" if ready else "Configure a destination and an existing backup path",
-        )
-    if operation == "migrate":
-        destructive = (
-            values.get("DELETE_FROM_SOURCE", "false").lower() == "true"
-            or values.get("DEST_DELETE", "false").lower() == "true"
-        )
+        if backup_path and not exists:
+            missing.add("BACKUP_LOCAL_PATH")
+    elif operation == "migrate":
         ready = bool(source and destination)
-        return Readiness(
-            ready, "Both IMAP accounts are ready" if ready else "Configure both IMAP accounts", destructive
+    else:
+        source_path = values.get("SRC_LOCAL_PATH", "")
+        destination_path = values.get("DEST_LOCAL_PATH", "")
+        source_local = compare_source_mode == "local" or (compare_source_mode == "auto" and bool(source_path))
+        destination_local = compare_destination_mode == "local" or (
+            compare_destination_mode == "auto" and bool(destination_path)
         )
-    source_path = values.get("SRC_LOCAL_PATH", "")
-    destination_path = values.get("DEST_LOCAL_PATH", "")
-    src_side = Path(source_path).expanduser().is_dir() if source_path else source
-    dest_side = Path(destination_path).expanduser().is_dir() if destination_path else destination
-    ready = bool(src_side and dest_side)
-    return Readiness(ready, "Both comparison sides are ready" if ready else "Configure both comparison sides")
+        src_side = Path(source_path).expanduser().is_dir() if source_local and source_path else source
+        dest_side = (
+            Path(destination_path).expanduser().is_dir() if destination_local and destination_path else destination
+        )
+        ready = bool(src_side and dest_side)
+        if source_local and source_path and not src_side:
+            missing.add("SRC_LOCAL_PATH")
+        if destination_local and destination_path and not dest_side:
+            missing.add("DEST_LOCAL_PATH")
+
+    warnings: list[str] = []
+    if operation == "migrate" and values.get("DELETE_FROM_SOURCE", "false").lower() == "true":
+        warnings.append("source deletion enabled")
+    if operation in {"backup", "restore", "migrate"} and values.get("DEST_DELETE", "false").lower() == "true":
+        warnings.append("destination deletion enabled")
+    missing_details = _missing_details(missing)
+    if not ready:
+        detail = f"Missing: {', '.join(missing_details)}" if missing_details else "Missing required configuration"
+    elif warnings:
+        detail = f"Warning: {', '.join(warnings)}"
+    else:
+        detail = "Ready to run"
+    return Readiness(
+        ready,
+        detail,
+        bool(warnings),
+        frozenset(required),
+        frozenset(missing),
+        tuple(warnings),
+    )
 
 
 @dataclass

@@ -48,11 +48,9 @@ from tui.operations import (
     Readiness,
     RunOptions,
     account_ready,
-    account_settings,
     build_command,
     parse_output,
     readiness,
-    required_settings,
 )
 from tui.runner import OperationRunner, RunRequest
 from tui.splitter import ResizeHandle
@@ -297,6 +295,8 @@ class ImapToolsApp(App[None]):
         self.selected_output_id: str | None = None
         self.history_writer: HistoryWriter | None = None
         self.cancellation_requested = False
+        self.operation_in_progress = False
+        self.last_readiness_notice: tuple[OperationName, str] | None = None
         self.pending_action = ""
         self.pending_payload: object | None = None
         self.configuration_autosave_enabled = False
@@ -653,8 +653,7 @@ class ImapToolsApp(App[None]):
     def finish_external_configuration_reload(self) -> None:
         """Resume form events and refresh configuration-dependent UI state."""
         self.configuration_reload_in_progress = False
-        self.refresh_configuration()
-        self.select_operation(self.selected_operation)
+        self.refresh_configuration(announce_readiness=True)
 
     def set_configuration_status(self, status: str, reset_after: float | None = None) -> None:
         """Display Configuration save state and optionally return to neutral."""
@@ -746,22 +745,10 @@ class ImapToolsApp(App[None]):
                 result[field.name] = widget.value
         return result
 
-    def refresh_configuration(self) -> None:
+    def refresh_configuration(self, announce_readiness: bool = False) -> None:
         values = self.values()
-        for operation in OPERATIONS:
-            state = readiness(operation.name, values)
-            color = "#44dd55" if state.ready else "#777777"
-            marker = self.display_profile.ready if state.ready else self.display_profile.missing
-            label = "Ready" if state.ready else "Missing configuration"
-            if state.warning:
-                marker = self.display_profile.warning
-                label = "Destructive options enabled"
-                color = "#ffcc33"
-            indicator = self.query_one(f"#ready-{operation.name}", Static)
-            indicator.update(f"[bold {color}]{marker}[/]")
-            indicator.tooltip = f"{label}: {state.detail}"
         self.update_count_destination_option(values)
-        self.highlight_required_settings()
+        self.refresh_operation_readiness(values, announce=announce_readiness)
 
     def update_count_destination_option(self, values: dict[str, str]) -> None:
         select = self.query_one("#count-mode", Select)
@@ -804,10 +791,8 @@ class ImapToolsApp(App[None]):
         self.query_one("#operation-panel").styles.height = OPERATION_PANEL_HEIGHTS[operation]
         if self.has_class("narrow"):
             self.query_one("#sidebar").styles.height = 19 + OPERATION_PANEL_HEIGHTS[operation]
-        self.highlight_required_settings()
         run_button = self.query_one("#run-operation", Button)
         run_button.label = f"run {operation}"
-        run_button.disabled = not self.selected_operation_readiness().ready or self.runner.active
         for widget in self.query(".count-control"):
             widget.set_class(operation != "count", "hidden")
         for widget in self.query(".compare-control"):
@@ -823,19 +808,57 @@ class ImapToolsApp(App[None]):
         self.query_one(".folder-label").set_class(operation not in {"backup", "restore"}, "hidden")
         for candidate in OPERATIONS:
             self.query_one(f"#tool-{candidate.name}", ToolButton).set_class(candidate.name == operation, "selected")
+        self.refresh_operation_readiness(announce=True, force_notice=True)
 
-    def highlight_required_settings(self) -> None:
-        values = self.values()
-        if self.selected_operation == "count":
-            mode = str(self.query_one("#count-mode", Select).value)
-            if mode == "local":
-                required = {"BACKUP_LOCAL_PATH"}
-                missing = set() if values.get("BACKUP_LOCAL_PATH") else {"BACKUP_LOCAL_PATH"}
+    def operation_readiness(self, operation: OperationName, values: dict[str, str] | None = None) -> Readiness:
+        """Return readiness using the operation modes currently selected in the UI."""
+        if values is None:
+            values = self.values()
+        return readiness(
+            operation,
+            values,
+            count_mode=str(self.query_one("#count-mode", Select).value),
+            compare_source_mode=str(self.query_one("#compare-source-mode", Select).value),
+            compare_destination_mode=str(self.query_one("#compare-dest-mode", Select).value),
+        )
+
+    def refresh_operation_readiness(
+        self,
+        values: dict[str, str] | None = None,
+        *,
+        announce: bool = False,
+        force_notice: bool = False,
+    ) -> Readiness:
+        """Synchronize every readiness affordance from one evaluation path."""
+        if values is None:
+            values = self.values()
+        states = {operation.name: self.operation_readiness(operation.name, values) for operation in OPERATIONS}
+        for operation in OPERATIONS:
+            state = states[operation.name]
+            if not state.ready:
+                marker, color, label = self.display_profile.missing, "#777777", "Missing configuration"
+            elif state.warning:
+                marker, color, label = self.display_profile.warning, "#ffcc33", "Destructive options enabled"
             else:
-                prefix = "DEST" if mode == "destination" else "SRC"
-                required, missing = account_settings(values, prefix)
-        else:
-            required, missing = required_settings(self.selected_operation, values)
+                marker, color, label = self.display_profile.ready, "#44dd55", "Ready"
+            indicator = self.query_one(f"#ready-{operation.name}", Static)
+            indicator.update(f"[bold {color}]{marker}[/]")
+            indicator.tooltip = f"{label}: {state.detail}"
+
+        state = states[self.selected_operation]
+        self.query_one("#run-operation", Button).disabled = not state.ready or self.operation_in_progress
+        self.highlight_required_settings(state)
+        notice_key = (self.selected_operation, state.detail)
+        if announce and not self.operation_in_progress and (force_notice or notice_key != self.last_readiness_notice):
+            severity = "error" if not state.ready else "warning" if state.warning else "information"
+            self.notify(state.detail, title=OPERATION_BY_NAME[self.selected_operation].title, severity=severity)
+            self.last_readiness_notice = notice_key
+        return state
+
+    def highlight_required_settings(self, state: Readiness | None = None) -> None:
+        state = state or self.operation_readiness(self.selected_operation)
+        required = state.required_fields
+        missing = state.missing_fields
         operation = OPERATION_BY_NAME[self.selected_operation].title
         for field in FIELDS:
             control = self.query_one(f"#{_field_id(field.name)}")
@@ -857,33 +880,17 @@ class ImapToolsApp(App[None]):
             )
 
     def selected_operation_readiness(self):
-        values = self.values()
-        if self.selected_operation != "count":
-            return readiness(self.selected_operation, values)
-        mode = str(self.query_one("#count-mode", Select).value)
-        if mode == "local":
-            for name in (
-                "SRC_IMAP_HOST",
-                "SRC_IMAP_USERNAME",
-                "SRC_IMAP_PASSWORD",
-                "SRC_OAUTH2_CLIENT_ID",
-                "IMAP_HOST",
-                "IMAP_USERNAME",
-                "IMAP_PASSWORD",
-                "OAUTH2_CLIENT_ID",
-            ):
-                values[name] = ""
-            return readiness("count", values)
-        prefix = "DEST" if mode == "destination" else "SRC"
-        ready = account_ready(values, prefix)
-        return Readiness(
-            ready, f"{prefix.title()} account is ready" if ready else f"Configure the {prefix.lower()} account"
-        )
+        return self.operation_readiness(self.selected_operation)
 
     @on(Select.Changed, "#count-mode")
     def count_mode_changed(self) -> None:
         if self.selected_operation == "count":
-            self.select_operation("count")
+            self.refresh_operation_readiness(announce=True)
+
+    @on(Select.Changed, "#compare-source-mode, #compare-dest-mode")
+    def compare_mode_changed(self) -> None:
+        if self.selected_operation == "compare":
+            self.refresh_operation_readiness(announce=True)
 
     def run_options(self) -> RunOptions:
         operation = self.selected_operation
@@ -994,8 +1001,7 @@ class ImapToolsApp(App[None]):
         self.configuration_file_digest = self.env_digest()
         self.filesystem_watcher.refresh("configuration")
         self.configuration_rejected_digest = None
-        self.refresh_configuration()
-        self.select_operation(self.selected_operation)
+        self.refresh_configuration(announce_readiness=True)
         self.set_configuration_status(f"{self.display_profile.success} saved", reset_after=1.5)
         return True
 
@@ -1059,11 +1065,12 @@ class ImapToolsApp(App[None]):
     @work(exclusive=True, group="operation")
     async def start_operation(self, options: RunOptions) -> None:
         operation = OPERATION_BY_NAME[self.selected_operation]
+        self.operation_in_progress = True
+        self.refresh_operation_readiness()
         self.log_lines.clear()
         self.query_one("#output-log", RichLog).clear()
         self.progress = ProgressState()
         self.query_one("#cancel-run", Button).disabled = False
-        self.query_one("#run-operation", Button).disabled = True
         values = self.values()
         redactor = Redactor([values.get(name, "") for name in SECRET_NAMES])
         record = new_record(operation.name)
@@ -1107,7 +1114,8 @@ class ImapToolsApp(App[None]):
                 self.history_writer = None
             self.query_one("#cancel-run", Button).disabled = True
             self.query_one("#force-stop", Button).disabled = True
-            self.query_one("#run-operation", Button).disabled = not readiness(operation.name, self.values()).ready
+            self.operation_in_progress = False
+            self.refresh_operation_readiness()
             self.refresh_history(self.selected_output_id)
             severity = "warning" if record.status == "cancelled" else "information" if exit_code == 0 else "error"
             self.notify(f"{operation.title} {record.status}", severity=severity)

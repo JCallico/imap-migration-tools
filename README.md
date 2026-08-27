@@ -74,7 +74,7 @@ python -m pip install "imap-migration-tools[tui]"
 imap-tools
 ```
 
-The interface provides a guided autosaving `.env` form, operation readiness checks, live output, cancellation, and
+The interface provides a guided autosaving `.env` form, operation readiness guidance, live output, cancellation, and
 local run history.
 
 ![IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels](docs/images/tui-overview.jpg)

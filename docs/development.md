@@ -52,6 +52,12 @@ available.
 When changing TUI state presentation, verify both standard and ASCII profiles. Every state must have a textual or
 bold/reverse-video cue; foreground or subtle background color differences may only reinforce that cue.
 
+Keep operation readiness in the pure evaluator in `src/tui/operations.py`. Its structured result is the single source
+for Run-button state, Tools markers, missing-field highlights, and floating readiness guidance. Mode-specific choices
+such as Count targets and Compare endpoints must be inputs to that evaluator rather than application-level overrides.
+Announce only meaningful readiness transitions so autosave cannot stack duplicate notifications, and do not obscure a
+run-completion notification with an immediate ready message.
+
 Wide-layout persistence stores leading divider positions. Keep the rightmost Output column flexible so it consumes all
 remaining workspace width after restoring settings or resizing the terminal; do not restore it as a fixed cell width.
 

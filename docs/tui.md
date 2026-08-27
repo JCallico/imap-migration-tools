@@ -43,6 +43,16 @@ The interface autosaves valid form changes to `.env`. It also notices edits made
 valid configuration automatically. An invalid external file leaves the current form unchanged and displays an error.
 If an external edit arrives while an autosave is pending, the external file takes precedence and is not overwritten.
 
+## Operation readiness
+
+Selecting an operation displays a floating status banner such as `Ready to run`, `Missing: source password or OAuth
+client ID`, or `Warning: destination deletion enabled`. The banner changes only when the selected operation or its
+readiness changes, so autosave does not repeatedly show identical guidance.
+
+The same readiness result controls the Run button, the status marker in Tools, and Configuration field highlighting.
+Authentication alternatives are presented as choices: provide a password or an OAuth client ID rather than filling in
+both. Provider-specific requirements, such as a Google OAuth client secret, are identified separately.
+
 ## History and multiple instances
 
 History is shared by TUI instances using the same user data directory. A completed run created by another instance is
