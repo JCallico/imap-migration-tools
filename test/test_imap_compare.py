@@ -455,3 +455,34 @@ class TestLocalFolderComparison:
         assert "INBOX" in captured.out
         assert "Sent" in captured.out
         assert "N/A" in captured.out
+
+
+def test_cli_rejects_local_target_that_is_not_a_directory(single_mock_server, tmp_path, capsys):
+    """End-to-end: comparison translates an invalid local target."""
+    _, port = single_mock_server({"INBOX": []})
+    invalid_target = tmp_path / "backup.eml"
+    invalid_target.write_text("not a backup directory")
+    env = {
+        "DEST_IMAP_HOST": f"imap://localhost:{port}",
+        "DEST_IMAP_USERNAME": "dest_user",
+        "DEST_IMAP_PASSWORD": "p",
+    }
+
+    with temp_env(env), temp_argv(["compare_imap_folders.py", "--src-path", str(invalid_target)]):
+        compare_imap_folders.main()
+
+    assert "Source (Local)" in capsys.readouterr().out
+
+
+def test_cli_reports_empty_local_source(single_mock_server, tmp_path, capsys):
+    """CLI reports that an empty local source has no folders to compare."""
+    _, port = single_mock_server({"INBOX": []})
+    env = {
+        "DEST_IMAP_HOST": f"imap://localhost:{port}",
+        "DEST_IMAP_USERNAME": "dest_user",
+        "DEST_IMAP_PASSWORD": "p",
+    }
+    with temp_env(env), temp_argv(["compare_imap_folders.py", "--src-path", str(tmp_path)]):
+        compare_imap_folders.main()
+
+    assert "Failed to list source folders." in capsys.readouterr().out

@@ -644,3 +644,31 @@ class TestSrcImapFallback:
             assert default_host == "localhost"
             assert default_user == "user"
             assert default_pass == "pass"
+
+
+def test_cli_rejects_local_path_that_is_not_a_directory(tmp_path, capsys):
+    """End-to-end: local mode translates an invalid filesystem target."""
+    backup_file = tmp_path / "backup.eml"
+    backup_file.write_text("not a backup directory")
+
+    with temp_env({}), pytest.raises(SystemExit) as exc_info:
+        count_imap_emails.main(["--path", str(backup_file)])
+
+    assert exc_info.value.code == 1
+    assert "does not exist or is not a directory" in capsys.readouterr().out
+
+
+def test_cli_displays_unavailable_count_when_folder_select_fails(single_mock_server, capsys):
+    """CLI keeps counting and renders N/A when one mailbox cannot be selected."""
+    import imaplib
+    from unittest.mock import patch
+
+    _, port = single_mock_server({"INBOX": []})
+    with (
+        patch("imaplib.IMAP4.select", side_effect=imaplib.IMAP4.error("select failed")),
+        temp_env(_mock_imap_env(port)),
+        temp_argv(["count_imap_emails.py"]),
+    ):
+        count_imap_emails.main()
+
+    assert "N/A" in capsys.readouterr().out
