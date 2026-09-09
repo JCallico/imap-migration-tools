@@ -275,7 +275,17 @@ def get_imap_connection_from_conf(conf):
             "oauth2": dict or None  # Contains provider, client_id, email, client_secret
         }
     """
-    conn = get_imap_connection(conf["host"], conf["user"], conf.get("password"), conf.get("oauth2_token"))
+    arguments = (conf["host"], conf["user"], conf.get("password"), conf.get("oauth2_token"))
+    if "log_fn" in conf:
+        try:
+            conn = get_imap_connection(*arguments, log_fn=conf["log_fn"])
+        except TypeError as exc:
+            # Compatibility for callers/tests replacing the historical four-argument helper.
+            if "log_fn" not in str(exc):
+                raise
+            conn = get_imap_connection(*arguments)
+    else:
+        conn = get_imap_connection(*arguments)
     if conn and hasattr(conn, "configure_folder_mapping"):
         conn.configure_folder_mapping(conf.get("folder_prefix", ""), conf.get("folder_sep", "/"))
     return conn
@@ -312,18 +322,18 @@ def detect_dest_namespace(imap_conn):
         return "", "/"
 
 
-def get_imap_connection(host, user, password=None, oauth2_token=None):
+def get_imap_connection(host, user, password=None, oauth2_token=None, log_fn=safe_print):
     """
     Establishes an SSL connection to the IMAP server and logs in.
     Supports both basic auth (password) and OAuth 2.0 (XOAUTH2).
     Returns the connection object or None if failed.
     """
     if not host or not user:
-        print(f"Error: Invalid credentials for {host}")
+        log_fn(f"Error: Invalid credentials for {host}")
         return None
 
     if not password and not oauth2_token:
-        print(f"Error: Either password or oauth2_token is required for {host}")
+        log_fn(f"Error: Either password or oauth2_token is required for {host}")
         return None
 
     try:
@@ -353,10 +363,10 @@ def get_imap_connection(host, user, password=None, oauth2_token=None):
             conn.authenticate("XOAUTH2", lambda _: auth_string.encode())
         else:
             conn.login(user, password)
-        imap_compress.enable_compression(conn, log_fn=safe_print)
-        return imap_retry.ConnectionProxy(conn, log_fn=safe_print)
+        imap_compress.enable_compression(conn, log_fn=log_fn)
+        return imap_retry.ConnectionProxy(conn, log_fn=log_fn)
     except Exception as e:
-        print(f"Connection error to {host}: {e}")
+        log_fn(f"Connection error to {host}: {e}")
         return None
 
 

@@ -49,130 +49,66 @@ Examples:
     python3 imap_count.py --target destination
 """
 
-import imaplib
 import sys
 from typing import Optional
 
 from auth import imap_oauth2
 from cli.count import parse_arguments
-from utils import imap_common
+from imap_services import AccountConfig, CountService, ImapTarget, LocalTarget, OAuth2Config
+from imap_services._operations.count import count_emails, count_local_emails  # noqa: F401
+from imap_services.exceptions import ImapServiceError
 from utils.dotenv import load_dotenv
 
 
-def count_emails(imap_server, username, password=None, oauth2_token=None):
-    try:
-        # Connect to the IMAP server (using SSL)
-        print(f"Connecting to {imap_server}...")
-        mail = imap_common.get_imap_connection(imap_server, username, password, oauth2_token)
-        if not mail:
-            return
-
-        # List all mailboxes
-        print("Listing mailboxes...")
-        folders = imap_common.list_selectable_folders(mail)
-
-        if not folders:
-            print("Failed to list mailboxes.")
-            return
-
-        total_all_folders = 0
-        print(f"{'Folder Name':<40} {'Count':>10}")
-        print("-" * 52)
-
-        for folder_name in folders:
-            display_name = folder_name
-
-            try:
-                # Select the mailbox (read-only is sufficient for counting)
-                # folder_name extracted from list usually handles quotes correctly for select
-                rv, _ = mail.select(f'"{folder_name}"', readonly=True)
-                if rv != "OK":
-                    print(f"{display_name:<40} {'Skipped':>10}")
-                    continue
-
-                # Search for all emails
-                status, data = mail.search(None, "ALL")
-
-                if status == "OK":
-                    # Some servers return [None] for a successful search in an empty mailbox.
-                    email_ids = data[0].split() if data and data[0] else []
-                    count = len(email_ids)
-                    print(f"{display_name:<40} {count:>10}")
-                    total_all_folders += count
-                else:
-                    print(f"{display_name:<40} {'Error':>10}")
-
-            except imaplib.IMAP4.error:
-                print(f"{display_name:<40} {'Error':>10}")
-
-        print("-" * 52)
-        print(f"{'TOTAL':<40} {total_all_folders:>10}")
-
-        # Logout
-        mail.logout()
-
-    except imaplib.IMAP4.error as e:
-        print(f"IMAP Error: {e}")
-    except Exception as e:
-        print(f"An error occurred: {e}")
-
-
-def count_local_emails(local_path: str) -> None:
-    print(f"Scanning local backup: {local_path}")
-
-    folders = imap_common.list_local_folders(local_path)
-    if not folders:
-        print("No folders found.")
+def _print_result(result, empty_message):
+    if not result.folder_counts:
+        print(empty_message)
         return
-
-    total_all_folders = 0
     print(f"{'Folder Name':<40} {'Count':>10}")
     print("-" * 52)
-
-    for folder_name in folders:
-        count = imap_common.get_local_email_count(local_path, folder_name)
-        if count is None:
-            print(f"{folder_name:<40} {'N/A':>10}")
-            continue
-
-        print(f"{folder_name:<40} {count:>10}")
-        total_all_folders += count
-
+    for folder, count in result.folder_counts.items():
+        print(f"{folder:<40} {count if count is not None else 'N/A':>10}")
     print("-" * 52)
-    print(f"{'TOTAL':<40} {total_all_folders:>10}")
+    print(f"{'TOTAL':<40} {result.total:>10}")
 
 
 def main(argv: Optional[list[str]] = None) -> None:
-    # Loading environment variables from .env file
+    """Parse CLI configuration and execute the reusable count service."""
     dotenv_result = load_dotenv()
-
     args, local_mode = parse_arguments(argv, dotenv_keys=dotenv_result.dotenv_keys)
     if local_mode:
         print("\n--- Configuration Summary ---")
         print(f"Local Path      : {args.path}")
         print("-----------------------------\n")
-        count_local_emails(args.path)
+        events = []
+        result = CountService(LocalTarget(args.path), events.append).run()
+        print(events[0].message)
+        _print_result(result, "No folders found.")
         raise SystemExit(0)
 
-    # Acquire OAuth2 token if configured
-    oauth2_token = None
-    oauth2_provider = None
+    oauth2 = None
+    provider = None
     if args.client_id:
-        oauth2_token, oauth2_provider = imap_oauth2.acquire_token(
-            args.host,
-            args.client_id,
-            args.user,
-            args.client_secret,
-            account_type=args.account_type,
+        token, provider = imap_oauth2.acquire_token(
+            args.host, args.client_id, args.user, args.client_secret, account_type=args.account_type
         )
-
+        oauth2 = OAuth2Config(args.client_id, args.client_secret, args.account_type, token, provider)
+    account = AccountConfig(args.host, args.user, args.password, oauth2)
     print("\n--- Configuration Summary ---")
     print(f"Host            : {args.host}")
     print(f"User            : {args.user}")
-    print(f"Auth Method     : {imap_oauth2.auth_description(oauth2_provider)}")
+    print(f"Auth Method     : {imap_oauth2.auth_description(provider)}")
     print("-----------------------------\n")
-
-    count_emails(args.host, args.user, args.password, oauth2_token)
+    events = []
+    try:
+        result = CountService(ImapTarget(account), events.append).run()
+    except ImapServiceError as exc:
+        print(f"An error occurred: {exc}")
+        return
+    for event in events:
+        if event.phase in {"connect", "list"}:
+            print(event.message)
+    _print_result(result, "Failed to list mailboxes.")
 
 
 if __name__ == "__main__":
@@ -181,6 +117,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nProcess terminated by user.")
         sys.exit(0)
-    except Exception as e:
-        print(f"Fatal Error: {e}")
+    except Exception as exc:
+        print(f"Fatal Error: {exc}")
         sys.exit(1)

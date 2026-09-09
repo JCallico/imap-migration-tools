@@ -52,6 +52,7 @@ imap-tools = "tui:main"
 
 [tool.setuptools.package-data]
 tui = ["*.tcss"]
+imap_services = ["py.typed"]
 
 [tool.setuptools.package-dir]
 "" = "src"

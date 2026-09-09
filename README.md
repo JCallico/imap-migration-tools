@@ -46,6 +46,29 @@ python -m pip install imap-migration-tools
 The standard installation supports command-line arguments, OS environment variables, and automatic `.env` loading.
 The legacy `imap-migration-tools[dotenv]` spelling remains accepted, but the extra is no longer necessary.
 
+### Python library
+
+The installed distribution also provides the `imap_services` Python package. Services take explicit configuration,
+return structured results, and optionally publish structured progress events; unlike the command-line adapters, they do
+not read `.env` or configure logging.
+
+```python
+from imap_services import AccountConfig, CountService, ImapTarget
+
+account = AccountConfig(
+    host="imap.example.com",
+    username="person@example.com",
+    password="app-password",
+)
+service = CountService(ImapTarget(account), on_event=lambda event: print(event.message))
+result = service.run()
+print(result.total)
+```
+
+`BackupService`, `RestoreService`, `MigrationService`, and `ComparisonService` use the same configuration and callback
+model. Applications may configure handlers for the `imap_services` logger hierarchy when diagnostic logs are needed;
+normal progress is delivered only through callbacks.
+
 ### Full-screen terminal interface (beta)
 
 The beta Textual interface provides one responsive, full-terminal application for configuring and running Count,
