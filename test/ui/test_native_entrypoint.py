@@ -2,6 +2,8 @@
 
 import builtins
 import runpy
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -36,7 +38,7 @@ def test_unrelated_import_error_is_preserved(monkeypatch):
 
 def test_entrypoint_launches_application(monkeypatch):
     launched = []
-    monkeypatch.setattr("ui.app.main", lambda: launched.append(True))
+    monkeypatch.setitem(sys.modules, "ui.app", SimpleNamespace(main=lambda: launched.append(True)))
     main()
     assert launched == [True]
 
