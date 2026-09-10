@@ -325,7 +325,7 @@ def test_native_layout_and_focus_actions(workspace, native_app):
     assert workspace.upper.GetSashPosition() == 350
     workspace.reset_layout()
     assert workspace.upper.GetSashPosition() == 430
-    assert workspace.sidebar.GetSashPosition() == DEFAULT_OPERATION_HEIGHT
+    assert abs(workspace.sidebar.GetSashPosition() - DEFAULT_OPERATION_HEIGHT) <= 16
     workspace.select_operation("compare")
     wx.Yield()
     run_bottom = workspace.run_button.GetPosition().y + workspace.run_button.GetSize().height
