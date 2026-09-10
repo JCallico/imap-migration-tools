@@ -10,7 +10,7 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
-Python 3.9 and newer are supported. Read [AGENTS.md](../AGENTS.md) before contributing; it documents repository
+Python 3.10 and newer are supported. Read [AGENTS.md](../AGENTS.md) before contributing; it documents repository
 conventions, public compatibility requirements, and subsystem ownership.
 
 On Linux, developers who need to exercise encrypted persistent OAuth2 caching must install the native GObject
@@ -111,7 +111,7 @@ Run the underlying pre-commit checks directly with:
 git diff --check
 ```
 
-CI also runs Bandit, syntax and import checks, a non-blocking mypy check, and the test suite on Python 3.9 through 3.13.
+CI also runs Bandit, syntax and import checks, a non-blocking mypy check, and the test suite on Python 3.10 through 3.13.
 The CI test jobs install the project before pytest so missing runtime dependencies cannot be hidden by a developer's
 environment.
 
@@ -129,3 +129,9 @@ environment.
 Before implementing a new feature, check whether a maintained library already supplies it. For authentication,
 encryption, caching, and other security- or data-sensitive behavior, prefer established libraries and document the
 dependency and portability tradeoffs before implementation.
+
+## Shared UI core and native desktop
+
+`src/ui_core` owns reusable UI behavior. `src/tui` retains compatibility module aliases and Textual adapters.
+`src/ui` contains wxPython adapters; it must not implement authentication or IMAP behavior.
+New tests live in `test/ui_core` and `test/ui`. See [desktop testing](ui.md#tests-and-bundles).

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 from collections import deque
-from datetime import datetime, timezone
 from pathlib import Path
 
 from textual import on, work
@@ -29,16 +28,15 @@ from textual.widgets import (
 
 from tui.config import (
     FIELDS,
-    SECRET_NAMES,
     discover_env,
     effective_values,
     read_env,
-    read_valid_env,
     save_form,
     validate,
 )
 from tui.display import DISPLAY_MODES, DisplayProfile, has_limited_color, resolve_display_profile
-from tui.history import HistoryWriter, Redactor, delete_record, history_dir, load_records, new_record, read_log
+from tui.history import HistoryWriter, delete_record, history_dir, load_records, read_log
+from tui.history import Redactor as Redactor
 from tui.layout import default_layout_path, load_layout, save_layout
 from tui.operations import (
     OPERATION_BY_NAME,
@@ -49,11 +47,15 @@ from tui.operations import (
     RunOptions,
     account_ready,
     build_command,
-    parse_output,
     readiness,
+)
+from tui.operations import (
+    OPERATION_SWITCHES as OPERATION_SWITCHES,
 )
 from tui.runner import OperationRunner, RunRequest
 from tui.splitter import ResizeHandle
+from ui_core.session import RunSession
+from ui_core.workspace import make_options, run_confirmation, validated_form
 from utils.filesystem_watch import FilesystemWatcher
 
 
@@ -211,33 +213,6 @@ class InformationModal(ModalScreen[None]):
     def action_close(self) -> None:
         self.dismiss(None)
 
-
-OPERATION_SWITCHES: dict[str, tuple[str, ...]] = {
-    "count": (),
-    "compare": (),
-    "backup": (
-        "PRESERVE_LABELS",
-        "PRESERVE_FLAGS",
-        "MANIFEST_ONLY",
-        "GMAIL_MODE",
-        "DEST_DELETE",
-    ),
-    "restore": (
-        "APPLY_LABELS",
-        "APPLY_FLAGS",
-        "GMAIL_MODE",
-        "FULL_RESTORE",
-        "DEST_DELETE",
-    ),
-    "migrate": (
-        "DELETE_FROM_SOURCE",
-        "DEST_DELETE",
-        "PRESERVE_LABELS",
-        "PRESERVE_FLAGS",
-        "GMAIL_MODE",
-        "FULL_MIGRATE",
-    ),
-}
 
 OPERATION_PANEL_HEIGHTS: dict[OperationName, int] = {
     "count": 6,
@@ -608,15 +583,9 @@ class ImapToolsApp(App[None]):
             self.reject_external_configuration(digest, "the .env file is missing")
             return False
         try:
-            file_values = read_valid_env(self.env_path)
+            form_values = validated_form(self.env_path)
         except (OSError, ValueError) as exc:
             self.reject_external_configuration(digest, str(exc))
-            return False
-        form_values = {field.name: file_values.get(field.name, field.default) for field in FIELDS}
-        errors = validate(form_values)
-        if errors:
-            name, message = next(iter(errors.items()))
-            self.reject_external_configuration(digest, f"{name}: {message}")
             return False
 
         pending_edit = self.configuration_save_timer is not None
@@ -893,36 +862,14 @@ class ImapToolsApp(App[None]):
             self.refresh_operation_readiness(announce=True)
 
     def run_options(self) -> RunOptions:
-        operation = self.selected_operation
-        values = self.values()
-        switches = {name: values.get(name, "false").lower() == "true" for name in OPERATION_SWITCHES[operation]}
-        environment: dict[str, str] = {}
-        if operation == "count":
-            mode = str(self.query_one("#count-mode", Select).value)
-            return RunOptions(switches=switches, target=mode)
-        if operation == "compare":
-            source_mode = str(self.query_one("#compare-source-mode", Select).value)
-            destination_mode = str(self.query_one("#compare-dest-mode", Select).value)
-            source_path = ""
-            destination_path = ""
-            if source_mode == "imap":
-                environment["SRC_LOCAL_PATH"] = ""
-            elif source_mode == "local":
-                source_path = values.get("SRC_LOCAL_PATH", "")
-            if destination_mode == "imap":
-                environment["DEST_LOCAL_PATH"] = ""
-            elif destination_mode == "local":
-                destination_path = values.get("DEST_LOCAL_PATH", "")
-            return RunOptions(
-                switches=switches,
-                environment=environment,
-                source_path=source_path,
-                destination_path=destination_path,
-            )
-        workers = int(values.get("MAX_WORKERS", "4") or "4")
-        batch = int(values.get("BATCH_SIZE", "10") or "10")
-        folder = self.query_one("#folder", Input).value if operation in {"backup", "restore"} else ""
-        return RunOptions(folder, workers, batch, "", switches, environment)
+        return make_options(
+            self.selected_operation,
+            self.values(),
+            str(self.query_one("#count-mode", Select).value),
+            str(self.query_one("#compare-source-mode", Select).value),
+            str(self.query_one("#compare-dest-mode", Select).value),
+            self.query_one("#folder", Input).value,
+        )
 
     def request_confirmation(self, action: str, message: str, payload: object, require_delete: bool = False) -> None:
         self.pending_action = action
@@ -1045,21 +992,7 @@ class ImapToolsApp(App[None]):
                 if self.query_one(mode_id, Select).value == "local" and not values.get(variable):
                     self.notify(f"{variable} requires a path for local mode", severity="error")
                     return
-        destructive = options.switches.get("DELETE_FROM_SOURCE") or options.switches.get("DEST_DELETE")
-        message = f"Run {self.selected_operation}?"
-        if destructive:
-            values = self.values()
-            targets: list[str] = []
-            if options.switches.get("DELETE_FROM_SOURCE"):
-                targets.append(f"source {values.get('SRC_IMAP_USERNAME')}@{values.get('SRC_IMAP_HOST')}")
-            if options.switches.get("DEST_DELETE"):
-                target = (
-                    values.get("BACKUP_LOCAL_PATH")
-                    if self.selected_operation == "backup"
-                    else f"{values.get('DEST_IMAP_USERNAME')}@{values.get('DEST_IMAP_HOST')}"
-                )
-                targets.append(f"destination {target}")
-            message = f"Type DELETE to run {self.selected_operation} and remove data from {', '.join(targets)}."
+        message, destructive = run_confirmation(self.selected_operation, options, self.values())
         self.request_confirmation("run", message, options, bool(destructive))
 
     @work(exclusive=True, group="operation")
@@ -1069,30 +1002,28 @@ class ImapToolsApp(App[None]):
         self.refresh_operation_readiness()
         self.log_lines.clear()
         self.query_one("#output-log", RichLog).clear()
-        self.progress = ProgressState()
-        self.query_one("#cancel-run", Button).disabled = False
         values = self.values()
-        redactor = Redactor([values.get(name, "") for name in SECRET_NAMES])
-        record = new_record(operation.name)
+        session = RunSession(operation.name, values, writer_factory=HistoryWriter)
+        self.progress = session.progress
+        self.query_one("#cancel-run", Button).disabled = False
+        record = session.record
         self.cancellation_requested = False
         self.current_run_id = record.run_id
         self.selected_output_id = record.run_id
-        try:
-            self.history_writer = HistoryWriter(record, redactor)
+        self.history_writer = session.writer
+        if session.warning:
+            self.notify(session.warning, severity="warning")
+        else:
             self.refresh_history(self.selected_output_id)
-        except OSError as exc:
-            self.history_writer = None
-            self.notify(f"History unavailable: {exc}", severity="warning")
         request = self._make_run_request(operation.name, options)
 
         async def receive(line: str) -> None:
-            sanitized = self.history_writer.write(line) if self.history_writer else redactor(line)
+            sanitized = session.receive(line)
             self.log_lines.append(sanitized)
             if self.selected_output_id == record.run_id:
                 match = self.query_one("#output-filter", Input).value.lower()
                 if not match or match in sanitized.lower():
                     self.query_one("#output-log", RichLog).write(sanitized)
-            parse_output(sanitized, self.progress)
 
         exit_code = -1
         try:
@@ -1104,14 +1035,8 @@ class ImapToolsApp(App[None]):
             record.exit_code = -1
             await receive(f"TUI runner error: {exc}")
         finally:
-            record.finished_at = datetime.now(timezone.utc).isoformat()
-            record.copied = self.progress.copied
-            record.skipped = self.progress.skipped
-            record.failed = self.progress.failed
-            record.deleted = self.progress.deleted
-            if self.history_writer:
-                self.history_writer.close()
-                self.history_writer = None
+            session.finish(exit_code, self.cancellation_requested)
+            self.history_writer = None
             self.query_one("#cancel-run", Button).disabled = True
             self.query_one("#force-stop", Button).disabled = True
             self.operation_in_progress = False

@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python 3.9 or newer
+- Python 3.10 or newer
 - Network access to the relevant IMAP servers
 - An app password or OAuth2 application registration for each account
 
@@ -112,3 +112,7 @@ python -m pip install "imap-migration-tools[dotenv]"
 ```
 
 Continue with [Configuration](configuration.md).
+
+## Native desktop application
+
+See [desktop setup](ui.md) for the optional `[ui]` extra, Linux prerequisites, and bundled application builds.

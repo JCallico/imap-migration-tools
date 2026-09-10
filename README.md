@@ -2,7 +2,7 @@
 
 ![CI](https://github.com/JCallico/imap-migration-tools/actions/workflows/ci.yml/badge.svg)
 [![codecov](https://codecov.io/github/JCallico/imap-migration-tools/graph/badge.svg?token=SDF29GC5VV)](https://codecov.io/github/JCallico/imap-migration-tools)
-![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 A collection of command-line tools for migrating, backing up, restoring, counting, and comparing email on IMAP
@@ -23,13 +23,13 @@ They support password and OAuth2 authentication, incremental operation, Gmail la
 | `imap-restore` | `src/imap_restore.py` | Upload a local backup to an IMAP account |
 | `imap-compare` | `src/imap_compare.py` | Compare folder counts across IMAP or local sources |
 | `imap-count` | `src/imap_count.py` | Count messages on an account or in a local backup |
-| `imap-tools` (beta) | `src/tui/app.py` | Configure and run all tools in a full-screen terminal interface |
+| `imap-tools` | `src/tui/app.py` | Configure and run all tools in a full-screen terminal interface |
 
 Legacy script names remain available as compatibility wrappers.
 
 ## Installation
 
-Python 3.9 or newer is required. Install the standard commands using `pipx`:
+Python 3.10 or newer is required. Install the standard commands using `pipx`:
 
 ```bash
 pipx install imap-migration-tools
@@ -45,77 +45,6 @@ python -m pip install imap-migration-tools
 
 The standard installation supports command-line arguments, OS environment variables, and automatic `.env` loading.
 The legacy `imap-migration-tools[dotenv]` spelling remains accepted, but the extra is no longer necessary.
-
-### Python library
-
-The installed distribution also provides the `imap_services` Python package. Services take explicit configuration,
-return structured results, and optionally publish structured progress events; unlike the command-line adapters, they do
-not read `.env` or configure logging.
-
-```python
-from imap_services import AccountConfig, CountService, ImapTarget
-
-account = AccountConfig(
-    host="imap.example.com",
-    username="person@example.com",
-    password="app-password",
-)
-service = CountService(ImapTarget(account), on_event=lambda event: print(event.message))
-result = service.run()
-print(result.total)
-```
-
-`BackupService`, `RestoreService`, `MigrationService`, and `ComparisonService` use the same configuration and callback
-model. Applications may configure handlers for the `imap_services` logger hierarchy when diagnostic logs are needed;
-normal progress is delivered only through callbacks.
-
-### Full-screen terminal interface (beta)
-
-The beta Textual interface provides one responsive, full-terminal application for configuring and running Count,
-Compare, Backup, Restore, and Migrate. Install the optional TUI dependencies with `pipx`:
-
-```bash
-pipx install "imap-migration-tools[tui]"
-```
-
-If `imap-migration-tools` is already installed through `pipx`, reinstall it with the TUI extra:
-
-```bash
-pipx install --force "imap-migration-tools[tui]"
-```
-
-Launch the interface with the installed command:
-
-```bash
-imap-tools
-```
-
-For a standard virtual environment:
-
-```bash
-python -m pip install "imap-migration-tools[tui]"
-imap-tools
-```
-
-The interface provides a guided autosaving `.env` form, operation readiness guidance, live output, cancellation, and
-local run history.
-
-![IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels](docs/images/tui-overview.jpg)
-
-The TUI is currently beta software. Review the generated command in the Output panel and verify backups and counts
-before enabling destructive options.
-
-The interface discovers `.env` from the current directory and its parents, using the same precedence as the scripts:
-per-run choices, existing OS environment variables, `.env`, then defaults. Passwords and OAuth client secrets are
-masked in the form; new `.env` files and saved history use owner-only permissions where the platform supports them.
-Destructive options require typing `DELETE` before a run starts. Press `F1` for help or `F2` for the keyboard reference.
-
-See the [Terminal interface guide](docs/tui.md) for responsive layouts, panel controls, ASCII mode, configuration
-reloads, and History behavior across multiple instances.
-
-Basic password authentication needs no additional authentication package. OAuth2 provider dependencies are installed
-by the project. Encrypted persistent caching on Linux requires the `linux-keyring` extra and native system libraries.
-See [Installation](docs/installation.md) for platform and source setup.
 
 ## Quick start
 
@@ -162,6 +91,128 @@ imap-compare \
   --dest-path "./mail-backup"
 ```
 
+## Interfaces
+
+### Python library
+
+The installed distribution also provides the `imap_services` Python package. Services take explicit configuration,
+return structured results, and optionally publish structured progress events; unlike the command-line adapters, they do
+not read `.env` or configure logging.
+
+```python
+from imap_services import AccountConfig, CountService, ImapTarget
+
+account = AccountConfig(
+    host="imap.example.com",
+    username="person@example.com",
+    password="app-password",
+)
+service = CountService(ImapTarget(account), on_event=lambda event: print(event.message))
+result = service.run()
+print(result.total)
+```
+
+`BackupService`, `RestoreService`, `MigrationService`, and `ComparisonService` use the same configuration and callback
+model. Applications may configure handlers for the `imap_services` logger hierarchy when diagnostic logs are needed;
+normal progress is delivered only through callbacks.
+
+### Full-screen terminal interface
+
+The Textual interface provides one responsive, full-terminal application for configuring and running Count,
+Compare, Backup, Restore, and Migrate. Install the optional TUI dependencies with `pipx`:
+
+```bash
+pipx install "imap-migration-tools[tui]"
+```
+
+If `imap-migration-tools` is already installed through `pipx`, reinstall it with the TUI extra:
+
+```bash
+pipx install --force "imap-migration-tools[tui]"
+```
+
+Launch the interface with the installed command:
+
+```bash
+imap-tools
+```
+
+For a standard virtual environment:
+
+```bash
+python -m pip install "imap-migration-tools[tui]"
+imap-tools
+```
+
+The interface provides a guided autosaving `.env` form, operation readiness guidance, live output, cancellation, and
+local run history.
+
+![IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels](docs/images/tui-overview.jpg)
+
+Review the generated command in the Output panel and verify backups and counts before enabling destructive options.
+
+The interface discovers `.env` from the current directory and its parents, using the same precedence as the scripts:
+per-run choices, existing OS environment variables, `.env`, then defaults. Passwords and OAuth client secrets are
+masked in the form; new `.env` files and saved history use owner-only permissions where the platform supports them.
+Destructive options require typing `DELETE` before a run starts. Press `F1` for help or `F2` for the keyboard reference.
+
+See the [Terminal interface guide](docs/tui.md) for responsive layouts, panel controls, ASCII mode, configuration
+reloads, and History behavior across multiple instances.
+
+Basic password authentication needs no additional authentication package. OAuth2 provider dependencies are installed
+by the project. Encrypted persistent caching on Linux requires the `linux-keyring` extra and native system libraries.
+See [Installation](docs/installation.md) for platform and source setup.
+
+### Native desktop interface
+
+The wxPython interface provides one native desktop workspace for configuring and running Count, Compare, Backup,
+Restore, and Migrate on Linux, macOS, and Windows. Install the optional desktop dependencies with `pipx`:
+
+```bash
+pipx install "imap-migration-tools[ui]"
+```
+
+If `imap-migration-tools` is already installed through `pipx`, reinstall it with the desktop extra:
+
+```bash
+pipx install --force "imap-migration-tools[ui]"
+```
+
+Launch the desktop application with the installed command:
+
+```bash
+imap-tools-ui
+```
+
+For a standard virtual environment:
+
+```bash
+python -m pip install "imap-migration-tools[ui]"
+imap-tools-ui
+```
+
+The application provides an autosaving `.env` form, operation readiness guidance, confirmations, live output,
+cancellation, and shared local run history. It uses native GTK, Cocoa, or Windows controls and follows the active
+operating-system theme. View includes persistent zoom and transparency controls; transparency depends on compositor
+support.
+
+![IMAP Migration Tools native desktop interface showing Configuration, Operation, History, and Output panels](docs/images/ui-overview.png)
+
+The desktop application discovers `.env` from the current directory and its parents. Desktop launchers may start in a
+different directory, so select a configuration explicitly when needed:
+
+```bash
+imap-tools-ui --env /path/to/project/.env
+```
+
+Configuration precedence and secret handling match the TUI. Passwords and OAuth client secrets are masked,
+destructive operations require typing `DELETE`, and logs use the shared redaction and owner-only history storage.
+Review the readiness message and confirmation before starting a destructive operation.
+
+Windows and macOS normally install wxPython from published wheels. Linux may require the distribution's wxPython
+package or GTK development libraries. See the [Native desktop interface guide](docs/ui.md) for source installation,
+Linux prerequisites, appearance controls, testing, bundle creation, and platform evaluation.
+
 ## Configuration essentials
 
 Configuration precedence is:
@@ -199,6 +250,7 @@ rules.
 
 - [Migration, backup, restore, count, and comparison examples](docs/workflows.md)
 - [Full-screen terminal interface](docs/tui.md)
+- [Native desktop interface](docs/ui.md)
 - [OAuth2 setup for Microsoft and Google](docs/oauth2.md)
 - [Troubleshooting and operational safety](docs/troubleshooting.md)
 - [Development, testing, and CI](docs/development.md)

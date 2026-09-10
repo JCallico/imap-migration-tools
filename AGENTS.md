@@ -17,7 +17,7 @@ the relevant maintenance, security, and portability tradeoffs. Prefer an
 established library for security- and data-sensitive concerns such as
 authentication, encryption, caching, and database access.
 
-Use Python 3.9+ and run commands from the repository root. The source tree is not installed during tests, so include `PYTHONPATH=src` when invoking pytest directly.
+Use Python 3.10+ and run commands from the repository root. The source tree is not installed during tests, so include `PYTHONPATH=src` when invoking pytest directly.
 
 ```bash
 python3 -m venv .venv
@@ -28,7 +28,7 @@ PYTHONPATH=src .venv/bin/python -m pytest test/ -v
 .venv/bin/python -m ruff format --check src/ tools/ test/
 ```
 
-`make test`, `make lint`, and `make format-check` provide the same common checks. CI also runs Bandit, a non-blocking mypy check, syntax/import checks, and tests on Python 3.9 through 3.13.
+`make test`, `make lint`, and `make format-check` provide the same common checks. CI also runs Bandit, a non-blocking mypy check, syntax/import checks, and tests on Python 3.10 through 3.13.
 
 Tests use local mock IMAP servers and bind loopback ports. In restricted environments, rerun them with the permission needed for local socket binding rather than changing the tests to avoid integration coverage.
 
@@ -38,7 +38,7 @@ dependencies locally and cause collection failures in the clean CI matrix.
 
 ## Code conventions
 
-- Target Python 3.9 compatibility. Follow the Ruff configuration in `pyproject.toml` (120-column lines, double quotes, and sorted imports).
+- Target Python 3.10 compatibility. Follow the Ruff configuration in `pyproject.toml` (120-column lines, double quotes, and sorted imports).
 - Use concise module and function docstrings. Place reusable behavior in the existing subsystem directories rather than duplicating it in CLI files.
 - Preserve CLI compatibility: command-line options, environment variables, and legacy wrapper scripts are public interfaces.
 - When renaming shared or module-level symbols, search the entire source and test trees for compatibility aliases and re-exports before running tests.

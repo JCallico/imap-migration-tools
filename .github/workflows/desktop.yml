@@ -1,0 +1,63 @@
+name: Desktop
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  desktop:
+    name: Native UI (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        if: runner.os != 'Linux'
+        with:
+          python-version: '3.12'
+      - name: Install Linux native toolkit
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-venv python3-wxgtk4.0 xvfb
+          /usr/bin/python3 -m venv --system-site-packages .desktop-venv
+          echo "$PWD/.desktop-venv/bin" >> "$GITHUB_PATH"
+      - name: Install project and test tools
+        shell: bash
+        run: |
+          python -m pip install '.[ui,tui]' pytest pyinstaller
+      - name: Verify native toolkit is available
+        run: python -c "import wx; print(wx.version())"
+      - name: Test desktop and shared core
+        shell: bash
+        env:
+          PYTHONPATH: src
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a python -m pytest test/ui test/ui_core -v
+          else
+            python -m pytest test/ui test/ui_core -v
+          fi
+      - name: Build desktop and worker
+        run: python tools/build_desktop.py
+      - name: Verify bundled worker
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            dist/imap-tools-ui.app/Contents/MacOS/worker/imap-tools-worker --imap-worker imap_count --help
+          elif [ "$RUNNER_OS" = Windows ]; then
+            dist/imap-tools-ui/worker/imap-tools-worker.exe --imap-worker imap_count --help
+          else
+            dist/imap-tools-ui/worker/imap-tools-worker --imap-worker imap_count --help
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imap-tools-ui-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            dist/imap-tools-ui/
+            dist/imap-tools-ui.app/

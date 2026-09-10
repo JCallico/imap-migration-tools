@@ -9,3 +9,8 @@ venv/
 .env
 .coverage
 .claude
+
+.venv/
+build/
+dist/
+*.spec
