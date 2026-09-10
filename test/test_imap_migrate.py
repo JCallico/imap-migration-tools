@@ -978,3 +978,78 @@ class TestDestDeleteFunctionality:
 
         src.logout()
         dest.logout()
+
+
+def test_cli_gmail_mode_without_all_mail_falls_back_to_normal_migration(mock_server_factory, capsys):
+    """End-to-end: Gmail mode degrades safely when All Mail is unavailable."""
+    src_data = {"INBOX": [b"Subject: Normal\r\nMessage-ID: <normal@test>\r\n\r\nBody"]}
+    _, dest_server, src_port, dest_port = mock_server_factory(src_data, {"INBOX": []})
+
+    env = _mock_migrate_env(src_port, dest_port)
+    env["GMAIL_MODE"] = "true"
+    with temp_env(env), temp_argv(["migrate_imap_emails.py"]):
+        migrate_imap_emails.main()
+
+    assert len(dest_server.folders["INBOX"]) == 1
+
+
+def test_cli_rejects_targeted_trash_migration_with_source_delete(mock_server_factory, capsys):
+    """End-to-end: explicitly migrating Trash while deleting source is rejected."""
+    from unittest.mock import patch
+
+    src_data = {"Trash": [b"Subject: Garbage\r\nMessage-ID: <garbage@test>\r\n\r\nBody"]}
+    _, dest_server, src_port, dest_port = mock_server_factory(src_data, {"INBOX": []})
+
+    env = _mock_migrate_env(src_port, dest_port)
+    env["DELETE_FROM_SOURCE"] = "true"
+    with (
+        patch("utils.imap_common.detect_trash_folder", return_value="Trash"),
+        temp_env(env),
+        temp_argv(["migrate_imap_emails.py", "Trash"]),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        migrate_imap_emails.main()
+
+    assert exc_info.value.code == 1
+    assert "cannot migrate Trash" in capsys.readouterr().out
+    assert "Trash" not in dest_server.folders
+
+
+def test_cli_reports_reconnect_failure_during_folder_migration(mock_server_factory, capsys):
+    """CLI translates a lost connection between folder discovery and migration."""
+    from unittest.mock import patch
+
+    src_data = {"INBOX": [b"Subject: X\r\nMessage-ID: <lost@test>\r\n\r\nBody"]}
+    _, _, src_port, dest_port = mock_server_factory(src_data, {"INBOX": []})
+
+    with (
+        patch("imap_services.migrate.imap_session.ensure_connection", return_value=None),
+        temp_env(_mock_migrate_env(src_port, dest_port)),
+        temp_argv(["migrate_imap_emails.py", "INBOX"]),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        migrate_imap_emails.main()
+
+    assert exc_info.value.code == 1
+    assert "could not reconnect while migrating folders" in capsys.readouterr().out
+
+
+def test_cli_source_delete_removes_destination_duplicate_from_source(mock_server_factory):
+    """End-to-end: move mode deletes a source message already present at destination."""
+    message = b"Subject: Duplicate\r\nMessage-ID: <duplicate-move@test>\r\n\r\nBody"
+    src_server, dest_server, src_port, dest_port = mock_server_factory({"INBOX": [message]}, {"INBOX": [message]})
+    src_server.folders["Trash"] = []
+
+    env = _mock_migrate_env(src_port, dest_port)
+    env["DELETE_FROM_SOURCE"] = "true"
+    from unittest.mock import patch
+
+    with (
+        patch("utils.imap_common.detect_trash_folder", return_value="Trash"),
+        temp_env(env),
+        temp_argv(["migrate_imap_emails.py", "INBOX"]),
+    ):
+        migrate_imap_emails.main()
+
+    assert len(src_server.folders["INBOX"]) == 1
+    assert len(dest_server.folders["INBOX"]) == 1

@@ -755,3 +755,70 @@ class TestDestDeleteBackupEnvVar:
             backup_imap_emails.main()
 
         assert orphan.exists()
+
+
+def test_cli_preserve_flags_builds_manifest(single_mock_server, tmp_path):
+    """End-to-end: --preserve-flags scans the selected folder and records flags."""
+    import json
+
+    src_data = {
+        "INBOX": [
+            {
+                "uid": 1,
+                "flags": {"\\Seen", "\\Flagged"},
+                "content": b"Subject: Flagged\r\nMessage-ID: <flagged@test>\r\n\r\nBody",
+            },
+            {
+                "uid": 2,
+                "flags": set(),
+                "content": b"Subject: Unread\r\nMessage-ID: <unread@test>\r\n\r\nBody",
+            },
+        ]
+    }
+    _, port = single_mock_server(src_data)
+
+    env = _mock_imap_env(port)
+    with (
+        temp_env(env),
+        temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path), "--preserve-flags"]),
+    ):
+        backup_imap_emails.main()
+
+    manifest = json.loads((tmp_path / "flags_manifest.json").read_text())
+    assert set(manifest["<flagged@test>"]["flags"]) == {"\\Seen", "\\Flagged"}
+    assert manifest["<unread@test>"]["flags"] == []
+
+
+def test_cli_dest_delete_cleans_stale_files_from_empty_server_folder(single_mock_server, tmp_path):
+    """End-to-end: sync mode empties a local folder when the server folder is empty."""
+    inbox = tmp_path / "INBOX"
+    inbox.mkdir()
+    (inbox / "99_Stale.eml").write_text("Message-ID: <stale@test>\n\nBody")
+    _, port = single_mock_server({"INBOX": []})
+
+    with (
+        temp_env(_mock_imap_env(port)),
+        temp_argv(["backup_imap_emails.py", "--dest-path", str(tmp_path), "--dest-delete", "INBOX"]),
+    ):
+        backup_imap_emails.main()
+
+    assert list(inbox.glob("*.eml")) == []
+
+
+def test_cli_reports_backup_directory_creation_failure(single_mock_server, tmp_path, capsys):
+    """CLI translates a service filesystem failure into an actionable exit."""
+    from pathlib import Path
+    from unittest.mock import patch
+
+    _, port = single_mock_server({"INBOX": []})
+    destination = tmp_path / "blocked"
+    with (
+        patch.object(Path, "mkdir", side_effect=OSError("read only")),
+        temp_env(_mock_imap_env(port)),
+        temp_argv(["backup_imap_emails.py", "--dest-path", str(destination), "INBOX"]),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        backup_imap_emails.main()
+
+    assert exc_info.value.code == 1
+    assert "could not create backup directory" in capsys.readouterr().out

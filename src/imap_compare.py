@@ -62,176 +62,99 @@ import sys
 
 from auth import imap_oauth2
 from cli.compare import parse_arguments
-from utils import imap_common
+from imap_services import AccountConfig, ComparisonService, ImapTarget, LocalTarget, OAuth2Config
+from imap_services._operations.compare import get_email_count  # noqa: F401
+from imap_services.exceptions import ImapServiceError
 from utils.dotenv import load_dotenv
 
 
-def get_email_count(conn, folder_name):
-    """Return the IMAP message count for a folder, or None on error."""
-    try:
-        # Select folder in read-only mode
-        # Quote folder name handles spaces
-        typ, data = conn.select(f'"{folder_name}"', readonly=True)
-        if typ != "OK":
-            return None
+def _account(args, prefix, token, provider):
+    client_id = getattr(args, f"{prefix}_client_id")
+    oauth2 = (
+        OAuth2Config(
+            client_id,
+            getattr(args, f"{prefix}_client_secret"),
+            getattr(args, f"{prefix}_account_type"),
+            token,
+            provider,
+        )
+        if client_id
+        else None
+    )
+    return AccountConfig(
+        getattr(args, f"{prefix}_host"),
+        getattr(args, f"{prefix}_user"),
+        getattr(args, f"{prefix}_pass"),
+        oauth2,
+    )
 
-        # SELECT command returns the number of messages in data[0]
-        # data[0] is bytes, e.g. b'123'
-        if data and data[0]:
-            return int(data[0])
-        return 0
 
-    except Exception:
-        # print(f"Error checking {folder_name}: {e}")
-        return None
+def _oauth(args, prefix, label):
+    client_id = getattr(args, f"{prefix}_client_id")
+    if not client_id:
+        return None, None
+    return imap_oauth2.acquire_token(
+        getattr(args, f"{prefix}_host"),
+        client_id,
+        getattr(args, f"{prefix}_user"),
+        getattr(args, f"{prefix}_client_secret"),
+        label,
+        getattr(args, f"{prefix}_account_type"),
+    )
 
 
 def main():
-    # Loading environment variables from .env file
+    """Parse CLI configuration and execute the comparison service."""
     dotenv_result = load_dotenv()
-
-    args, src_is_local, dest_is_local = parse_arguments(dotenv_keys=dotenv_result.dotenv_keys)
-
-    SRC_HOST = args.src_host
-    SRC_USER = args.src_user
-    DEST_HOST = args.dest_host
-    DEST_USER = args.dest_user
-
-    # Acquire OAuth2 tokens if configured
-    src_oauth2_token = None
-    src_oauth2_provider = None
-    if not src_is_local and args.src_client_id:
-        src_oauth2_token, src_oauth2_provider = imap_oauth2.acquire_token(
-            SRC_HOST,
-            args.src_client_id,
-            SRC_USER,
-            args.src_client_secret,
-            "source",
-            args.src_account_type,
-        )
-
-    dest_oauth2_token = None
-    dest_oauth2_provider = None
-    if not dest_is_local and args.dest_client_id:
-        dest_oauth2_token, dest_oauth2_provider = imap_oauth2.acquire_token(
-            DEST_HOST,
-            args.dest_client_id,
-            DEST_USER,
-            args.dest_client_secret,
-            "destination",
-            args.dest_account_type,
-        )
+    args, src_local, dest_local = parse_arguments(dotenv_keys=dotenv_result.dotenv_keys)
+    src_token, src_provider = (None, None) if src_local else _oauth(args, "src", "source")
+    dest_token, dest_provider = (None, None) if dest_local else _oauth(args, "dest", "destination")
+    source = LocalTarget(args.src_path) if src_local else ImapTarget(_account(args, "src", src_token, src_provider))
+    destination = (
+        LocalTarget(args.dest_path) if dest_local else ImapTarget(_account(args, "dest", dest_token, dest_provider))
+    )
 
     print("\n--- Configuration Summary ---")
-    if src_is_local:
-        print(f"Source (Local)  : {args.src_path}")
-    else:
-        print(f"Source Host     : {args.src_host}")
+    print(f"Source (Local)  : {args.src_path}" if src_local else f"Source Host     : {args.src_host}")
+    if not src_local:
         print(f"Source User     : {args.src_user}")
-        print(f"Source Auth     : {imap_oauth2.auth_description(src_oauth2_provider)}")
-
-    if dest_is_local:
-        print(f"Destination (Local): {args.dest_path}")
-    else:
-        print(f"Destination Host: {args.dest_host}")
+        print(f"Source Auth     : {imap_oauth2.auth_description(src_provider)}")
+    print(f"Destination (Local): {args.dest_path}" if dest_local else f"Destination Host: {args.dest_host}")
+    if not dest_local:
         print(f"Destination User: {args.dest_user}")
-        print(f"Destination Auth: {imap_oauth2.auth_description(dest_oauth2_provider)}")
+        print(f"Destination Auth: {imap_oauth2.auth_description(dest_provider)}")
     print("-----------------------------\n")
 
-    src = None
-    dest = None
-
+    events = []
     try:
-        if not src_is_local:
-            # Connect to Source
-            print("Connecting to Source...")
-            src = imap_common.get_imap_connection(args.src_host, args.src_user, args.src_pass, src_oauth2_token)
-            if not src:
-                return
-
-        if not dest_is_local:
-            # Connect to Dest
-            print("Connecting to Destination...")
-            dest = imap_common.get_imap_connection(args.dest_host, args.dest_user, args.dest_pass, dest_oauth2_token)
-            if not dest:
-                return
-            detected_prefix, detected_sep = imap_common.detect_dest_namespace(dest)
-            dest_prefix = os.getenv("DEST_FOLDER_PREFIX")
-            dest_sep = os.getenv("DEST_FOLDER_SEP")
-            dest.configure_folder_mapping(
-                dest_prefix or detected_prefix,
-                dest_sep or detected_sep,
-            )
-
-        # List Source Folders
-        print("Listing folders in Source...")
-        if src_is_local:
-            folders = imap_common.list_local_folders(args.src_path)
-        else:
-            folders = imap_common.list_selectable_folders(src)
-
-        if not folders:
+        result = ComparisonService(
+            source,
+            destination,
+            events.append,
+            destination_folder_prefix=os.getenv("DEST_FOLDER_PREFIX"),
+            destination_folder_separator=os.getenv("DEST_FOLDER_SEP"),
+        ).run()
+    except ImapServiceError as exc:
+        if "list source folders" in str(exc):
             print("Failed to list source folders.")
-            return
-
-        # Prepare Table Header
-        header = f"{'Folder Name':<40} | {'Source':>10} | {'Dest':>10} | {'Diff':>10}"
-        print("-" * len(header))
-        print(header)
-        print("-" * len(header))
-
-        total_src = 0
-        total_dest = 0
-
-        # Iterate through Source folders
-        for folder_name in folders:
-            # Get Counts
-            if src_is_local:
-                src_count = imap_common.get_local_email_count(args.src_path, folder_name)
-            else:
-                src_count = get_email_count(src, folder_name)
-
-            if dest_is_local:
-                dest_count = imap_common.get_local_email_count(args.dest_path, folder_name)
-            else:
-                dest_count = get_email_count(dest, folder_name)
-
-            # Format for display
-            src_str = str(src_count) if src_count is not None else "Err"
-            dest_str = str(dest_count) if dest_count is not None else "N/A"  # N/A usually means folder doesn't exist
-
-            diff_str = ""
-            if src_count is not None and dest_count is not None:
-                diff = src_count - dest_count
-                diff_str = str(diff)
-                total_src += src_count
-                total_dest += dest_count
-            elif src_count is not None:
-                total_src += src_count
-
-            print(f"{folder_name:<40} | {src_str:>10} | {dest_str:>10} | {diff_str:>10}")
-
-        print("-" * len(header))
-        print(f"{'TOTAL':<40} | {total_src:>10} | {total_dest:>10} | {total_src - total_dest:>10}")
-
-    except KeyboardInterrupt:
-        # Re-raise to be handled by the outer block, but ensure finally runs
-        raise
-
-    finally:
-        # Check source connection state and logout if possible
-        if src:
-            try:
-                src.logout()
-            except BaseException:
-                pass
-
-        # Check dest connection state and logout if possible
-        if dest:
-            try:
-                dest.logout()
-            except BaseException:
-                pass
+        return
+    for event in events:
+        if event.phase in {"connect", "list"}:
+            print(event.message)
+    header = f"{'Folder Name':<40} | {'Source':>10} | {'Dest':>10} | {'Diff':>10}"
+    print("-" * len(header))
+    print(header)
+    print("-" * len(header))
+    for row in result.rows:
+        source_count = str(row.source) if row.source is not None else "Err"
+        destination_count = str(row.destination) if row.destination is not None else "N/A"
+        difference = str(row.difference) if row.difference is not None else ""
+        print(f"{row.folder:<40} | {source_count:>10} | {destination_count:>10} | {difference:>10}")
+    print("-" * len(header))
+    print(
+        f"{'TOTAL':<40} | {result.source_total:>10} | {result.destination_total:>10} | "
+        f"{result.source_total - result.destination_total:>10}"
+    )
 
 
 if __name__ == "__main__":
@@ -240,6 +163,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nProcess terminated by user.")
         sys.exit(0)
-    except Exception as e:
-        print(f"Fatal Error: {e}")
+    except Exception as exc:
+        print(f"Fatal Error: {exc}")
         sys.exit(1)

@@ -925,3 +925,97 @@ Body content.
             # Verify it was called for INBOX only
             call_args = mock_record_progress.call_args
             assert call_args[1]["folder_name"] == "INBOX"
+
+
+def test_cli_gmail_restore_applies_manifest_labels_and_flags(single_mock_server, tmp_path):
+    """End-to-end: Gmail restore applies user labels and preserved flags."""
+    gmail_all_mail = tmp_path / "[Gmail]" / "All Mail"
+    gmail_all_mail.mkdir(parents=True)
+    (gmail_all_mail / "1_Labeled.eml").write_text(
+        "Subject: Labeled\nMessage-ID: <labeled@test>\nDate: Mon, 15 Jan 2024 10:30:00 +0000\n\nBody"
+    )
+    manifest = {
+        "<labeled@test>": {
+            "labels": ["INBOX", "Work", "[Gmail]/All Mail", "[Gmail]/Trash"],
+            "flags": ["\\Seen", "\\Flagged"],
+        }
+    }
+    (tmp_path / "labels_manifest.json").write_text(json.dumps(manifest))
+
+    server, port = single_mock_server({"INBOX": []})
+    env = _mock_restore_env(port)
+    with (
+        temp_env(env),
+        temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path), "--gmail-mode", "--full-restore"]),
+    ):
+        restore_imap_emails.main()
+
+    assert len(server.folders["INBOX"]) == 1
+    assert len(server.folders["Work"]) == 1
+    assert {"\\Seen", "\\Flagged"} <= server.folders["INBOX"][0]["flags"]
+
+
+def test_cli_dest_delete_cleans_destination_for_empty_backup_folder(single_mock_server, tmp_path):
+    """End-to-end: restoring an empty folder in sync mode deletes destination orphans."""
+    (tmp_path / "INBOX").mkdir()
+    server, port = single_mock_server({"INBOX": [b"Subject: Orphan\r\nMessage-ID: <orphan@test>\r\n\r\nBody"]})
+
+    with (
+        temp_env(_mock_restore_env(port)),
+        temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path), "--dest-delete", "INBOX"]),
+    ):
+        restore_imap_emails.main()
+
+    assert server.folders["INBOX"] == []
+
+
+def test_cli_reports_missing_requested_backup_folder(single_mock_server, tmp_path, capsys):
+    """CLI rejects a requested folder absent from an otherwise valid backup root."""
+    _, port = single_mock_server({"INBOX": []})
+    with (
+        temp_env(_mock_restore_env(port)),
+        temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path), "Missing"]),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        restore_imap_emails.main()
+
+    assert exc_info.value.code == 1
+    assert "folder not found" in capsys.readouterr().out
+
+
+def test_cli_reports_backup_tree_without_folders(single_mock_server, tmp_path, capsys):
+    """CLI rejects an empty backup tree when no specific folder is selected."""
+    _, port = single_mock_server({"INBOX": []})
+    with (
+        temp_env(_mock_restore_env(port)),
+        temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path)]),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        restore_imap_emails.main()
+
+    assert exc_info.value.code == 1
+    assert "no backup folders found" in capsys.readouterr().out
+
+
+def test_cli_continues_when_restore_progress_cache_is_unavailable(single_mock_server, tmp_path, capsys):
+    """CLI reports a cache warning and completes restoration without persistence."""
+    import threading
+    from unittest.mock import patch
+
+    inbox = tmp_path / "INBOX"
+    inbox.mkdir()
+    (inbox / "1_Test.eml").write_text("Subject: X\nMessage-ID: <cache@test>\n\nBody")
+    server, port = single_mock_server({"INBOX": []})
+
+    with (
+        patch(
+            "utils.imap_common.load_progress_cache",
+            side_effect=[RuntimeError("cache unavailable"), (str(tmp_path / ".cache"), {}, threading.Lock())],
+        ),
+        temp_env(_mock_restore_env(port)),
+        temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path), "INBOX"]),
+    ):
+        restore_imap_emails.main()
+
+    assert len(server.folders["INBOX"]) == 1
+    assert "Failed to load progress cache" in capsys.readouterr().out
