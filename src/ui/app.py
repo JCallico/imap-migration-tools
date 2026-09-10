@@ -32,7 +32,7 @@ from utils.dotenv import load_dotenv
 from utils.filesystem_watch import directory_fingerprint, file_content_fingerprint
 from utils.imap_common import get_version
 
-COMMAND_KEY = "Cmd" if wx.Platform == "__WXMAC__" else "Ctrl"
+COMMAND_KEY = "Ctrl"
 APPEARANCE_SHORTCUT = f"{COMMAND_KEY}+,"
 TRANSPARENCY_STEP = 5
 DEFAULT_OPERATION_HEIGHT = 470
@@ -1160,18 +1160,25 @@ class Workspace(wx.Frame):
 
     def on_resize(self, event):
         event.Skip()
+        self.apply_responsive_layout()
+
+    def apply_responsive_layout(self, width=None, height=None):
+        """Apply the compact or wide arrangement for explicit client dimensions."""
+        client_size = self.GetClientSize()
+        width = client_size.width if width is None else width
+        height = client_size.height if height is None else height
         if hasattr(self, "operation_description"):
             available = max(180, self.run_button.GetParent().GetClientSize().width - 32)
             self.operation_description.Wrap(available)
             self.readiness_label.Wrap(available)
-        compact = self.GetClientSize().width < 1050
+        compact = width < 1050
         if compact == self.compact:
             return
         self.compact = compact
         self.outer.Unsplit(self.output_panel)
         self.output_panel.Show()
         if compact:
-            self.outer.SplitHorizontally(self.upper, self.output_panel, max(280, self.GetClientSize().height // 2))
+            self.outer.SplitHorizontally(self.upper, self.output_panel, max(280, height // 2))
         else:
             self.outer.SplitVertically(self.upper, self.output_panel, 820)
         self.Layout()

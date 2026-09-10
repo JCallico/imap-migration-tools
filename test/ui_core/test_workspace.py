@@ -166,3 +166,30 @@ def test_explicit_local_comparison_requires_path_even_with_account():
     }
     assert not readiness("compare", values, compare_source_mode="local").ready
     assert not readiness("compare", values, compare_destination_mode="local").ready
+
+
+def test_session_reports_history_write_and_close_failures():
+    class BrokenWriter:
+        def __init__(self, *args):
+            pass
+
+        def write(self, line):
+            raise OSError("write failed")
+
+        def close(self):
+            raise OSError("close failed")
+
+    session = RunSession("count", {}, writer_factory=BrokenWriter)
+    assert session.receive("TOTAL 1") == "TOTAL 1"
+    assert "write failed" in session.warning
+    session.finish(1)
+    assert "close failed" in session.warning
+
+
+def test_session_reports_history_initialization_failure():
+    def broken_writer(*args):
+        raise OSError("history unavailable")
+
+    session = RunSession("count", {}, writer_factory=broken_writer)
+    assert "history unavailable" in session.warning
+    assert session.finish(0).status == "completed"

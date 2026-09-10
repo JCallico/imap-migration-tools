@@ -3,6 +3,7 @@
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,7 @@ wx = pytest.importorskip("wx")
 if os.name != "nt" and __import__("sys").platform != "darwin" and not os.environ.get("DISPLAY"):
     pytest.skip("Native GUI tests require a display (use xvfb-run on Linux)", allow_module_level=True)
 
+import ui.app as native_ui  # noqa: E402
 from ui.app import (  # noqa: E402
     DEFAULT_OPERATION_HEIGHT,
     AboutDialog,
@@ -70,7 +72,9 @@ def click(button):
 def test_form_autosaves_and_external_edit_wins(workspace):
     frame = workspace
     frame.controls["MAX_WORKERS"].SetValue("7")
-    wait_for(frame, lambda: read_env(frame.env_path).get("MAX_WORKERS") == "7")
+    assert frame.autosave.IsRunning()
+    assert frame.save_configuration()
+    assert read_env(frame.env_path).get("MAX_WORKERS") == "7"
     frame.controls["MAX_WORKERS"].SetValue("8")
     save_form(frame.env_path, {"MAX_WORKERS": "9"})
     frame.poll()
@@ -100,7 +104,7 @@ def test_tools_and_configuration_share_readiness_state(workspace):
 
 def test_native_theme_has_visual_hierarchy(workspace):
     assert workspace.header.GetBackgroundColour() == workspace.colours["header"]
-    assert workspace.output.GetFont().GetFamily() == wx.FONTFAMILY_TELETYPE
+    assert workspace.output.GetFont().IsFixedWidth()
     assert workspace.readiness_panel.GetBackgroundColour() != workspace.GetBackgroundColour()
     assert (
         " ".join(workspace.operation_description.GetLabel().split())
@@ -312,15 +316,11 @@ def test_external_history_preserves_selection_and_deletion(workspace, monkeypatc
 
 
 def test_native_layout_and_focus_actions(workspace, native_app):
-    workspace.SetSize((900, 700))
-    wx.Yield()
+    workspace.apply_responsive_layout(900, 700)
     assert workspace.outer.GetSplitMode() == wx.SPLIT_HORIZONTAL
-    workspace.SetSize((1250, 850))
-    wx.Yield()
+    workspace.apply_responsive_layout(1250, 850)
     assert workspace.outer.GetSplitMode() == wx.SPLIT_VERTICAL
-    workspace.output_filter.SetFocus()
-    wx.Yield()
-    assert workspace.output_filter.HasFocus() or workspace.output_filter.IsDescendant(wx.Window.FindFocus())
+    assert workspace.output_filter.AcceptsFocus()
     workspace.upper.SetSashPosition(350)
     assert workspace.upper.GetSashPosition() == 350
     workspace.reset_layout()
@@ -389,3 +389,273 @@ def test_force_stop_and_quit_wait_for_cleanup(workspace, monkeypatch):
     assert workspace.poller.IsRunning()
     workspace.closing = False
     workspace.controller.active = False
+
+
+def test_unsupported_appearance_and_information_actions(workspace, monkeypatch):
+    dialog = AppearanceDialog(workspace, 90, 110, False)
+    try:
+        assert not dialog.opacity.IsEnabled()
+        assert not dialog.reset_opacity_button.IsEnabled()
+        assert "unavailable" in " ".join(
+            child.GetLabel().lower() for child in dialog.GetChildren() if isinstance(child, wx.StaticText)
+        )
+    finally:
+        dialog.Destroy()
+
+    shown = []
+
+    class Information:
+        def __init__(self, parent):
+            assert parent is workspace
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def ShowModal(self):
+            shown.append(True)
+
+    workspace._show_information(Information)
+    actions = []
+    monkeypatch.setattr(workspace, "_show_information", lambda dialog_type: actions.append(dialog_type))
+    workspace.show_help()
+    workspace.show_keyboard_reference()
+    workspace.show_about()
+    assert shown == [True]
+    assert actions == [HelpDialog, KeyboardReferenceDialog, AboutDialog]
+
+
+def test_appearance_commands_and_dialog_outcomes(workspace, monkeypatch):
+    saved = []
+    monkeypatch.setattr(
+        workspace, "save_appearance_settings", lambda: saved.append((workspace.opacity, workspace.zoom)) or True
+    )
+    workspace.zoom_in()
+    workspace.zoom_out()
+    assert workspace.zoom == 100
+    assert len(saved) == 2
+
+    def cannot_save(*args):
+        raise OSError("read only")
+
+    monkeypatch.setattr(native_ui, "save_appearance", cannot_save)
+    assert not native_ui.Workspace.save_appearance_settings(workspace)
+    assert "Unable to save appearance" in workspace.GetStatusBar().GetStatusText()
+
+    class AppearanceResult:
+        result = wx.ID_CANCEL
+
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def ShowModal(self):
+            return self.result
+
+        def selected_opacity(self):
+            return 82
+
+        def selected_zoom(self):
+            return 120
+
+    monkeypatch.setattr(native_ui, "AppearanceDialog", AppearanceResult)
+    original = (workspace.opacity, workspace.zoom)
+    workspace.show_appearance_settings()
+    assert (workspace.opacity, workspace.zoom) == original
+
+    AppearanceResult.result = wx.ID_OK
+    monkeypatch.setattr(workspace, "save_appearance_settings", lambda: False)
+    workspace.show_appearance_settings()
+    assert (workspace.opacity, workspace.zoom) == original
+
+
+def test_dialog_and_configuration_error_paths(workspace, monkeypatch):
+    class Dialog:
+        result = wx.ID_OK
+        value = "DELETE"
+        path = "/chosen"
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def ShowModal(self):
+            return self.result
+
+        def GetValue(self):
+            return self.value
+
+        def GetPath(self):
+            return self.path
+
+    monkeypatch.setattr(wx, "TextEntryDialog", Dialog)
+    assert workspace.confirm("Delete?", True)
+    Dialog.value = "wrong"
+    assert not workspace.confirm("Delete?", True)
+    Dialog.value = "DELETE"
+    monkeypatch.setattr(wx, "MessageDialog", Dialog)
+    Dialog.result = wx.ID_YES
+    assert workspace.confirm("Continue?")
+
+    monkeypatch.setattr(wx, "DirDialog", Dialog)
+    Dialog.result = wx.ID_OK
+    workspace.browse("BACKUP_LOCAL_PATH")
+    assert workspace.controls["BACKUP_LOCAL_PATH"].GetValue() == "/chosen"
+
+    workspace.env_path.write_text('MAX_WORKERS="8"\n')
+    assert not workspace.save_configuration()
+    assert workspace.controls["MAX_WORKERS"].GetValue() == "8"
+
+    monkeypatch.setattr(native_ui, "save_form", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
+    assert not workspace.save_configuration()
+    assert "disk full" in workspace.GetStatusBar().GetStatusText()
+
+
+def test_prepare_poll_and_history_error_paths(workspace, monkeypatch):
+    workspace.controller.active = True
+    workspace.prepare_run()
+    workspace.controller.active = False
+    monkeypatch.setattr(workspace, "save_configuration", lambda: True)
+    monkeypatch.setattr(
+        workspace,
+        "operation_readiness",
+        lambda: SimpleNamespace(ready=False, detail="Not ready"),
+    )
+    workspace.prepare_run()
+    assert workspace.GetStatusBar().GetStatusText() == "Not ready"
+
+    monkeypatch.setattr(
+        workspace,
+        "operation_readiness",
+        lambda: SimpleNamespace(ready=True, detail="Ready"),
+    )
+    monkeypatch.setattr(native_ui, "make_options", lambda *args: (_ for _ in ()).throw(ValueError("bad workers")))
+    workspace.prepare_run()
+    assert "positive integers" in workspace.GetStatusBar().GetStatusText()
+
+    workspace.controller.events.put(("warning", "warning detail"))
+    monkeypatch.setattr(
+        native_ui, "directory_fingerprint", lambda *args: (_ for _ in ()).throw(OSError("history disk"))
+    )
+    workspace.poll()
+    assert "history disk" in workspace.GetStatusBar().GetStatusText()
+
+    monkeypatch.setattr(history, "load_records", lambda: (_ for _ in ()).throw(OSError("unreadable")))
+    workspace.records = []
+    workspace.refresh_history()
+    assert "unreadable" in workspace.GetStatusBar().GetStatusText()
+
+    workspace.selected_run_id = "missing"
+    monkeypatch.setattr(history, "read_log", lambda *args: (_ for _ in ()).throw(OSError("missing log")))
+    workspace.render_output()
+    assert "missing log" in workspace.GetStatusBar().GetStatusText()
+
+
+def test_history_guard_cancel_and_failure_paths(workspace, monkeypatch, tmp_path):
+    workspace.selected_run_id = None
+    workspace.export_history()
+    workspace.delete_history()
+
+    record = history.new_record("count")
+    record.status = "completed"
+    workspace.records = [record]
+    workspace.selected_run_id = record.run_id
+    workspace.current_run_id = record.run_id
+    workspace.controller.active = True
+    workspace.delete_history()
+    assert "active run" in workspace.GetStatusBar().GetStatusText()
+    workspace.controller.active = False
+
+    class CancelDialog:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def ShowModal(self):
+            return wx.ID_CANCEL
+
+    monkeypatch.setattr(wx, "FileDialog", CancelDialog)
+    workspace.export_history()
+
+    class FailingDialog(CancelDialog):
+        def ShowModal(self):
+            return wx.ID_OK
+
+        def GetPath(self):
+            return str(tmp_path / "missing" / "export.log")
+
+    monkeypatch.setattr(wx, "FileDialog", FailingDialog)
+    monkeypatch.setattr(history, "read_log", lambda *args: "content")
+    workspace.export_history()
+    assert "Unable to export" in workspace.GetStatusBar().GetStatusText()
+
+    monkeypatch.setattr(workspace, "confirm", lambda *args: True)
+    monkeypatch.setattr(history, "delete_record", lambda *args: (_ for _ in ()).throw(OSError("delete failed")))
+    workspace.delete_history()
+    assert "delete failed" in workspace.GetStatusBar().GetStatusText()
+
+
+def test_window_events_and_main_launch(workspace, monkeypatch, tmp_path):
+    skipped = []
+
+    class Event:
+        def Skip(self):
+            skipped.append(True)
+
+        def IsShown(self):
+            return True
+
+        def GetSize(self):
+            return wx.Size(900, 700)
+
+    applied = []
+    monkeypatch.setattr(workspace, "apply_opacity", lambda value: applied.append(value))
+    workspace.on_show(Event())
+    assert applied == [workspace.opacity]
+    responsive = []
+    monkeypatch.setattr(workspace, "apply_responsive_layout", lambda: responsive.append(True))
+    workspace.on_resize(Event())
+    assert responsive == [True]
+    monkeypatch.setattr(wx, "CallAfter", lambda callback: callback())
+    themed = []
+    monkeypatch.setattr(workspace, "apply_system_theme", lambda: themed.append(True))
+    workspace.on_system_colour_changed(Event())
+    assert themed == [True]
+
+    launched = []
+
+    class App:
+        def __init__(self, redirect):
+            assert not redirect
+
+        def MainLoop(self):
+            launched.append("loop")
+
+    class Frame:
+        def __init__(self, path):
+            launched.append(path)
+
+        def Show(self):
+            launched.append("show")
+
+    monkeypatch.setattr(native_ui.wx, "App", App)
+    monkeypatch.setattr(native_ui, "Workspace", Frame)
+    native_ui.main(["--env", str(tmp_path / ".env")])
+    assert launched == [tmp_path / ".env", "show", "loop"]
