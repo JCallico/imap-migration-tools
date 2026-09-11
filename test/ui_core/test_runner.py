@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from ui_core.runner import OperationRunner, RunRequest, _display_environment
 
@@ -54,6 +57,7 @@ def test_interrupt_without_active_process_is_already_complete():
     assert asyncio.run(OperationRunner().interrupt())
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group behavior")
 def test_interrupt_timeout_enables_force_stop(monkeypatch):
     async def exercise():
         runner = OperationRunner()
@@ -73,6 +77,7 @@ def test_interrupt_timeout_enables_force_stop(monkeypatch):
     asyncio.run(exercise())
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group behavior")
 def test_interrupt_and_terminate_ignore_disappeared_process(monkeypatch):
     async def exercise():
         runner = OperationRunner()
