@@ -3,7 +3,7 @@
 import os
 from unittest.mock import Mock
 
-from tui import history
+from ui_core import history
 
 
 def test_history_redacts_and_round_trips(tmp_path, monkeypatch):

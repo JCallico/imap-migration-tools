@@ -677,14 +677,14 @@ def test_window_events_and_main_launch(workspace, monkeypatch, tmp_path):
 
 def test_window_size_is_saved_and_restored(native_app, tmp_path):
     layout_path = tmp_path / "layout.json"
-    save_layout(layout_path, {}, (1080, 680))
+    save_layout(layout_path, {}, (800, 600))
     frame = Workspace(tmp_path / ".env", layout_path)
-    assert tuple(frame.GetSize()) == (1080, 680)
+    assert tuple(frame.GetSize()) == (800, 600)
 
     frame.Show()
-    frame.SetSize((1120, 720))
+    frame.SetSize((840, 640))
     wx.Yield()
     frame.Close()
     wx.Yield()
 
-    assert load_window_size(layout_path) == (1120, 720)
+    assert load_window_size(layout_path) == (840, 640)

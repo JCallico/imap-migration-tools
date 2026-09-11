@@ -6,7 +6,7 @@ import asyncio
 import sys
 from unittest.mock import AsyncMock, Mock
 
-from tui.runner import OperationRunner, RunRequest, _display_environment
+from ui_core.runner import OperationRunner, RunRequest, _display_environment
 
 
 def test_runner_streams_stdout_and_stderr(tmp_path):
@@ -60,14 +60,14 @@ def test_interrupt_timeout_enables_force_stop(monkeypatch):
         process = Mock(pid=123, returncode=None)
         process.wait = AsyncMock()
         runner.process = process
-        monkeypatch.setattr("tui.runner.os.killpg", Mock())
+        monkeypatch.setattr("ui_core.runner.os.killpg", Mock())
 
         async def timeout(_awaitable, timeout):
             assert timeout == 5
             _awaitable.close()
             raise asyncio.TimeoutError
 
-        monkeypatch.setattr("tui.runner.asyncio.wait_for", timeout)
+        monkeypatch.setattr("ui_core.runner.asyncio.wait_for", timeout)
         assert not await runner.interrupt()
 
     asyncio.run(exercise())
@@ -78,7 +78,7 @@ def test_interrupt_and_terminate_ignore_disappeared_process(monkeypatch):
         runner = OperationRunner()
         runner.process = Mock(pid=123, returncode=None)
         killpg = Mock(side_effect=ProcessLookupError)
-        monkeypatch.setattr("tui.runner.os.killpg", killpg)
+        monkeypatch.setattr("ui_core.runner.os.killpg", killpg)
         assert await runner.interrupt()
         runner.terminate()
         assert killpg.call_count == 2
@@ -111,8 +111,8 @@ def test_windows_interrupt_and_terminate_use_process_methods(monkeypatch):
         process = Mock(pid=123, returncode=None)
         process.wait = AsyncMock(return_value=0)
         runner.process = process
-        monkeypatch.setattr("tui.runner.os.name", "nt")
-        monkeypatch.setattr("tui.runner.signal.CTRL_BREAK_EVENT", 99, raising=False)
+        monkeypatch.setattr("ui_core.runner.os.name", "nt")
+        monkeypatch.setattr("ui_core.runner.signal.CTRL_BREAK_EVENT", 99, raising=False)
 
         assert await runner.interrupt()
         process.send_signal.assert_called_once_with(99)
@@ -130,9 +130,9 @@ def test_windows_runner_starts_a_new_process_group(tmp_path, monkeypatch):
         process.stdout.read = AsyncMock(return_value=b"")
         process.wait = AsyncMock(return_value=0)
         create = AsyncMock(return_value=process)
-        monkeypatch.setattr("tui.runner.os.name", "nt")
-        monkeypatch.setattr("tui.runner.subprocess.CREATE_NEW_PROCESS_GROUP", 512, raising=False)
-        monkeypatch.setattr("tui.runner.asyncio.create_subprocess_exec", create)
+        monkeypatch.setattr("ui_core.runner.os.name", "nt")
+        monkeypatch.setattr("ui_core.runner.subprocess.CREATE_NEW_PROCESS_GROUP", 512, raising=False)
+        monkeypatch.setattr("ui_core.runner.asyncio.create_subprocess_exec", create)
 
         async def receive(_line):
             pass
