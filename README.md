@@ -35,11 +35,27 @@ Python 3.10 or newer is required. Install the standard commands using `pipx`:
 pipx install imap-migration-tools
 ```
 
-Or use pip in a virtual environment:
+Or use pip in a virtual environment on macOS or Linux:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install imap-migration-tools
+```
+
+On Windows PowerShell:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install imap-migration-tools
+```
+
+On Windows Command Prompt:
+
+```batch
+py -m venv .venv
+.venv\Scripts\activate.bat
 python -m pip install imap-migration-tools
 ```
 
@@ -198,9 +214,9 @@ cancellation, and shared local run history. It uses native GTK, Cocoa, or Window
 operating-system theme. View includes persistent zoom and transparency controls; transparency depends on compositor
 support.
 
-| Linux | macOS |
-| --- | --- |
-| ![IMAP Migration Tools native desktop interface on Linux](docs/images/ui-overview-linux.png) | ![IMAP Migration Tools native desktop interface on macOS](docs/images/ui-overview-macos.png) |
+| Linux | macOS | Windows |
+| --- | --- | --- |
+| ![IMAP Migration Tools native desktop interface on Linux](docs/images/ui-overview-linux.png) | ![IMAP Migration Tools native desktop interface on macOS](docs/images/ui-overview-macos.png) | ![IMAP Migration Tools native desktop interface on Windows](docs/images/ui-overview-windows.png) |
 
 The desktop application discovers `.env` from the current directory and its parents. Desktop launchers may start in a
 different directory, so select a configuration explicitly when needed:

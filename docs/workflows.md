@@ -1,7 +1,9 @@
 # Workflows
 
-These examples use the installed command names. When running from a source checkout, replace a command such as
-`imap-migrate` with `PYTHONPATH=src .venv/bin/python src/imap_migrate.py`.
+These examples use the installed command names. When running from a source checkout, activate its virtual environment
+and replace a command such as `imap-migrate` with `PYTHONPATH=src python src/imap_migrate.py` on macOS/Linux,
+`$env:PYTHONPATH = "src"; python src\imap_migrate.py` in PowerShell, or
+`set PYTHONPATH=src && python src\imap_migrate.py` in Command Prompt.
 
 ## A safe migration sequence
 

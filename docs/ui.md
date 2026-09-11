@@ -5,16 +5,36 @@ readiness, command options, redaction, and history implementation as `imap-tools
 
 ## Run from source
 
-Python 3.10 or newer is required:
+Python 3.10 or newer is required. On macOS or Linux:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[ui,tui]'
-PYTHONPATH=src .venv/bin/python -m ui
+source .venv/bin/activate
+python -m pip install -e ".[ui,tui]"
+python -m ui
 ```
 
-On Windows use `.venv\Scripts\python.exe` and `python -m ui` after the editable install.
-The installed desktop launcher is `imap-tools-ui`.
+On Windows PowerShell:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[ui,tui]"
+python -m ui
+```
+
+On Windows Command Prompt (`cmd.exe`):
+
+```batch
+py -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install -e ".[ui,tui]"
+python -m ui
+```
+
+The `.venv/bin/python` path is specific to macOS and Linux. Windows stores the interpreter at
+`.venv\Scripts\python.exe`; it can be used directly if shell activation is unavailable. The installed desktop launcher
+is `imap-tools-ui` (`imap-tools-ui.exe` on Windows).
 
 wxPython uses native Windows, Cocoa, and GTK controls. Windows and macOS normally use published wheels. On Linux,
 install your distribution's wxPython package or the GTK development dependencies needed to build wxPython. For
@@ -33,6 +53,12 @@ in a project directory. Choose a specific configuration with:
 
 ```bash
 imap-tools-ui --env /path/to/project/.env
+```
+
+On Windows PowerShell or Command Prompt, use a Windows path:
+
+```powershell
+imap-tools-ui --env "C:\Users\your-name\project\.env"
 ```
 
 The selected configuration directory is also the operation working directory. Form changes autosave after validation.
@@ -72,13 +98,33 @@ scrolling reflow with the selected zoom.
 The desktop test job installs the project and wxPython, exercises actual widgets and all five operations against
 local mock IMAP servers, and builds a bundle on Linux, macOS, and Windows. Existing tests are unchanged.
 
-```bash
-PYTHONPATH=src .venv/bin/python -m pytest test/ui test/ui_core -v
-# For headless Linux:
-xvfb-run -a .venv/bin/python -m pytest test/ui test/ui_core -v
+After activating the virtual environment, run on macOS or Linux:
 
-.venv/bin/python -m pip install pyinstaller
-.venv/bin/python tools/build_desktop.py
+```bash
+PYTHONPATH=src python -m pytest test/ui test/ui_core -v
+# For headless Linux:
+PYTHONPATH=src xvfb-run -a python -m pytest test/ui test/ui_core -v
+
+python -m pip install pyinstaller
+python tools/build_desktop.py
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m pytest test/ui test/ui_core -v
+python -m pip install pyinstaller
+python tools/build_desktop.py
+```
+
+On Windows Command Prompt:
+
+```batch
+set PYTHONPATH=src
+python -m pytest test/ui test/ui_core -v
+python -m pip install pyinstaller
+python tools\build_desktop.py
 ```
 
 Bundles include a separate console-capable worker, allowing the GUI to run without a terminal while still streaming
