@@ -147,7 +147,9 @@ imap-tools
 The interface provides a guided autosaving `.env` form, operation readiness guidance, live output, cancellation, and
 local run history.
 
-![IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels](docs/images/tui-overview.jpg)
+<p align="left">
+  <img src="docs/images/tui-overview.jpg" width="800" alt="IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels">
+</p>
 
 Review the generated command in the Output panel and verify backups and counts before enabling destructive options.
 
@@ -196,7 +198,9 @@ cancellation, and shared local run history. It uses native GTK, Cocoa, or Window
 operating-system theme. View includes persistent zoom and transparency controls; transparency depends on compositor
 support.
 
-![IMAP Migration Tools native desktop interface showing Configuration, Operation, History, and Output panels](docs/images/ui-overview.png)
+| Linux | macOS |
+| --- | --- |
+| ![IMAP Migration Tools native desktop interface on Linux](docs/images/ui-overview-linux.png) | ![IMAP Migration Tools native desktop interface on macOS](docs/images/ui-overview-macos.png) |
 
 The desktop application discovers `.env` from the current directory and its parents. Desktop launchers may start in a
 different directory, so select a configuration explicitly when needed:

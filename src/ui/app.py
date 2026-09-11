@@ -24,7 +24,7 @@ from ui_core.appearance import (
     save_appearance,
 )
 from ui_core.config import FIELDS, discover_env, effective_values, read_env, save_form, validate
-from ui_core.layout import load_layout, save_layout
+from ui_core.layout import load_layout, load_window_size, save_layout
 from ui_core.operations import OPERATION_BY_NAME, OPERATIONS, account_ready, build_command, readiness
 from ui_core.runner import RunRequest
 from ui_core.workspace import make_options, run_confirmation, validated_form
@@ -36,6 +36,8 @@ COMMAND_KEY = "Ctrl"
 APPEARANCE_SHORTCUT = f"{COMMAND_KEY}+,"
 TRANSPARENCY_STEP = 5
 DEFAULT_OPERATION_HEIGHT = 470
+DEFAULT_WINDOW_SIZE = (1250, 850)
+MINIMUM_WINDOW_SIZE = (720, 520)
 
 HELP_SECTIONS = (
     (
@@ -292,10 +294,17 @@ class Workspace(wx.Frame):
     """Native widgets bound to shared configuration and operation behavior."""
 
     def __init__(self, env_path=None, layout_path=None, controller=None, settings_path=None):
-        super().__init__(None, title="IMAP Migration Tools", size=(1250, 850))
+        layout_path = Path(layout_path or user_config_path("imap-migration-tools", "CallicoCode") / "ui-layout.json")
+        saved_size = load_window_size(layout_path)
+        window_size = (
+            tuple(max(saved, minimum) for saved, minimum in zip(saved_size, MINIMUM_WINDOW_SIZE))
+            if saved_size
+            else DEFAULT_WINDOW_SIZE
+        )
+        super().__init__(None, title="IMAP Migration Tools", size=window_size)
         self.env_path = Path(env_path or discover_env()).resolve()
         self.working_directory = self.env_path.parent
-        self.layout_path = layout_path or user_config_path("imap-migration-tools", "CallicoCode") / "ui-layout.json"
+        self.layout_path = layout_path
         self.settings_path = Path(settings_path or Path(self.layout_path).with_name("ui-settings.json"))
         appearance = load_appearance(self.settings_path)
         self.opacity = appearance.get("opacity", DEFAULT_OPACITY)
@@ -318,6 +327,7 @@ class Workspace(wx.Frame):
         self.closing = False
         self.compact = False
         self.loading = True
+        self._last_window_size = window_size
         self.digest = file_content_fingerprint(self.env_path)
         self.rejected_digest = None
         self.history_digest = None
@@ -343,7 +353,7 @@ class Workspace(wx.Frame):
         self.apply_zoom(self.zoom)
         self.select_operation("count")
         self.refresh_history()
-        self.SetMinSize((720, 520))
+        self.SetMinSize(MINIMUM_WINDOW_SIZE)
         self.SetStatusText(f"Configuration: {self.env_path}")
 
     def _build_menu(self):
@@ -772,7 +782,8 @@ class Workspace(wx.Frame):
         output_sizer.Add(self.output_filter, 0, wx.EXPAND | wx.BOTTOM, 8)
         self.output = wx.TextCtrl(output_panel, style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP)
         self.output.SetName("Operation output")
-        self.output.SetFont(wx.Font(wx.FontInfo(10).Family(wx.FONTFAMILY_TELETYPE)))
+        output_font_size = self.output.GetFont().GetPointSize() if wx.Platform == "__WXMAC__" else 10
+        self.output.SetFont(wx.Font(wx.FontInfo(output_font_size).Family(wx.FONTFAMILY_TELETYPE)))
         self.output.SetBackgroundColour(self.colours["surface"])
         output_sizer.Add(self.output, 1, wx.EXPAND | wx.BOTTOM, 8)
         row = wx.BoxSizer(wx.HORIZONTAL)
@@ -1006,7 +1017,7 @@ class Workspace(wx.Frame):
         )
         self.lines.clear()
         self.output.ChangeValue("")
-        self.progress.SetLabel("Starting…")
+        self.set_progress_label("Starting…")
         self.progress.SetForegroundColour(self.colours["muted"])
         self.current_run_id = self.selected_run_id = None
         self.controller.start(self.operation, values, request)
@@ -1021,6 +1032,12 @@ class Workspace(wx.Frame):
     def force_stop(self):
         if self.controller.active and self.confirm("Force stop this operation? Cleanup may be incomplete."):
             self.controller.cancel(force=True)
+
+    def set_progress_label(self, label):
+        """Update the output status and immediately recalculate its sizer width."""
+        self.progress.SetLabel(label)
+        self.progress.InvalidateBestSize()
+        self.progress.GetParent().Layout()
 
     def poll(self, event=None):
         self.reload_external()
@@ -1037,7 +1054,7 @@ class Workspace(wx.Frame):
                 self.lines.append(payload)
                 dirty = True
             elif kind == "progress":
-                self.progress.SetLabel(
+                self.set_progress_label(
                     f"{payload.phase} | Copied {payload.copied} | Skipped {payload.skipped} | "
                     f"Failed {payload.failed} | Deleted {payload.deleted}"
                 )
@@ -1050,7 +1067,7 @@ class Workspace(wx.Frame):
                 self.controller.active = False
                 self.cancel_button.Disable()
                 self.force_button.Disable()
-                self.progress.SetLabel(payload.status if payload else "failed")
+                self.set_progress_label(payload.status if payload else "failed")
                 status_colour = (
                     self.colours["success"]
                     if payload and payload.status == "completed"
@@ -1160,6 +1177,9 @@ class Workspace(wx.Frame):
 
     def on_resize(self, event):
         event.Skip()
+        if not self.IsMaximized() and not self.IsIconized():
+            size = event.GetSize()
+            self._last_window_size = (size.width, size.height)
         self.apply_responsive_layout()
 
     def apply_responsive_layout(self, width=None, height=None):
@@ -1217,6 +1237,7 @@ class Workspace(wx.Frame):
                     name: splitter.GetSashPosition()
                     for name, splitter in (("outer", self.outer), ("upper", self.upper), ("sidebar", self.sidebar))
                 },
+                self._last_window_size,
             )
         except OSError:
             pass

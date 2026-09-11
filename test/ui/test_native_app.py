@@ -23,6 +23,7 @@ from ui.app import (  # noqa: E402
 from ui_core import history  # noqa: E402
 from ui_core.appearance import load_appearance  # noqa: E402
 from ui_core.config import FIELDS, read_env, save_form  # noqa: E402
+from ui_core.layout import load_window_size, save_layout  # noqa: E402
 from ui_core.operations import OPERATION_BY_NAME  # noqa: E402
 
 
@@ -105,11 +106,23 @@ def test_tools_and_configuration_share_readiness_state(workspace):
 def test_native_theme_has_visual_hierarchy(workspace):
     assert workspace.header.GetBackgroundColour() == workspace.colours["header"]
     assert workspace.output.GetFont().IsFixedWidth()
+    if wx.Platform == "__WXMAC__":
+        assert workspace.output.GetFont().GetPointSize() == workspace.output_filter.GetFont().GetPointSize()
+    else:
+        assert workspace.output.GetFont().GetPointSize() == 10
     assert workspace.readiness_panel.GetBackgroundColour() != workspace.GetBackgroundColour()
     assert (
         " ".join(workspace.operation_description.GetLabel().split())
         == OPERATION_BY_NAME[workspace.operation].description
     )
+
+
+def test_output_status_reflows_when_label_changes(workspace):
+    workspace.set_progress_label("completed")
+    wx.Yield()
+
+    assert workspace.progress.GetLabel() == "completed"
+    assert workspace.progress.GetSize().width >= workspace.progress.GetBestSize().width
 
 
 def test_native_theme_refreshes_custom_surfaces(workspace, monkeypatch):
@@ -633,6 +646,7 @@ def test_window_events_and_main_launch(workspace, monkeypatch, tmp_path):
     monkeypatch.setattr(workspace, "apply_responsive_layout", lambda: responsive.append(True))
     workspace.on_resize(Event())
     assert responsive == [True]
+    assert workspace._last_window_size == (900, 700)
     monkeypatch.setattr(wx, "CallAfter", lambda callback: callback())
     themed = []
     monkeypatch.setattr(workspace, "apply_system_theme", lambda: themed.append(True))
@@ -659,3 +673,18 @@ def test_window_events_and_main_launch(workspace, monkeypatch, tmp_path):
     monkeypatch.setattr(native_ui, "Workspace", Frame)
     native_ui.main(["--env", str(tmp_path / ".env")])
     assert launched == [tmp_path / ".env", "show", "loop"]
+
+
+def test_window_size_is_saved_and_restored(native_app, tmp_path):
+    layout_path = tmp_path / "layout.json"
+    save_layout(layout_path, {}, (1080, 680))
+    frame = Workspace(tmp_path / ".env", layout_path)
+    assert tuple(frame.GetSize()) == (1080, 680)
+
+    frame.Show()
+    frame.SetSize((1120, 720))
+    wx.Yield()
+    frame.Close()
+    wx.Yield()
+
+    assert load_window_size(layout_path) == (1120, 720)

@@ -36,14 +36,39 @@ def load_layout(path: Path) -> dict[str, int]:
     }
 
 
-def save_layout(path: Path, splitters: dict[str, int]) -> None:
+def load_window_size(path: Path) -> tuple[int, int] | None:
+    """Load a validated top-level window size when one was saved."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("version") != LAYOUT_VERSION:
+        return None
+    size = payload.get("window_size")
+    if (
+        not isinstance(size, dict)
+        or not isinstance(size.get("width"), int)
+        or isinstance(size.get("width"), bool)
+        or not isinstance(size.get("height"), int)
+        or isinstance(size.get("height"), bool)
+        or size["width"] <= 0
+        or size["height"] <= 0
+    ):
+        return None
+    return size["width"], size["height"]
+
+
+def save_layout(path: Path, splitters: dict[str, int], window_size: tuple[int, int] | None = None) -> None:
     """Atomically save splitter sizes."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent, text=True)
     temp = Path(temp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump({"version": LAYOUT_VERSION, "splitters": splitters}, stream, indent=2, sort_keys=True)
+            payload = {"version": LAYOUT_VERSION, "splitters": splitters}
+            if window_size is not None:
+                payload["window_size"] = {"width": window_size[0], "height": window_size[1]}
+            json.dump(payload, stream, indent=2, sort_keys=True)
             stream.write("\n")
         try:
             os.chmod(temp, stat.S_IRUSR | stat.S_IWUSR)

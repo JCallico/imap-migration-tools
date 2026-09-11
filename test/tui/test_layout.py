@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from tui.layout import load_layout, save_layout
+from tui.layout import load_layout, load_window_size, save_layout
 
 
 def test_layout_round_trip(tmp_path):
@@ -15,6 +15,15 @@ def test_layout_round_trip(tmp_path):
     save_layout(path, {"left": 42, "rows": 9})
 
     assert load_layout(path) == {"left": 42, "rows": 9}
+    assert load_window_size(path) is None
+
+
+def test_window_size_round_trip(tmp_path):
+    path = tmp_path / "layout.json"
+    save_layout(path, {"left": 42}, (1100, 740))
+
+    assert load_layout(path) == {"left": 42}
+    assert load_window_size(path) == (1100, 740)
 
 
 def test_layout_ignores_invalid_or_incompatible_data(tmp_path):
@@ -33,6 +42,17 @@ def test_layout_ignores_invalid_or_incompatible_data(tmp_path):
 
     path.write_text(json.dumps({"version": 1, "splitters": []}), encoding="utf-8")
     assert load_layout(path) == {}
+
+
+@pytest.mark.parametrize(
+    "size",
+    [None, [], {"width": True, "height": 700}, {"width": 900, "height": "700"}, {"width": 0, "height": 700}],
+)
+def test_window_size_ignores_invalid_data(tmp_path, size):
+    path = tmp_path / "layout.json"
+    path.write_text(json.dumps({"version": 1, "splitters": {}, "window_size": size}), encoding="utf-8")
+
+    assert load_window_size(path) is None
 
 
 def test_save_layout_ignores_chmod_failure(tmp_path, monkeypatch):

@@ -50,8 +50,9 @@ Select a completed run to filter, export, or delete its log. Active runs cannot 
 same secret redaction as the terminal interface.
 
 Drag panel dividers to resize, or double-click to reset. Narrow windows put Output below Configuration and Operation.
-Desktop layout is stored separately in `ui-layout.json`. Use the View menu to reset the layout, F1 for help, and F2
-for the structured keyboard reference. The Help menu also provides application and version information under About.
+Desktop layout and the last normal window size are stored separately in `ui-layout.json`. Use the View menu to reset
+the panel layout, F1 for help, and F2 for the structured keyboard reference. The Help menu also provides application
+and version information under About.
 Platform menu conventions remain available, including the macOS application menu.
 The interface reads the active operating-system palette through wxPython and uses native controls, consistent spacing,
 and theme-aware semantic readiness colours. On Linux it follows GTK light/dark and accent colours, including theme
@@ -60,6 +61,7 @@ interactive accents use the system selection colour. Open
 **View → Appearance** (`Ctrl+,`) to adjust window opacity from 70% to 100%. The setting is saved in
 `ui-settings.json`; desktops whose compositor does not expose native window opacity leave the control disabled. The
 settings screen has separate buttons to reset opacity and zoom to their defaults.
+On macOS, the fixed-width Output text follows the native body-text size for consistency with the other controls.
 The same dialog adjusts zoom from 80% to 150%. **View → Zoom → Zoom in**, **Zoom out**, and **Reset zoom** use `Ctrl+=`,
 `Ctrl+-`, and `Ctrl+0` on Windows/Linux and `Cmd` equivalents on macOS. Fonts, native control sizes, wrapped text, and
 scrolling reflow with the selected zoom.
