@@ -13,7 +13,7 @@ if __name__ == "__main__":
         "--onedir",
         "--noconfirm",
         f"--paths={root / 'src'}",
-        "--collect-submodules=ui_core",
+        "--collect-submodules=ui",
         "--collect-submodules=imap_services",
         "--collect-submodules=auth",
         "--collect-submodules=providers",
@@ -29,12 +29,12 @@ if __name__ == "__main__":
         [
             str(root / "tools" / "desktop_launcher.py"),
             *common,
-            "--collect-submodules=ui",
-            "--name=imap-tools-ui",
+            "--collect-submodules=gui",
+            "--name=imap-tools-gui",
             "--windowed",
         ]
     )
-    destination = root / "dist" / "imap-tools-ui"
+    destination = root / "dist" / "imap-tools-gui"
     if sys.platform == "darwin":
-        destination = root / "dist" / "imap-tools-ui.app" / "Contents" / "MacOS"
+        destination = root / "dist" / "imap-tools-gui.app" / "Contents" / "MacOS"
     shutil.copytree(root / "dist" / "imap-tools-worker", destination / "worker", dirs_exist_ok=True)

@@ -172,8 +172,20 @@ Before implementing a new feature, check whether a maintained library already su
 encryption, caching, and other security- or data-sensitive behavior, prefer established libraries and document the
 dependency and portability tradeoffs before implementation.
 
-## Shared UI core and native desktop
+## Shared interface layer and native GUI
 
-`src/ui_core` owns reusable UI behavior. `src/tui` retains compatibility module aliases and Textual adapters.
-`src/ui` contains wxPython adapters; it must not implement authentication or IMAP behavior.
-New tests live in `test/ui_core` and `test/ui`. See [desktop testing](ui.md#tests-and-bundles).
+`src/ui` owns reusable interface behavior. `src/tui` retains compatibility module aliases and Textual adapters.
+`src/gui` contains wxPython GUI adapters; it must not implement authentication or IMAP behavior.
+New tests live in `test/ui` and `test/gui`. See [desktop testing](gui.md#tests-and-bundles).
+
+## Pull request green loop
+
+The repository includes the [PR Green Loop](../.codex/skills/pr-green-loop/SKILL.md) Codex skill. Invoke it by name when
+the current changes are ready to commit and you want Codex to monitor and repair the pull-request pipeline:
+
+```text
+Use $pr-green-loop to commit and push the current changes, then fix failures until every required PR check passes.
+```
+
+The loop validates the worktree, commits and pushes the intended changes, follows checks for the exact pushed commit,
+diagnoses failures from their logs, applies focused fixes, and repeats until the latest commit is green.

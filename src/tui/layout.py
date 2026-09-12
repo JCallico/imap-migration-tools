@@ -2,6 +2,6 @@
 
 import sys
 
-from ui_core import layout as _implementation
+from ui import layout as _implementation
 
 sys.modules[__name__] = _implementation

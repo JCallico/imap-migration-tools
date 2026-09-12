@@ -163,6 +163,6 @@ python -m pip install "imap-migration-tools[dotenv]"
 
 Continue with [Configuration](configuration.md).
 
-## Native desktop application
+## Native desktop GUI
 
-See [desktop setup](ui.md) for the optional `[ui]` extra, Linux prerequisites, and bundled application builds.
+See [desktop setup](gui.md) for the optional `[gui]` extra, Linux prerequisites, and bundled application builds.

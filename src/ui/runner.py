@@ -38,7 +38,7 @@ class RunRequest:
 
 
 class OperationRunner:
-    """Run one command and stream merged output without blocking the UI."""
+    """Run one command and stream merged output without blocking the interface."""
 
     def __init__(self) -> None:
         self.process: asyncio.subprocess.Process | None = None
@@ -79,7 +79,7 @@ class OperationRunner:
                     *request.command[3:],
                 ]
                 if getattr(sys, "frozen", False)
-                else [sys.executable, "-u", "-m", "ui_core.worker", *request.command[3:]]
+                else [sys.executable, "-u", "-m", "ui.worker", *request.command[3:]]
             )
             kwargs["stdin"] = asyncio.subprocess.PIPE
         self.process = await asyncio.create_subprocess_exec(

@@ -1,4 +1,4 @@
-"""Tests for shared UI configuration behavior."""
+"""Tests for shared interface configuration behavior."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from dotenv import dotenv_values
 
-from ui_core.config import (
+from ui.config import (
     FIELDS,
     discover_env,
     effective_values,
@@ -133,7 +133,7 @@ def test_discovery_defaults_to_new_file_and_validation_rejects_choice(tmp_path):
 
 def test_save_form_removes_temporary_file_when_replace_fails(tmp_path, monkeypatch):
     path = tmp_path / ".env"
-    monkeypatch.setattr("ui_core.config.os.replace", lambda *_args: (_ for _ in ()).throw(OSError("replace failed")))
+    monkeypatch.setattr("ui.config.os.replace", lambda *_args: (_ for _ in ()).throw(OSError("replace failed")))
 
     with pytest.raises(OSError, match="replace failed"):
         save_form(path, {})

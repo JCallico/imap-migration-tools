@@ -5,7 +5,7 @@ import pytest
 from cli.backup import parse_arguments as parse_backup_arguments
 from cli.compare import parse_arguments as parse_compare_arguments
 from cli.count import parse_arguments as parse_count_arguments
-from ui_core.operations import (
+from ui.operations import (
     OPERATION_BY_NAME,
     ProgressState,
     RunOptions,

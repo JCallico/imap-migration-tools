@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import ui.controller as controller_module
-from ui.controller import RunController
+import gui.controller as controller_module
+from gui.controller import RunController
 
 
 def bare_controller(runner):

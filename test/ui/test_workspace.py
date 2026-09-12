@@ -7,17 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from ui_core import history
-from ui_core.config import save_form
-from ui_core.operations import OPERATION_BY_NAME, build_command
-from ui_core.runner import OperationRunner, RunRequest
-from ui_core.session import RunSession
-from ui_core.workspace import make_options, run_confirmation, validated_form
+from ui import history
+from ui.config import save_form
+from ui.operations import OPERATION_BY_NAME, build_command
+from ui.runner import OperationRunner, RunRequest
+from ui.session import RunSession
+from ui.workspace import make_options, run_confirmation, validated_form
 
 
 @pytest.mark.parametrize("module", ["config", "history", "operations", "runner", "layout"])
 def test_legacy_import_is_same_module(module):
-    assert importlib.import_module(f"tui.{module}") is importlib.import_module(f"ui_core.{module}")
+    assert importlib.import_module(f"tui.{module}") is importlib.import_module(f"ui.{module}")
 
 
 def test_comparison_options_override_local_paths():
@@ -93,7 +93,7 @@ def test_real_desktop_worker_runs_count(tmp_path):
 
 
 def test_worker_rejects_arbitrary_modules():
-    from ui_core.worker import main
+    from ui.worker import main
 
     with pytest.raises(SystemExit, match="Unknown IMAP"):
         main(["os"])
@@ -157,7 +157,7 @@ def test_worker_stdin_cancellation_without_console(tmp_path):
 
 
 def test_explicit_local_comparison_requires_path_even_with_account():
-    from ui_core.operations import readiness
+    from ui.operations import readiness
 
     values = {
         f"{prefix}_IMAP_{name}": value

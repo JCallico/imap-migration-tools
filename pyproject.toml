@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ui = [
+gui = [
     "platformdirs>=3.6,<5",
     "wxPython>=4.2.1,<5",
 ]
@@ -56,7 +56,7 @@ imap-compare = "imap_compare:main"
 imap-tools = "tui:main"
 
 [project.gui-scripts]
-imap-tools-ui = "ui:main"
+imap-tools-gui = "gui:main"
 
 [tool.setuptools.package-data]
 tui = ["*.tcss"]

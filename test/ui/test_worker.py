@@ -4,7 +4,7 @@ import sys
 
 import pytest
 
-import ui_core.worker as worker
+import ui.worker as worker
 
 
 class ImmediateThread:

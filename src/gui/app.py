@@ -12,9 +12,9 @@ import wx
 import wx.lib.scrolledpanel
 from platformdirs import user_config_path
 
-from ui.controller import RunController
-from ui_core import history
-from ui_core.appearance import (
+from gui.controller import RunController
+from ui import history
+from ui.appearance import (
     DEFAULT_OPACITY,
     DEFAULT_ZOOM,
     MAXIMUM_ZOOM,
@@ -23,11 +23,11 @@ from ui_core.appearance import (
     load_appearance,
     save_appearance,
 )
-from ui_core.config import FIELDS, discover_env, effective_values, read_env, save_form, validate
-from ui_core.layout import load_layout, load_window_size, save_layout
-from ui_core.operations import OPERATION_BY_NAME, OPERATIONS, account_ready, build_command, readiness
-from ui_core.runner import RunRequest
-from ui_core.workspace import make_options, run_confirmation, validated_form
+from ui.config import FIELDS, discover_env, effective_values, read_env, save_form, validate
+from ui.layout import load_layout, load_window_size, save_layout
+from ui.operations import OPERATION_BY_NAME, OPERATIONS, account_ready, build_command, readiness
+from ui.runner import RunRequest
+from ui.workspace import make_options, run_confirmation, validated_form
 from utils.dotenv import load_dotenv
 from utils.filesystem_watch import directory_fingerprint, file_content_fingerprint
 from utils.imap_common import get_version
@@ -294,7 +294,7 @@ class Workspace(wx.Frame):
     """Native widgets bound to shared configuration and operation behavior."""
 
     def __init__(self, env_path=None, layout_path=None, controller=None, settings_path=None):
-        layout_path = Path(layout_path or user_config_path("imap-migration-tools", "CallicoCode") / "ui-layout.json")
+        layout_path = Path(layout_path or user_config_path("imap-migration-tools", "CallicoCode") / "gui-layout.json")
         saved_size = load_window_size(layout_path)
         window_size = (
             tuple(max(saved, minimum) for saved, minimum in zip(saved_size, MINIMUM_WINDOW_SIZE))
@@ -305,7 +305,7 @@ class Workspace(wx.Frame):
         self.env_path = Path(env_path or discover_env()).resolve()
         self.working_directory = self.env_path.parent
         self.layout_path = layout_path
-        self.settings_path = Path(settings_path or Path(self.layout_path).with_name("ui-settings.json"))
+        self.settings_path = Path(settings_path or Path(self.layout_path).with_name("gui-settings.json"))
         appearance = load_appearance(self.settings_path)
         self.opacity = appearance.get("opacity", DEFAULT_OPACITY)
         self.zoom = appearance.get("zoom", DEFAULT_ZOOM)

@@ -24,6 +24,7 @@ They support password and OAuth2 authentication, incremental operation, Gmail la
 | `imap-compare` | `src/imap_compare.py` | Compare folder counts across IMAP or local sources |
 | `imap-count` | `src/imap_count.py` | Count messages on an account or in a local backup |
 | `imap-tools` | `src/tui/app.py` | Configure and run all tools in a full-screen terminal interface |
+| `imap-tools-gui` | `src/gui/app.py` | Configure and run all tools in a native desktop GUI |
 
 Legacy script names remain available as compatibility wrappers.
 
@@ -181,32 +182,32 @@ Basic password authentication needs no additional authentication package. OAuth2
 by the project. Encrypted persistent caching on Linux requires the `linux-keyring` extra and native system libraries.
 See [Installation](docs/installation.md) for platform and source setup.
 
-### Native desktop interface
+### Native desktop GUI
 
 The wxPython interface provides one native desktop workspace for configuring and running Count, Compare, Backup,
 Restore, and Migrate on Linux, macOS, and Windows. Install the optional desktop dependencies with `pipx`:
 
 ```bash
-pipx install "imap-migration-tools[ui]"
+pipx install "imap-migration-tools[gui]"
 ```
 
 If `imap-migration-tools` is already installed through `pipx`, reinstall it with the desktop extra:
 
 ```bash
-pipx install --force "imap-migration-tools[ui]"
+pipx install --force "imap-migration-tools[gui]"
 ```
 
 Launch the desktop application with the installed command:
 
 ```bash
-imap-tools-ui
+imap-tools-gui
 ```
 
 For a standard virtual environment:
 
 ```bash
-python -m pip install "imap-migration-tools[ui]"
-imap-tools-ui
+python -m pip install "imap-migration-tools[gui]"
+imap-tools-gui
 ```
 
 The application provides an autosaving `.env` form, operation readiness guidance, confirmations, live output,
@@ -216,13 +217,13 @@ support.
 
 | Linux | macOS | Windows |
 | --- | --- | --- |
-| ![IMAP Migration Tools native desktop interface on Linux](docs/images/ui-overview-linux.png) | ![IMAP Migration Tools native desktop interface on macOS](docs/images/ui-overview-macos.png) | ![IMAP Migration Tools native desktop interface on Windows](docs/images/ui-overview-windows.png) |
+| ![IMAP Migration Tools native desktop interface on Linux](docs/images/gui-overview-linux.png) | ![IMAP Migration Tools native desktop interface on macOS](docs/images/gui-overview-macos.png) | ![IMAP Migration Tools native desktop interface on Windows](docs/images/gui-overview-windows.png) |
 
 The desktop application discovers `.env` from the current directory and its parents. Desktop launchers may start in a
 different directory, so select a configuration explicitly when needed:
 
 ```bash
-imap-tools-ui --env /path/to/project/.env
+imap-tools-gui --env /path/to/project/.env
 ```
 
 Configuration precedence and secret handling match the TUI. Passwords and OAuth client secrets are masked,
@@ -230,7 +231,7 @@ destructive operations require typing `DELETE`, and logs use the shared redactio
 Review the readiness message and confirmation before starting a destructive operation.
 
 Windows and macOS normally install wxPython from published wheels. Linux may require the distribution's wxPython
-package or GTK development libraries. See the [Native desktop interface guide](docs/ui.md) for source installation,
+package or GTK development libraries. See the [Native desktop GUI guide](docs/gui.md) for source installation,
 Linux prerequisites, appearance controls, testing, bundle creation, and platform evaluation.
 
 ## Configuration essentials
@@ -270,7 +271,7 @@ rules.
 
 - [Migration, backup, restore, count, and comparison examples](docs/workflows.md)
 - [Full-screen terminal interface](docs/tui.md)
-- [Native desktop interface](docs/ui.md)
+- [Native desktop GUI](docs/gui.md)
 - [OAuth2 setup for Microsoft and Google](docs/oauth2.md)
 - [Troubleshooting and operational safety](docs/troubleshooting.md)
 - [Development, testing, and CI](docs/development.md)

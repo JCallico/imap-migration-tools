@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from ui_core import history
-from ui_core.config import SECRET_NAMES
-from ui_core.operations import ProgressState, parse_output
+from ui import history
+from ui.config import SECRET_NAMES
+from ui.operations import ProgressState, parse_output
 
 
 class RunSession:

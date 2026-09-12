@@ -7,8 +7,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from ui_core import layout
-from ui_core.layout import load_layout, load_window_size, save_layout
+from ui import layout
+from ui.layout import load_layout, load_window_size, save_layout
 
 
 def test_default_layout_path_uses_platform_config_directory(monkeypatch, tmp_path):
@@ -65,14 +65,14 @@ def test_window_size_ignores_invalid_data(tmp_path, size):
 
 def test_save_layout_ignores_chmod_failure(tmp_path, monkeypatch):
     path = tmp_path / "layout.json"
-    monkeypatch.setattr("ui_core.layout.os.chmod", Mock(side_effect=OSError("unsupported")))
+    monkeypatch.setattr("ui.layout.os.chmod", Mock(side_effect=OSError("unsupported")))
     save_layout(path, {"left": 42})
     assert load_layout(path) == {"left": 42}
 
 
 def test_save_layout_removes_temporary_file_when_replace_fails(tmp_path, monkeypatch):
     path = tmp_path / "layout.json"
-    monkeypatch.setattr("ui_core.layout.os.replace", Mock(side_effect=OSError("replace failed")))
+    monkeypatch.setattr("ui.layout.os.replace", Mock(side_effect=OSError("replace failed")))
     with pytest.raises(OSError, match="replace failed"):
         save_layout(path, {"left": 42})
     assert list(tmp_path.iterdir()) == []

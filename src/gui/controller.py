@@ -7,8 +7,8 @@ import queue
 import threading
 from dataclasses import replace
 
-from ui_core.runner import OperationRunner
-from ui_core.session import RunSession
+from ui.runner import OperationRunner
+from ui.session import RunSession
 
 
 class RunController:
@@ -18,7 +18,7 @@ class RunController:
         self.events = queue.Queue()
         self.runner = OperationRunner()
         self.loop = asyncio.new_event_loop()
-        self.thread = threading.Thread(target=self.loop.run_forever, name="imap-ui-io", daemon=True)
+        self.thread = threading.Thread(target=self.loop.run_forever, name="imap-gui-io", daemon=True)
         self.thread.start()
         self.active = False
         self.cancelled = False

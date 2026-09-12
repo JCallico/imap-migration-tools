@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from ui_core.appearance import load_appearance, save_appearance
+from ui.appearance import load_appearance, save_appearance
 
 
 def test_appearance_round_trip(tmp_path):

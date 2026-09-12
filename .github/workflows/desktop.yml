@@ -8,7 +8,7 @@ on:
 
 jobs:
   desktop:
-    name: Native UI (${{ matrix.os }})
+    name: Native GUI (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -30,7 +30,7 @@ jobs:
       - name: Install project and test tools
         shell: bash
         run: |
-          python -m pip install '.[ui,tui]' pytest pytest-cov pyinstaller
+          python -m pip install '.[gui,tui]' pytest pytest-cov pyinstaller
       - name: Verify native toolkit is available
         run: python -c "import wx; print(wx.version())"
       - name: Test desktop and shared core
@@ -39,16 +39,16 @@ jobs:
           PYTHONPATH: src
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a python -m pytest test/ui test/ui_core -v --cov=src/ui --cov=src/ui_core --cov-report=xml:coverage-ui.xml
+            xvfb-run -a python -m pytest test/gui test/ui -v --cov=src/gui --cov=src/ui --cov-report=xml:coverage-gui.xml
           else
-            python -m pytest test/ui test/ui_core -v
+            python -m pytest test/gui test/ui -v
           fi
       - name: Upload desktop coverage to Codecov
         if: runner.os == 'Linux'
         uses: codecov/codecov-action@v4
         with:
-          files: ./coverage-ui.xml
-          flags: desktop-ui
+          files: ./coverage-gui.xml
+          flags: desktop-gui
           fail_ci_if_error: false
           verbose: true
         env:
@@ -59,15 +59,15 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = macOS ]; then
-            dist/imap-tools-ui.app/Contents/MacOS/worker/imap-tools-worker --imap-worker imap_count --help
+            dist/imap-tools-gui.app/Contents/MacOS/worker/imap-tools-worker --imap-worker imap_count --help
           elif [ "$RUNNER_OS" = Windows ]; then
-            dist/imap-tools-ui/worker/imap-tools-worker.exe --imap-worker imap_count --help
+            dist/imap-tools-gui/worker/imap-tools-worker.exe --imap-worker imap_count --help
           else
-            dist/imap-tools-ui/worker/imap-tools-worker --imap-worker imap_count --help
+            dist/imap-tools-gui/worker/imap-tools-worker --imap-worker imap_count --help
           fi
       - uses: actions/upload-artifact@v4
         with:
-          name: imap-tools-ui-${{ runner.os }}-${{ runner.arch }}
+          name: imap-tools-gui-${{ runner.os }}-${{ runner.arch }}
           path: |
-            dist/imap-tools-ui/
-            dist/imap-tools-ui.app/
+            dist/imap-tools-gui/
+            dist/imap-tools-gui.app/

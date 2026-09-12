@@ -2,6 +2,6 @@
 
 import sys
 
-from ui_core import history as _implementation
+from ui import history as _implementation
 
 sys.modules[__name__] = _implementation

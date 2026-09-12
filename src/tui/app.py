@@ -54,8 +54,8 @@ from tui.operations import (
 )
 from tui.runner import OperationRunner, RunRequest
 from tui.splitter import ResizeHandle
-from ui_core.session import RunSession
-from ui_core.workspace import make_options, run_confirmation, validated_form
+from ui.session import RunSession
+from ui.workspace import make_options, run_confirmation, validated_form
 from utils.filesystem_watch import FilesystemWatcher
 
 
@@ -620,7 +620,7 @@ class ImapToolsApp(App[None]):
         self.notify(f"External .env not loaded: {detail}", severity="error")
 
     def finish_external_configuration_reload(self) -> None:
-        """Resume form events and refresh configuration-dependent UI state."""
+        """Resume form events and refresh configuration-dependent TUI state."""
         self.configuration_reload_in_progress = False
         self.refresh_configuration(announce_readiness=True)
 
@@ -780,7 +780,7 @@ class ImapToolsApp(App[None]):
         self.refresh_operation_readiness(announce=True, force_notice=True)
 
     def operation_readiness(self, operation: OperationName, values: dict[str, str] | None = None) -> Readiness:
-        """Return readiness using the operation modes currently selected in the UI."""
+        """Return readiness using the operation modes currently selected in the TUI."""
         if values is None:
             values = self.values()
         return readiness(

@@ -1,6 +1,6 @@
-# Native desktop interface
+# Native desktop GUI
 
-The wxPython desktop interface provides Count, Compare, Backup, Restore, and Migrate using the same configuration,
+The wxPython desktop GUI provides Count, Compare, Backup, Restore, and Migrate using the same configuration,
 readiness, command options, redaction, and history implementation as `imap-tools`.
 
 ## Run from source
@@ -10,8 +10,8 @@ Python 3.10 or newer is required. On macOS or Linux:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[ui,tui]"
-python -m ui
+python -m pip install -e ".[gui,tui]"
+python -m gui
 ```
 
 On Windows PowerShell:
@@ -19,8 +19,8 @@ On Windows PowerShell:
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[ui,tui]"
-python -m ui
+python -m pip install -e ".[gui,tui]"
+python -m gui
 ```
 
 On Windows Command Prompt (`cmd.exe`):
@@ -28,13 +28,13 @@ On Windows Command Prompt (`cmd.exe`):
 ```batch
 py -m venv .venv
 .venv\Scripts\activate.bat
-python -m pip install -e ".[ui,tui]"
-python -m ui
+python -m pip install -e ".[gui,tui]"
+python -m gui
 ```
 
 The `.venv/bin/python` path is specific to macOS and Linux. Windows stores the interpreter at
 `.venv\Scripts\python.exe`; it can be used directly if shell activation is unavailable. The installed desktop launcher
-is `imap-tools-ui` (`imap-tools-ui.exe` on Windows).
+is `imap-tools-gui` (`imap-tools-gui.exe` on Windows).
 
 wxPython uses native Windows, Cocoa, and GTK controls. Windows and macOS normally use published wheels. On Linux,
 install your distribution's wxPython package or the GTK development dependencies needed to build wxPython. For
@@ -43,7 +43,7 @@ Ubuntu 24.04, a development environment can reuse the distribution package:
 ```bash
 sudo apt-get install python3-venv python3-wxgtk4.0 xvfb
 python3 -m venv --system-site-packages .venv
-.venv/bin/python -m pip install -e '.[ui,tui]'
+.venv/bin/python -m pip install -e '.[gui,tui]'
 ```
 
 ## Configuration and workspace
@@ -52,13 +52,13 @@ The application discovers `.env` from the working directory and its parents. Des
 in a project directory. Choose a specific configuration with:
 
 ```bash
-imap-tools-ui --env /path/to/project/.env
+imap-tools-gui --env /path/to/project/.env
 ```
 
 On Windows PowerShell or Command Prompt, use a Windows path:
 
 ```powershell
-imap-tools-ui --env "C:\Users\your-name\project\.env"
+imap-tools-gui --env "C:\Users\your-name\project\.env"
 ```
 
 The selected configuration directory is also the operation working directory. Form changes autosave after validation.
@@ -76,7 +76,7 @@ Select a completed run to filter, export, or delete its log. Active runs cannot 
 same secret redaction as the terminal interface.
 
 Drag panel dividers to resize, or double-click to reset. Narrow windows put Output below Configuration and Operation.
-Desktop layout and the last normal window size are stored separately in `ui-layout.json`. Use the View menu to reset
+Desktop layout and the last normal window size are stored separately in `gui-layout.json`. Use the View menu to reset
 the panel layout, F1 for help, and F2 for the structured keyboard reference. The Help menu also provides application
 and version information under About.
 Platform menu conventions remain available, including the macOS application menu.
@@ -85,7 +85,7 @@ and theme-aware semantic readiness colours. On Linux it follows GTK light/dark a
 changes made while the application is open. The header uses GTK's active-caption and caption-text colours, while
 interactive accents use the system selection colour. Open
 **View → Appearance** (`Ctrl+,`) to adjust window opacity from 70% to 100%. The setting is saved in
-`ui-settings.json`; desktops whose compositor does not expose native window opacity leave the control disabled. The
+`gui-settings.json`; desktops whose compositor does not expose native window opacity leave the control disabled. The
 settings screen has separate buttons to reset opacity and zoom to their defaults.
 On macOS, the fixed-width Output text follows the native body-text size for consistency with the other controls.
 The same dialog adjusts zoom from 80% to 150%. **View → Zoom → Zoom in**, **Zoom out**, and **Reset zoom** use `Ctrl+=`,
@@ -101,9 +101,9 @@ local mock IMAP servers, and builds a bundle on Linux, macOS, and Windows. Exist
 After activating the virtual environment, run on macOS or Linux:
 
 ```bash
-PYTHONPATH=src python -m pytest test/ui test/ui_core -v
+PYTHONPATH=src python -m pytest test/gui test/ui -v
 # For headless Linux:
-PYTHONPATH=src xvfb-run -a python -m pytest test/ui test/ui_core -v
+PYTHONPATH=src xvfb-run -a python -m pytest test/gui test/ui -v
 
 python -m pip install pyinstaller
 python tools/build_desktop.py
@@ -113,7 +113,7 @@ On Windows PowerShell:
 
 ```powershell
 $env:PYTHONPATH = "src"
-python -m pytest test/ui test/ui_core -v
+python -m pytest test/gui test/ui -v
 python -m pip install pyinstaller
 python tools/build_desktop.py
 ```
@@ -122,7 +122,7 @@ On Windows Command Prompt:
 
 ```batch
 set PYTHONPATH=src
-python -m pytest test/ui test/ui_core -v
+python -m pytest test/gui test/ui -v
 python -m pip install pyinstaller
 python tools\build_desktop.py
 ```
@@ -151,5 +151,5 @@ claiming release readiness. A Linux test run alone does not validate macOS or Wi
 | Run output and history | Shared runner/session/redaction; GUI filtering and history coverage |
 | Cancellation / force stop | Shared runner; worker cancellation tests and platform evaluation |
 | Multiple instances | Shared history format; unfinished-run hiding and selection tests |
-| Help, focus, resizing, layout | Native UI adapters; platform interaction evaluation |
+| Help, focus, resizing, layout | Native GUI adapters; platform interaction evaluation |
 | Terminal ASCII / NO_COLOR | Remain terminal-specific; desktop uses system controls |

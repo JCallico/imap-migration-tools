@@ -11,8 +11,8 @@ wx = pytest.importorskip("wx")
 if os.name != "nt" and __import__("sys").platform != "darwin" and not os.environ.get("DISPLAY"):
     pytest.skip("Native GUI tests require a display (use xvfb-run on Linux)", allow_module_level=True)
 
-import ui.app as native_ui  # noqa: E402
-from ui.app import (  # noqa: E402
+import gui.app as native_gui  # noqa: E402
+from gui.app import (  # noqa: E402
     DEFAULT_OPERATION_HEIGHT,
     AboutDialog,
     AppearanceDialog,
@@ -20,11 +20,11 @@ from ui.app import (  # noqa: E402
     KeyboardReferenceDialog,
     Workspace,
 )
-from ui_core import history  # noqa: E402
-from ui_core.appearance import load_appearance  # noqa: E402
-from ui_core.config import FIELDS, read_env, save_form  # noqa: E402
-from ui_core.layout import load_window_size, save_layout  # noqa: E402
-from ui_core.operations import OPERATION_BY_NAME  # noqa: E402
+from ui import history  # noqa: E402
+from ui.appearance import load_appearance  # noqa: E402
+from ui.config import FIELDS, read_env, save_form  # noqa: E402
+from ui.layout import load_window_size, save_layout  # noqa: E402
+from ui.operations import OPERATION_BY_NAME  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -195,7 +195,7 @@ def test_window_opacity_is_configurable_and_persistent(workspace, monkeypatch):
     assert workspace.opacity == 84
     assert applied == [214]
 
-    from ui_core.appearance import save_appearance
+    from ui.appearance import save_appearance
 
     save_appearance(workspace.settings_path, workspace.opacity, workspace.zoom)
     assert load_appearance(workspace.settings_path) == {"opacity": 84, "zoom": 100}
@@ -453,8 +453,8 @@ def test_appearance_commands_and_dialog_outcomes(workspace, monkeypatch):
     def cannot_save(*args):
         raise OSError("read only")
 
-    monkeypatch.setattr(native_ui, "save_appearance", cannot_save)
-    assert not native_ui.Workspace.save_appearance_settings(workspace)
+    monkeypatch.setattr(native_gui, "save_appearance", cannot_save)
+    assert not native_gui.Workspace.save_appearance_settings(workspace)
     assert "Unable to save appearance" in workspace.GetStatusBar().GetStatusText()
 
     class AppearanceResult:
@@ -478,7 +478,7 @@ def test_appearance_commands_and_dialog_outcomes(workspace, monkeypatch):
         def selected_zoom(self):
             return 120
 
-    monkeypatch.setattr(native_ui, "AppearanceDialog", AppearanceResult)
+    monkeypatch.setattr(native_gui, "AppearanceDialog", AppearanceResult)
     original = (workspace.opacity, workspace.zoom)
     workspace.show_appearance_settings()
     assert (workspace.opacity, workspace.zoom) == original
@@ -531,7 +531,7 @@ def test_dialog_and_configuration_error_paths(workspace, monkeypatch):
     assert not workspace.save_configuration()
     assert workspace.controls["MAX_WORKERS"].GetValue() == "8"
 
-    monkeypatch.setattr(native_ui, "save_form", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(native_gui, "save_form", lambda *args: (_ for _ in ()).throw(OSError("disk full")))
     assert not workspace.save_configuration()
     assert "disk full" in workspace.GetStatusBar().GetStatusText()
 
@@ -554,13 +554,13 @@ def test_prepare_poll_and_history_error_paths(workspace, monkeypatch):
         "operation_readiness",
         lambda: SimpleNamespace(ready=True, detail="Ready"),
     )
-    monkeypatch.setattr(native_ui, "make_options", lambda *args: (_ for _ in ()).throw(ValueError("bad workers")))
+    monkeypatch.setattr(native_gui, "make_options", lambda *args: (_ for _ in ()).throw(ValueError("bad workers")))
     workspace.prepare_run()
     assert "positive integers" in workspace.GetStatusBar().GetStatusText()
 
     workspace.controller.events.put(("warning", "warning detail"))
     monkeypatch.setattr(
-        native_ui, "directory_fingerprint", lambda *args: (_ for _ in ()).throw(OSError("history disk"))
+        native_gui, "directory_fingerprint", lambda *args: (_ for _ in ()).throw(OSError("history disk"))
     )
     workspace.poll()
     assert "history disk" in workspace.GetStatusBar().GetStatusText()
@@ -669,9 +669,9 @@ def test_window_events_and_main_launch(workspace, monkeypatch, tmp_path):
         def Show(self):
             launched.append("show")
 
-    monkeypatch.setattr(native_ui.wx, "App", App)
-    monkeypatch.setattr(native_ui, "Workspace", Frame)
-    native_ui.main(["--env", str(tmp_path / ".env")])
+    monkeypatch.setattr(native_gui.wx, "App", App)
+    monkeypatch.setattr(native_gui, "Workspace", Frame)
+    native_gui.main(["--env", str(tmp_path / ".env")])
     assert launched == [tmp_path / ".env", "show", "loop"]
 
 

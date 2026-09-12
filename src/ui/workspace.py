@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ui_core.config import FIELDS, read_valid_env, validate
-from ui_core.operations import OPERATION_SWITCHES, RunOptions
+from ui.config import FIELDS, read_valid_env, validate
+from ui.operations import OPERATION_SWITCHES, RunOptions
 
 
 def validated_form(path: Path) -> dict[str, str]:
