@@ -1,0 +1,4 @@
+interface:
+  display_name: "PR Green Loop"
+  short_description: "Commit, push, diagnose, and fix CI until green"
+  default_prompt: "Use $pr-green-loop to commit and push my current changes, then fix CI failures until every required PR check passes."

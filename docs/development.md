@@ -2,15 +2,40 @@
 
 ## Set up a source checkout
 
+On macOS or Linux:
+
 ```bash
 git clone https://github.com/JCallico/imap-migration-tools.git
 cd imap-migration-tools
 python3 -m venv .venv
-.venv/bin/python -m pip install -e .
-.venv/bin/python -m pip install -r requirements.txt
+source .venv/bin/activate
+python -m pip install -e .
+python -m pip install -r requirements.txt
 ```
 
-Python 3.9 and newer are supported. Read [AGENTS.md](../AGENTS.md) before contributing; it documents repository
+On Windows PowerShell:
+
+```powershell
+git clone https://github.com/JCallico/imap-migration-tools.git
+Set-Location imap-migration-tools
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e .
+python -m pip install -r requirements.txt
+```
+
+On Windows Command Prompt:
+
+```batch
+git clone https://github.com/JCallico/imap-migration-tools.git
+cd imap-migration-tools
+py -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install -e .
+python -m pip install -r requirements.txt
+```
+
+Python 3.10 and newer are supported. Read [AGENTS.md](../AGENTS.md) before contributing; it documents repository
 conventions, public compatibility requirements, and subsystem ownership.
 
 On Linux, developers who need to exercise encrypted persistent OAuth2 caching must install the native GObject
@@ -18,7 +43,7 @@ introspection, Cairo, and libsecret prerequisites described in [Installation](in
 optional keyring backend into the source environment:
 
 ```bash
-.venv/bin/python -m pip install -e ".[linux-keyring]"
+python -m pip install -e ".[linux-keyring]"
 ```
 
 The base development environment omits PyGObject so project installation and CI remain portable on minimal or
@@ -76,14 +101,31 @@ but continue showing the current instance's active run immediately. Rebuilding H
 
 The source tree is not installed during direct test execution, so set `PYTHONPATH`:
 
+On macOS or Linux:
+
 ```bash
-PYTHONPATH=src .venv/bin/python -m pytest test/ -v
+PYTHONPATH=src python -m pytest test/ -v
 ```
 
-Run one module while iterating:
+On Windows PowerShell:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m pytest test/ -v
+```
+
+On Windows Command Prompt:
+
+```batch
+set PYTHONPATH=src
+python -m pytest test/ -v
+```
+
+Run one module while iterating on macOS or Linux. In PowerShell or Command Prompt, the `PYTHONPATH` value set above
+remains active for subsequent test commands.
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m pytest test/test_imap_count.py -v
+PYTHONPATH=src python -m pytest test/test_imap_count.py -v
 ```
 
 Tests isolate themselves from the repository's real `.env`. CLI `.env` integration cases use temporary files and real
@@ -106,12 +148,12 @@ make ci
 Run the underlying pre-commit checks directly with:
 
 ```bash
-.venv/bin/python -m ruff check src/ tools/ test/
-.venv/bin/python -m ruff format --check src/ tools/ test/
+python -m ruff check src/ tools/ test/
+python -m ruff format --check src/ tools/ test/
 git diff --check
 ```
 
-CI also runs Bandit, syntax and import checks, a non-blocking mypy check, and the test suite on Python 3.9 through 3.13.
+CI also runs Bandit, syntax and import checks, a non-blocking mypy check, and the test suite on Python 3.10 through 3.13.
 The CI test jobs install the project before pytest so missing runtime dependencies cannot be hidden by a developer's
 environment.
 
@@ -129,3 +171,21 @@ environment.
 Before implementing a new feature, check whether a maintained library already supplies it. For authentication,
 encryption, caching, and other security- or data-sensitive behavior, prefer established libraries and document the
 dependency and portability tradeoffs before implementation.
+
+## Shared interface layer and native GUI
+
+`src/ui` owns reusable interface behavior. `src/tui` retains compatibility module aliases and Textual adapters.
+`src/gui` contains wxPython GUI adapters; it must not implement authentication or IMAP behavior.
+New tests live in `test/ui` and `test/gui`. See [desktop testing](gui.md#tests-and-bundles).
+
+## Pull request green loop
+
+The repository includes the [PR Green Loop](../.codex/skills/pr-green-loop/SKILL.md) Codex skill. Invoke it by name when
+the current changes are ready to commit and you want Codex to monitor and repair the pull-request pipeline:
+
+```text
+Use $pr-green-loop to commit and push the current changes, then fix failures until every required PR check passes.
+```
+
+The loop validates the worktree, commits and pushes the intended changes, follows checks for the exact pushed commit,
+diagnoses failures from their logs, applies focused fixes, and repeats until the latest commit is green.

@@ -3,10 +3,24 @@
 The beta `imap-tools` interface configures and runs Count, Compare, Backup, Restore, and Migrate in one terminal
 workspace. See [Installation](installation.md) for package and optional-dependency setup.
 
-To run the interface from a source checkout after installing the development dependencies, use:
+To run the interface from a source checkout after installing the development dependencies on macOS or Linux, use:
 
 ```bash
 PYTHONPATH=src .venv/bin/python -m tui.app
+```
+
+On Windows PowerShell after activating the virtual environment:
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m tui.app
+```
+
+On Windows Command Prompt:
+
+```batch
+set PYTHONPATH=src
+python -m tui.app
 ```
 
 ## Help and panel controls

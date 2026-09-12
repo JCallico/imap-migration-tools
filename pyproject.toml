@@ -14,7 +14,7 @@ authors = [
 ]
 description = "Tools for migrating IMAP emails"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -28,6 +28,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gui = [
+    "platformdirs>=3.6,<5",
+    "wxPython>=4.2.1,<5",
+]
+
 # Backward-compatible alias; dotenv support is included in the base package.
 dotenv = []
 linux-keyring = [
@@ -50,6 +55,9 @@ imap-count = "imap_count:main"
 imap-compare = "imap_compare:main"
 imap-tools = "tui:main"
 
+[project.gui-scripts]
+imap-tools-gui = "gui:main"
+
 [tool.setuptools.package-data]
 tui = ["*.tcss"]
 imap_services = ["py.typed"]
@@ -58,6 +66,7 @@ imap_services = ["py.typed"]
 "" = "src"
 
 [tool.ruff]
+# Keep the existing lint policy; runtime support begins at Python 3.10.
 target-version = "py39"
 line-length = 120
 

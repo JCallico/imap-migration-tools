@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python 3.9 or newer
+- Python 3.10 or newer
 - Network access to the relevant IMAP servers
 - An app password or OAuth2 application registration for each account
 
@@ -73,19 +73,33 @@ pipx install imap-migration-tools
 
 ## Install in a virtual environment
 
+On macOS or Linux:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install imap-migration-tools
 ```
 
-On Windows PowerShell, activate with:
+On Windows PowerShell:
 
 ```powershell
-.venv\Scripts\Activate.ps1
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install imap-migration-tools
+```
+
+On Windows Command Prompt:
+
+```batch
+py -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install imap-migration-tools
 ```
 
 ## Install from source
+
+On macOS or Linux:
 
 ```bash
 git clone https://github.com/JCallico/imap-migration-tools.git
@@ -96,10 +110,46 @@ python -m pip install -e .
 python -m pip install -r requirements.txt
 ```
 
+On Windows PowerShell:
+
+```powershell
+git clone https://github.com/JCallico/imap-migration-tools.git
+Set-Location imap-migration-tools
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e .
+python -m pip install -r requirements.txt
+```
+
+On Windows Command Prompt:
+
+```batch
+git clone https://github.com/JCallico/imap-migration-tools.git
+cd imap-migration-tools
+py -m venv .venv
+.venv\Scripts\activate.bat
+python -m pip install -e .
+python -m pip install -r requirements.txt
+```
+
 Run source entry points with `PYTHONPATH=src` when the project is not installed:
 
 ```bash
 PYTHONPATH=src .venv/bin/python src/imap_count.py --help
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:PYTHONPATH = "src"
+.\.venv\Scripts\python.exe src\imap_count.py --help
+```
+
+On Windows Command Prompt:
+
+```batch
+set PYTHONPATH=src
+.venv\Scripts\python.exe src\imap_count.py --help
 ```
 
 ## `.env` support
@@ -112,3 +162,7 @@ python -m pip install "imap-migration-tools[dotenv]"
 ```
 
 Continue with [Configuration](configuration.md).
+
+## Native desktop GUI
+
+See [desktop setup](gui.md) for the optional `[gui]` extra, Linux prerequisites, and bundled application builds.
