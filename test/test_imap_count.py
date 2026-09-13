@@ -317,9 +317,10 @@ class TestMainFunction:
 
         env = _mock_imap_env(port)
         with temp_env(env), temp_argv(["count_imap_emails.py"]):
-            count_imap_emails.main()
+            return_value = count_imap_emails.main()
 
         captured = capsys.readouterr()
+        assert return_value is None
         assert "INBOX" in captured.out
 
     def test_console_entry_point_exits_zero_after_success(self, single_mock_server, tmp_path):
@@ -349,7 +350,7 @@ class TestMainFunction:
         )
 
         assert completed.returncode == 0, completed.stderr
-        assert "CountResult" not in completed.stderr
+        assert "CountResult" not in completed.stdout + completed.stderr
         assert "INBOX" in completed.stdout
 
     def test_main_uses_dotenv_configuration(self, single_mock_server, capsys, dotenv_file):
@@ -536,10 +537,10 @@ class TestTargetSelection:
         (inbox / "message.eml").write_text("Subject: Local\n\nBody", encoding="utf-8")
         env = {"BACKUP_LOCAL_PATH": str(tmp_path), **_account_env("SRC", 10143)}
 
-        with temp_env(env), pytest.raises(SystemExit) as exc_info:
-            count_imap_emails.main(["--target", "local"])
+        with temp_env(env):
+            return_value = count_imap_emails.main(["--target", "local"])
 
-        assert exc_info.value.code == 0
+        assert return_value is None
         output = capsys.readouterr().out
         assert f"Local Path      : {tmp_path}" in output
         assert "INBOX" in output

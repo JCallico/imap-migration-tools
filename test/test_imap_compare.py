@@ -65,9 +65,10 @@ class TestFolderComparison:
 
         env = _mock_compare_env(p1, p2)
         with temp_env(env), temp_argv(["compare_imap_folders.py"]):
-            compare_imap_folders.main()
+            return_value = compare_imap_folders.main()
 
         captured = capsys.readouterr()
+        assert return_value is None
         assert "INBOX" in captured.out
         assert "Sent" in captured.out
 
@@ -105,7 +106,7 @@ class TestFolderComparison:
         )
 
         assert completed.returncode == 0, completed.stderr
-        assert "ComparisonResult" not in completed.stderr
+        assert "ComparisonResult" not in completed.stdout + completed.stderr
         assert "INBOX" in completed.stdout
 
     def test_mismatched_counts(self, mock_server_factory, capsys):
