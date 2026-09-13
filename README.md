@@ -165,7 +165,7 @@ The interface provides a guided autosaving `.env` form, operation readiness guid
 local run history.
 
 <p align="left">
-  <img src="docs/images/tui-overview.jpg" width="800" alt="IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels">
+  <img src="https://raw.githubusercontent.com/JCallico/imap-migration-tools/main/docs/images/tui-overview.jpg" width="800" alt="IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels">
 </p>
 
 Review the generated command in the Output panel and verify backups and counts before enabling destructive options.
@@ -217,7 +217,7 @@ support.
 
 | Linux | macOS | Windows |
 | --- | --- | --- |
-| ![IMAP Migration Tools native desktop interface on Linux](docs/images/gui-overview-linux.png) | ![IMAP Migration Tools native desktop interface on macOS](docs/images/gui-overview-macos.png) | ![IMAP Migration Tools native desktop interface on Windows](docs/images/gui-overview-windows.png) |
+| ![IMAP Migration Tools native desktop interface on Linux](https://raw.githubusercontent.com/JCallico/imap-migration-tools/main/docs/images/gui-overview-linux.png) | ![IMAP Migration Tools native desktop interface on macOS](https://raw.githubusercontent.com/JCallico/imap-migration-tools/main/docs/images/gui-overview-macos.png) | ![IMAP Migration Tools native desktop interface on Windows](https://raw.githubusercontent.com/JCallico/imap-migration-tools/main/docs/images/gui-overview-windows.png) |
 
 The desktop application discovers `.env` from the current directory and its parents. Desktop launchers may start in a
 different directory, so select a configuration explicitly when needed:

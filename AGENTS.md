@@ -9,6 +9,16 @@
 
 ## Development workflow
 
+### Branch isolation
+
+- Treat every new work session that will modify repository files as separate work. Before making edits, inspect the
+  worktree, fetch the latest default branch, and create a dedicated, descriptively named branch from `origin/main`.
+- Never make a new session's changes on an existing branch from an unrelated task, and never base the new branch on
+  that task branch. If edits were started on the wrong branch, preserve them and move them onto a branch based on the
+  latest `origin/main` before continuing.
+- Do not stage, commit, or push merely as part of creating the branch; those actions still require the explicit
+  authorization described under Verification before handoff.
+
 Before implementing a new feature, investigate whether a maintained library
 already provides the complete feature or important building blocks. Present
 the user with the viable options before implementation: add a dependency and
