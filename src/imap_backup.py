@@ -94,14 +94,13 @@ def main():
         args.dest_delete,
     )
     try:
-        result = BackupService(account, local_path, options, lambda event: print(event.message)).run()
+        BackupService(account, local_path, options, lambda event: print(event.message)).run()
     except ImapServiceError as exc:
         print(f"Error: {exc}")
         raise SystemExit(1) from exc
     if args.manifest_only:
         print("\nManifest-only mode complete.")
         raise SystemExit(0)
-    return result
 
 
 if __name__ == "__main__":
