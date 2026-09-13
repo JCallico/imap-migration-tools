@@ -93,7 +93,7 @@ def main():
         args.full_restore,
     )
     try:
-        return RestoreService(local_path, account, options, lambda event: print(event.message)).run()
+        RestoreService(local_path, account, options, lambda event: print(event.message)).run()
     except ImapServiceError as exc:
         print(f"Error: {exc}")
         raise SystemExit(1) from exc

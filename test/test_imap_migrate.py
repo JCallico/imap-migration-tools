@@ -12,8 +12,10 @@ Tests cover:
 
 import imaplib
 import os
+import subprocess
 import sys
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -70,6 +72,48 @@ class TestBasicMigration:
 
         assert len(dest_server.folders["INBOX"]) == 1
         assert b"Subject: Hello" in dest_server.folders["INBOX"][0]["content"]
+
+    def test_console_entry_point_exits_zero_after_success(self, mock_server_factory, tmp_path):
+        """The generated console launcher must receive None from a successful main()."""
+        src_data = {"INBOX": [b"Subject: Console Success\r\nMessage-ID: <console-migrate@test>\r\n\r\nBody"]}
+        _, dest_server, src_port, dest_port = mock_server_factory(src_data, {"INBOX": []})
+        env = os.environ.copy()
+        source_path = Path(__file__).resolve().parents[1] / "src"
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(source_path), env.get("PYTHONPATH"))))
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; from imap_migrate import main; sys.exit(main())",
+                "--src-host",
+                f"imap://localhost:{src_port}",
+                "--src-user",
+                "src_user",
+                "--src-pass",
+                "pass",
+                "--dest-host",
+                f"imap://localhost:{dest_port}",
+                "--dest-user",
+                "dest_user",
+                "--dest-pass",
+                "pass",
+                "--workers",
+                "1",
+                "--batch",
+                "1",
+                "INBOX",
+            ],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert "TransferResult" not in completed.stderr
+        assert len(dest_server.folders["INBOX"]) == 1
 
     def test_multiple_emails_migration(self, mock_server_factory):
         """Test migrating multiple emails."""

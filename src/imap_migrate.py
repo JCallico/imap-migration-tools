@@ -204,7 +204,7 @@ def main():
         os.getenv("DEST_FOLDER_SEP"),
     )
     try:
-        return MigrationService(source, destination, options, lambda event: print(event.message)).run()
+        MigrationService(source, destination, options, lambda event: print(event.message)).run()
     except ImapServiceError as exc:
         print(f"Error: {exc}")
         raise SystemExit(1) from exc

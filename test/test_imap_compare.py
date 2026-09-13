@@ -12,7 +12,9 @@ Tests cover:
 
 import imaplib
 import os
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -63,11 +65,49 @@ class TestFolderComparison:
 
         env = _mock_compare_env(p1, p2)
         with temp_env(env), temp_argv(["compare_imap_folders.py"]):
-            compare_imap_folders.main()
+            return_value = compare_imap_folders.main()
 
         captured = capsys.readouterr()
+        assert return_value is None
         assert "INBOX" in captured.out
         assert "Sent" in captured.out
+
+    def test_console_entry_point_exits_zero_after_success(self, mock_server_factory, tmp_path):
+        """A local result variable must not become the generated launcher's exit value."""
+        data = {"INBOX": [b"Subject: Console Success\r\n\r\nBody"]}
+        _, _, src_port, dest_port = mock_server_factory(data, data.copy())
+        env = os.environ.copy()
+        source_path = Path(__file__).resolve().parents[1] / "src"
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(source_path), env.get("PYTHONPATH"))))
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; from imap_compare import main; sys.exit(main())",
+                "--src-host",
+                f"imap://localhost:{src_port}",
+                "--src-user",
+                "src_user",
+                "--src-pass",
+                "pass",
+                "--dest-host",
+                f"imap://localhost:{dest_port}",
+                "--dest-user",
+                "dest_user",
+                "--dest-pass",
+                "pass",
+            ],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert "ComparisonResult" not in completed.stdout + completed.stderr
+        assert "INBOX" in completed.stdout
 
     def test_mismatched_counts(self, mock_server_factory, capsys):
         """Test comparison when counts differ."""

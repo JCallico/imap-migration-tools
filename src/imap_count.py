@@ -60,16 +60,16 @@ from imap_services.exceptions import ImapServiceError
 from utils.dotenv import load_dotenv
 
 
-def _print_result(result, empty_message):
-    if not result.folder_counts:
+def _print_count_report(count_report, empty_message):
+    if not count_report.folder_counts:
         print(empty_message)
         return
     print(f"{'Folder Name':<40} {'Count':>10}")
     print("-" * 52)
-    for folder, count in result.folder_counts.items():
+    for folder, count in count_report.folder_counts.items():
         print(f"{folder:<40} {count if count is not None else 'N/A':>10}")
     print("-" * 52)
-    print(f"{'TOTAL':<40} {result.total:>10}")
+    print(f"{'TOTAL':<40} {count_report.total:>10}")
 
 
 def main(argv: Optional[list[str]] = None) -> None:
@@ -81,10 +81,10 @@ def main(argv: Optional[list[str]] = None) -> None:
         print(f"Local Path      : {args.path}")
         print("-----------------------------\n")
         events = []
-        result = CountService(LocalTarget(args.path), events.append).run()
+        count_report = CountService(LocalTarget(args.path), events.append).run()
         print(events[0].message)
-        _print_result(result, "No folders found.")
-        raise SystemExit(0)
+        _print_count_report(count_report, "No folders found.")
+        return None
 
     oauth2 = None
     provider = None
@@ -101,14 +101,15 @@ def main(argv: Optional[list[str]] = None) -> None:
     print("-----------------------------\n")
     events = []
     try:
-        result = CountService(ImapTarget(account), events.append).run()
+        count_report = CountService(ImapTarget(account), events.append).run()
     except ImapServiceError as exc:
         print(f"An error occurred: {exc}")
         return
     for event in events:
         if event.phase in {"connect", "list"}:
             print(event.message)
-    _print_result(result, "Failed to list mailboxes.")
+    _print_count_report(count_report, "Failed to list mailboxes.")
+    return None
 
 
 if __name__ == "__main__":

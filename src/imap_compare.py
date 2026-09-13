@@ -103,7 +103,7 @@ def _oauth(args, prefix, label):
     )
 
 
-def main():
+def main() -> None:
     """Parse CLI configuration and execute the comparison service."""
     dotenv_result = load_dotenv()
     args, src_local, dest_local = parse_arguments(dotenv_keys=dotenv_result.dotenv_keys)
@@ -127,7 +127,7 @@ def main():
 
     events = []
     try:
-        result = ComparisonService(
+        comparison = ComparisonService(
             source,
             destination,
             events.append,
@@ -145,16 +145,17 @@ def main():
     print("-" * len(header))
     print(header)
     print("-" * len(header))
-    for row in result.rows:
+    for row in comparison.rows:
         source_count = str(row.source) if row.source is not None else "Err"
         destination_count = str(row.destination) if row.destination is not None else "N/A"
         difference = str(row.difference) if row.difference is not None else ""
         print(f"{row.folder:<40} | {source_count:>10} | {destination_count:>10} | {difference:>10}")
     print("-" * len(header))
     print(
-        f"{'TOTAL':<40} | {result.source_total:>10} | {result.destination_total:>10} | "
-        f"{result.source_total - result.destination_total:>10}"
+        f"{'TOTAL':<40} | {comparison.source_total:>10} | {comparison.destination_total:>10} | "
+        f"{comparison.source_total - comparison.destination_total:>10}"
     )
+    return None
 
 
 if __name__ == "__main__":

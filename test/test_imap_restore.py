@@ -12,7 +12,9 @@ Tests cover:
 import imaplib
 import json
 import os
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -274,6 +276,48 @@ Body content.
         env = _mock_restore_env(port)
         with temp_env(env), temp_argv(["restore_imap_emails.py", "--src-path", str(tmp_path), "INBOX"]):
             restore_imap_emails.main()
+
+    def test_console_entry_point_exits_zero_after_success(self, single_mock_server, tmp_path):
+        """The generated console launcher must receive None from a successful main()."""
+        inbox = tmp_path / "INBOX"
+        inbox.mkdir()
+        (inbox / "1_Console.eml").write_bytes(
+            b"Subject: Console Success\r\nMessage-ID: <console-restore@test>\r\n\r\nBody"
+        )
+        server, port = single_mock_server({"INBOX": []})
+        env = os.environ.copy()
+        source_path = Path(__file__).resolve().parents[1] / "src"
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(source_path), env.get("PYTHONPATH"))))
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; from imap_restore import main; sys.exit(main())",
+                "--dest-host",
+                f"imap://localhost:{port}",
+                "--dest-user",
+                "user",
+                "--dest-pass",
+                "pass",
+                "--src-path",
+                str(tmp_path),
+                "--workers",
+                "1",
+                "--batch",
+                "1",
+                "INBOX",
+            ],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert "TransferResult" not in completed.stderr
+        assert len(server.folders["INBOX"]) == 1
 
     def test_restore_uses_dotenv_configuration(self, single_mock_server, tmp_path, dotenv_file):
         """End-to-end: .env settings restore a local message to IMAP."""

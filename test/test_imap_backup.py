@@ -12,6 +12,7 @@ Tests cover:
 import imaplib
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -74,6 +75,43 @@ class TestBackupBasic:
         # Check content
         content = eml_files[0].read_bytes()
         assert b"Test Email" in content or b"Body content" in content
+
+    def test_console_entry_point_exits_zero_after_success(self, single_mock_server, tmp_path):
+        """The generated console launcher must receive None from a successful main()."""
+        src_data = {"INBOX": [b"Subject: Console Success\r\nMessage-ID: <console@test>\r\n\r\nBody"]}
+        _, port = single_mock_server(src_data)
+        env = os.environ.copy()
+        source_path = Path(__file__).resolve().parents[1] / "src"
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(source_path), env.get("PYTHONPATH"))))
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; from imap_backup import main; sys.exit(main())",
+                "--src-host",
+                f"imap://localhost:{port}",
+                "--src-user",
+                "user",
+                "--src-pass",
+                "pass",
+                "--dest-path",
+                str(tmp_path),
+                "--workers",
+                "1",
+                "--batch",
+                "1",
+            ],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert "TransferResult" not in completed.stderr
+        assert len(list((tmp_path / "INBOX").glob("*.eml"))) == 1
 
     def test_multiple_emails_backup(self, single_mock_server, tmp_path):
         """Test backing up multiple emails."""
