@@ -10,7 +10,9 @@ Tests cover:
 """
 
 import os
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -319,6 +321,36 @@ class TestMainFunction:
 
         captured = capsys.readouterr()
         assert "INBOX" in captured.out
+
+    def test_console_entry_point_exits_zero_after_success(self, single_mock_server, tmp_path):
+        """A local result variable must not become the generated launcher's exit value."""
+        _, port = single_mock_server({"INBOX": [b"Subject: Console Success\r\n\r\nBody"]})
+        env = os.environ.copy()
+        source_path = Path(__file__).resolve().parents[1] / "src"
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(source_path), env.get("PYTHONPATH"))))
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; from imap_count import main; sys.exit(main())",
+                "--host",
+                f"imap://localhost:{port}",
+                "--user",
+                "user",
+                "--pass",
+                "pass",
+            ],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert "CountResult" not in completed.stderr
+        assert "INBOX" in completed.stdout
 
     def test_main_uses_dotenv_configuration(self, single_mock_server, capsys, dotenv_file):
         """End-to-end: .env credentials drive IMAP counting."""

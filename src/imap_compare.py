@@ -103,7 +103,7 @@ def _oauth(args, prefix, label):
     )
 
 
-def main():
+def main() -> None:
     """Parse CLI configuration and execute the comparison service."""
     dotenv_result = load_dotenv()
     args, src_local, dest_local = parse_arguments(dotenv_keys=dotenv_result.dotenv_keys)
