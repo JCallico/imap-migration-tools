@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Green Loop"
+  short_description: "Review, confirm, merge, and verify a release"
+  default_prompt: "Use $release-green-loop to finish my pull request, pause for my final review, then merge it and create and verify the release after I confirm."
