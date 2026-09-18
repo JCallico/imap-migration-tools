@@ -18,6 +18,11 @@ def build_connection_config(account: AccountConfig, label=None, log_fn=None):
             "user": account.username,
             "password": None,
             "oauth2_token": oauth2.access_token,
+            # Only callers which provide an explicit refresh callback own the
+            # token lifecycle. Ordinary CLI/TUI/GUI access tokens continue to
+            # use the shared provider refresh implementation.
+            "external_oauth2_token": oauth2.token_provider is not None,
+            "oauth2_token_provider": oauth2.token_provider,
             "oauth2": {
                 "provider": oauth2.provider,
                 "client_id": oauth2.client_id,

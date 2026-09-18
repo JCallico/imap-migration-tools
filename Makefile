@@ -2,7 +2,7 @@
 
 # Install development dependencies
 install-dev:
-	pip install pytest pytest-cov ruff bandit mypy
+	pip install -r requirements.txt
 
 # Run linter
 lint:

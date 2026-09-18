@@ -182,6 +182,17 @@ Basic password authentication needs no additional authentication package. OAuth2
 by the project. Encrypted persistent caching on Linux requires the `linux-keyring` extra and native system libraries.
 See [Installation](docs/installation.md) for platform and source setup.
 
+### Native Android application
+
+The Android project provides a Kotlin and Jetpack Compose application for Count, Compare, Backup, Restore, and Migrate.
+It embeds the existing Python service engine with Chaquopy, runs transfers in a foreground service, streams structured
+progress, supports cooperative cancellation, and keeps credentials out of persisted configuration and history.
+
+Android builds currently target developers and CI rather than Play distribution. See the
+[Android application guide](docs/android.md) for its architecture, build requirements, storage model, and platform
+execution constraints. The [Google Play publication checklist](docs/android-publishing.md) tracks the separate signing,
+identity-provider approval, policy, store-listing, testing, and rollout work required for public distribution.
+
 ### Native desktop GUI
 
 The wxPython interface provides one native desktop workspace for configuring and running Count, Compare, Backup,
@@ -272,9 +283,11 @@ rules.
 - [Migration, backup, restore, count, and comparison examples](docs/workflows.md)
 - [Full-screen terminal interface](docs/tui.md)
 - [Native desktop GUI](docs/gui.md)
+- [Native Android app and emulator setup](docs/android.md)
 - [OAuth2 setup for Microsoft and Google](docs/oauth2.md)
 - [Troubleshooting and operational safety](docs/troubleshooting.md)
 - [Development, testing, and CI](docs/development.md)
+- [Product backlog](docs/backlog.md)
 
 For large migrations, start with a count, run a non-destructive copy, compare the result, and only then consider
 deletion or synchronization options.

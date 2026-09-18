@@ -102,12 +102,15 @@ After activating the virtual environment, run on macOS or Linux:
 
 ```bash
 PYTHONPATH=src python -m pytest test/gui test/ui -v
-# For headless Linux:
-PYTHONPATH=src xvfb-run -a python -m pytest test/gui test/ui -v
 
 python -m pip install pyinstaller
 python tools/build_desktop.py
 ```
+
+On Linux, install Xvfb and the development requirements first. The `pytest-xvfb` plugin automatically gives the
+native GUI tests a private virtual display, so test windows cannot appear on or take focus from the real desktop.
+If either Xvfb or the plugin is unavailable, the native widget module is skipped instead of opening windows on the
+real display. The test module also forces GTK to its X11 backend so a running Wayland session cannot bypass Xvfb.
 
 On Windows PowerShell:
 

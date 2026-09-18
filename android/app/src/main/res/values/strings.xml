@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">IMAP Migration Tools</string>
+    <string name="operation_channel">IMAP operations</string>
+</resources>

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 from imap_services.exceptions import ConfigurationError
 
@@ -14,6 +14,7 @@ class OAuth2Config:
     account_type: str = "auto"
     access_token: Optional[str] = field(default=None, repr=False)
     provider: Optional[str] = None
+    token_provider: Optional[Callable[[], Optional[str]]] = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not self.client_id:

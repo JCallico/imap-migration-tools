@@ -3,6 +3,7 @@
 import logging
 
 from imap_services.backup import BackupService
+from imap_services.backup_estimate import BackupEstimateService
 from imap_services.compare import ComparisonService
 from imap_services.config import (
     AccountConfig,
@@ -22,11 +23,19 @@ from imap_services.exceptions import (
     ConnectionError,
     FilesystemError,
     ImapServiceError,
+    OperationCancelled,
     OperationError,
 )
 from imap_services.migrate import MigrationService
 from imap_services.restore import RestoreService
-from imap_services.results import ComparisonResult, ComparisonRow, CountResult, FolderResult, TransferResult
+from imap_services.results import (
+    BackupEstimateResult,
+    ComparisonResult,
+    ComparisonRow,
+    CountResult,
+    FolderResult,
+    TransferResult,
+)
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
@@ -34,6 +43,8 @@ __all__ = [
     "AccountConfig",
     "AuthenticationError",
     "BackupOptions",
+    "BackupEstimateResult",
+    "BackupEstimateService",
     "BackupService",
     "CallbackError",
     "ComparisonResult",
@@ -53,6 +64,7 @@ __all__ = [
     "MigrationService",
     "OAuth2Config",
     "OperationError",
+    "OperationCancelled",
     "OperationEvent",
     "RestoreOptions",
     "RestoreService",

@@ -27,3 +27,7 @@ class CallbackError(ImapServiceError):
 
 class OperationError(ImapServiceError):
     """Raised when an operation cannot be completed."""
+
+
+class OperationCancelled(ImapServiceError):
+    """Raised when a caller cooperatively cancels an operation."""
