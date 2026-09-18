@@ -45,8 +45,6 @@ def _account(value: Any, token_provider=None) -> AccountConfig:
         token_slot = value.get("tokenSlot")
 
         def refresh_external_token():
-            if token_provider is None or not token_slot:
-                return None
             return str(token_provider.getAccessToken(str(token_slot)))
 
         oauth2 = OAuth2Config(
