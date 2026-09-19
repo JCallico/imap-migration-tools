@@ -175,8 +175,8 @@ Inspect the detached emulator log with:
 journalctl --user -u android-emulator-medium-phone -f
 ```
 
-On Android 13 and newer, choose **Allow** when the application requests notification permission. Long operations use a
-foreground-service notification to show progress and provide a Cancel action.
+On Android 13 and newer, choose **Allow** when the application requests notification permission. Operations use a
+persistent progress notification with a Cancel action.
 
 Confirm that the Configure screen offers Count, Compare, Backup, Restore, and Migrate, then use Output to follow a run
 and History to inspect completed runs. Selecting a history item replaces the Output view with that saved run's events
@@ -566,13 +566,28 @@ Build and install the app using the emulator steps above. Then:
 
 ## Background execution
 
-Runs execute in a user-started `dataSync` foreground service with a persistent progress notification and Cancel action.
-Android may still impose platform execution limits. In particular, Android 15 limits `dataSync` foreground-service time
-while an application remains in the background. Keep the application visible for unusually long migrations and use the
-migration progress cache to resume interrupted work.
+Every run is an immediate network operation explicitly started by the user. On Android 14 (API 34) and newer, the app
+schedules it as a `JobScheduler` user-initiated data-transfer (UIDT) job. UIDT jobs are Android's supported path for
+user-started network transfers which need to continue while the app is in the background. They appear in Android's task
+manager, use a persistent progress notification with a Cancel action, and are not subject to Android 15's shared
+six-hour `dataSync` foreground-service background limit.
+
+Android 13 and older do not provide UIDT jobs, so the same runner uses a user-started `dataSync` foreground service as a
+compatibility path. The service implements Android's timeout callback defensively, although the Android 15+ path does
+not use that service. Both paths share the same privacy redaction, storage checks, history, notification, and
+cancellation code.
+
+The scheduler applies an internet-network constraint. Backup, Restore, and Migrate require unmetered Wi-Fi unless the
+user accepts the mobile-data confirmation; that choice is carried into the job constraint. Count and Compare may use
+the currently available network without the large-transfer prompt. A completed Backup estimate is supplied to Android
+as estimated download bytes so the scheduler can account for the expected payload.
 
 Cancellation is cooperative. The mobile event adapter checks cancellation between structured progress updates and asks
 the existing worker pools to unwind. Network calls already in progress may take until their configured timeout to return.
+Android may also stop a UIDT job because its network constraint is lost, for device health, or because the process is
+killed. Credentials remain process-only and are never serialized into `JobInfo`, so the app deliberately does not
+silently retry a stopped job after process death. Open the app and start the operation again; migration's existing
+progress cache safely skips completed work.
 
 Before Backup, Restore, or Migrate starts outside an unmetered Wi-Fi connection, the app warns that the operation may
 transfer substantial data and requires explicit confirmation. Count and Compare do not trigger this large-transfer
@@ -589,6 +604,36 @@ separate read-only IMAP connection and its result appears in Output. If the esti
 fit, the run stops. If the server cannot provide a complete estimate, the app explains that limitation and offers an
 explicit **Back up anyway** choice. During every backup, Android rechecks allocatable space every five seconds and stops
 before the 256 MB reserve is consumed.
+
+### Test Android 14+ transfer scheduling
+
+Use an Android 14 or newer emulator/device and keep the serial explicit when more than one device is connected:
+
+```bash
+export ANDROID_SERIAL=emulator-5554
+gradle -p android installDebug
+adb -s "$ANDROID_SERIAL" shell am start -W -n com.callicode.imaptools/.MainActivity
+```
+
+Start any operation from the visible app, then verify job `41001` is present and the progress notification offers
+**Cancel**:
+
+```bash
+adb -s "$ANDROID_SERIAL" shell dumpsys jobscheduler com.callicode.imaptools
+```
+
+For a Backup, Restore, or Migrate test on unmetered Wi-Fi, disable Wi-Fi and verify the queued job does not begin on a
+metered connection without confirmation. Repeat, accept the in-app mobile-data confirmation, and verify it can begin.
+Use a non-production mailbox for the following stop test; Android asks the runner to cancel the active operation:
+
+```bash
+adb -s "$ANDROID_SERIAL" shell cmd jobscheduler timeout com.callicode.imaptools 41001
+```
+
+Confirm that Output reports the stop, the notification disappears, and the app remains usable. Then start the operation
+again and confirm it resumes safely where the operation supports a progress cache. Also test the notification's
+**Cancel** action. Android's task-manager **Stop** control terminates the entire app process by platform design, so use
+it only to verify that reopening the app is safe and that no credential or operation request was persisted.
 
 ## Current distribution boundary
 

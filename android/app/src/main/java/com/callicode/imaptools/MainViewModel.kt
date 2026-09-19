@@ -22,7 +22,7 @@ import com.callicode.imaptools.model.TargetType
 import com.callicode.imaptools.operation.HistoryEntry
 import com.callicode.imaptools.operation.HistoryStore
 import com.callicode.imaptools.operation.OperationBus
-import com.callicode.imaptools.operation.OperationService
+import com.callicode.imaptools.operation.OperationDispatcher
 import com.callicode.imaptools.project.ProjectStore
 import com.callicode.imaptools.storage.BackupWorkspaceStore
 import com.callicode.imaptools.storage.RetainedBackupGroup
@@ -158,7 +158,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun activeProjectBackupNames(): List<String> =
         backupWorkspaceStore.projectWorkspaceNames(mutableActiveProject.value.id)
 
-    fun run(estimateInProgress: Boolean = false): String? {
+    fun run(estimateInProgress: Boolean = false, allowMeteredNetwork: Boolean = false): String? {
         val configuration = mutableConfiguration.value
         val error = readinessError(configuration)
         if (error != null) return error
@@ -167,13 +167,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         ) {
             return "At least ${formatBytes(StorageCapacity.RESERVED_BYTES)} of available storage is required to start a backup"
         }
-        val started = OperationService.start(
+        val estimatedBytes = (mutableBackupEstimate.value as? BackupEstimateState.Ready)?.estimatedBytes
+        val started = OperationDispatcher.start(
             getApplication(),
             configuration.operation,
             RequestEncoder.encode(configuration, activeWorkspaceRoot()),
             estimateInProgress,
+            allowMeteredNetwork,
+            estimatedBytes,
         )
-        return if (started) null else "Another operation is already starting"
+        return if (started) null else "The operation could not start. Please keep the app open and try again."
     }
 
     fun startBackupEstimate(): String? {
@@ -290,7 +293,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun cancel() = OperationService.cancel(getApplication())
+    fun cancel() = OperationDispatcher.cancel(getApplication())
 
     fun history(): List<HistoryEntry> = HistoryStore(getApplication()).entries()
 
@@ -451,8 +454,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preferences.edit().putBoolean(LEGACY_WORKSPACES_MIGRATED, true).apply()
     }
 
-    fun operationRunning(): Boolean =
-        OperationBus.state.value.status == com.callicode.imaptools.model.RunStatus.RUNNING
+    fun operationRunning(): Boolean = OperationDispatcher.hasWork()
 
     private fun publishEstimateToRunningBackup(state: BackupEstimateState) {
         val message = when (state) {
@@ -481,7 +483,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         if (backupRunning && state is BackupEstimateState.Ready && !state.hasEnoughSpace) {
-            OperationService.stopForInsufficientEstimate(
+            OperationDispatcher.stopForInsufficientEstimate(
                 getApplication(),
                 "Backup stopped because the estimate requires ${formatBytes(state.requiredBytes)}, but only " +
                     "${formatBytes(state.availableBytes)} is available.",

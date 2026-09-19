@@ -24,7 +24,7 @@ and programs → App content → Needs attention**.
 | Privacy policy | About screen links to the repository policy | Publish the final reviewed policy on the verified publisher domain |
 | Google OAuth | Test configuration using restricted Gmail scope | Complete production OAuth verification and register the Play signing SHA-1 |
 | Microsoft OAuth | Development Entra registration | Register the Play signing identity and remove the unverified-publisher warning |
-| Background transfer | `dataSync` foreground service | Complete Play's foreground-service declaration and supply a demonstration video |
+| Background transfer | UIDT job on API 34+; `dataSync` compatibility service on API 24–33 | Test system/user stops and complete the compatibility foreground-service declaration |
 | Distribution artifact | Debug APK/CI build | Produce and validate a signed Android App Bundle (`.aab`) |
 
 Items in the last column are work still required unless Play Console or the repository shows otherwise. Do not infer
@@ -84,12 +84,18 @@ this rule applies to the account. See Google's [developer-account information re
   and the [privacy policy](privacy.md).
 - [x] Define uninstall, project deletion, disconnect, archive export/import, and backup deletion behavior in the privacy
   policy and user documentation. State any data the user must delete outside the app or at the mail provider.
-- [ ] Review the five manifest permissions. Remove any unused permission. Keep notification permission contextual and
-  explain that foreground notifications are required for user-started transfers.
-- [ ] Reassess long transfers on Android 14 and newer. Android recommends user-initiated data-transfer jobs for long,
+- [ ] Review the six manifest permissions. Remove any unused permission. Keep notification permission contextual and
+  explain that progress notifications are required for user-started transfers.
+- [x] Reassess long transfers on Android 14 and newer. Android recommends user-initiated data-transfer jobs for long,
   user-triggered transfers; Android 15 limits `dataSync` foreground-service background time. Either migrate to the
   appropriate API or document, test, and declare the justified foreground-service behavior. See Android's
   [data-transfer decision guide][data-transfer].
+
+  All five operations now use an immediate `JobScheduler` UIDT job on API 34+, including required-network constraints,
+  an ongoing progress/Cancel notification, cooperative system-stop handling, and the available Backup payload estimate.
+  API 24–33 retains the shared `dataSync` foreground-service compatibility path. Requests and credentials stay in
+  process memory, so a process-killed job is intentionally restarted by the user rather than persisted or retried
+  silently. The generic API 34+ device test procedure is in [Android development and operation](android.md).
 - [ ] Test cancellation, process death, device restart, low storage, revoked authorization, token expiry, network loss,
   metered-network confirmation, background limits, and safe resume behavior with large mailboxes.
 - [ ] Test the minified release build on API 24, representative intermediate Android releases, API 36, a physical
@@ -225,10 +231,10 @@ status, and required declarations. Then complete every App content card:
 - [ ] **Account deletion:** determine accurately whether the app creates developer-controlled accounts. Provider account
   connection alone is not necessarily app-account creation, but all apps must answer the deletion questions. If future
   releases create app accounts, add both in-app and web deletion paths before release.
-- [ ] **Foreground service:** declare `dataSync`; describe user-triggered backup/restore/migration, the harm from delay or
-  interruption, and the visible progress/Cancel notification. Supply a video showing how the user starts the operation
-  and the foreground notification. Google's listed `dataSync` use cases include user-initiated backup/restore and
-  upload/download. See the [foreground-service declaration requirements][fgs-declaration].
+- [ ] **Foreground service:** declare the API 24–33 `dataSync` compatibility path; describe user-triggered mailbox
+  operations, the harm from interruption, and the visible progress/Cancel notification. Supply a video showing the
+  fallback on a supported older device. API 34+ uses a UIDT job instead. Google's listed `dataSync` use cases include
+  user-initiated backup/restore and upload/download. See the [foreground-service declaration requirements][fgs-declaration].
 - [ ] Complete any additional declarations Play Console presents, such as government, financial, health, news, ads ID,
   or permissions. Do not claim a category merely to dismiss the card.
 - [ ] Review the latest [Developer Program Policies][play-policy], policy status, and SDK warnings immediately before

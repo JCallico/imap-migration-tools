@@ -180,6 +180,7 @@ private fun ImapToolsApp(
     var screen by remember { mutableStateOf(Screen.CONFIGURE) }
     var confirmation by remember { mutableStateOf(false) }
     var networkConfirmation by remember { mutableStateOf(false) }
+    var allowMeteredNetwork by remember { mutableStateOf(false) }
     var backupPreflight by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var selectedHistory by remember { mutableStateOf<HistoryEntry?>(null) }
@@ -193,7 +194,7 @@ private fun ImapToolsApp(
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val launchOperation: (Boolean) -> Unit = { estimateInProgress ->
-        message = viewModel.run(estimateInProgress)
+        message = viewModel.run(estimateInProgress, allowMeteredNetwork)
         if (message == null) {
             selectedHistory = null
             screen = Screen.OUTPUT
@@ -201,7 +202,8 @@ private fun ImapToolsApp(
             viewModel.cancelBackupEstimate()
         }
     }
-    val prepareOperation = {
+    val prepareOperation: (Boolean) -> Unit = { allowMetered ->
+        allowMeteredNetwork = allowMetered
         onPrepare(configuration) { authenticationError ->
             if (authenticationError != null) {
                 message = authenticationError
@@ -214,10 +216,11 @@ private fun ImapToolsApp(
         }
     }
     val continueToNetworkCheck: () -> Unit = {
-        if (shouldConfirmLargeTransfer(configuration.operation, context.hasUnmeteredWifi())) {
+        val hasUnmeteredWifi = context.hasUnmeteredWifi()
+        if (shouldConfirmLargeTransfer(configuration.operation, hasUnmeteredWifi)) {
             networkConfirmation = true
         } else {
-            prepareOperation()
+            prepareOperation(!hasUnmeteredWifi)
         }
     }
 
@@ -360,7 +363,7 @@ private fun ImapToolsApp(
             confirmButton = {
                 Button(onClick = {
                     networkConfirmation = false
-                    prepareOperation()
+                    prepareOperation(true)
                 }) { Text("Continue transfer") }
             },
             title = { Text("Use this network?") },

@@ -185,8 +185,10 @@ See [Installation](docs/installation.md) for platform and source setup.
 ### Native Android application
 
 The Android project provides a Kotlin and Jetpack Compose application for Count, Compare, Backup, Restore, and Migrate.
-It embeds the existing Python service engine with Chaquopy, runs transfers in a foreground service, streams structured
-progress, supports cooperative cancellation, and keeps credentials out of persisted configuration and history.
+It embeds the existing Python service engine with Chaquopy, runs user-started network operations as Android
+user-initiated data-transfer jobs on Android 14 and newer (with a foreground-service compatibility path on older
+versions), streams structured progress, supports cooperative cancellation, and keeps credentials out of persisted
+configuration and history.
 
 Android builds currently target developers and CI rather than Play distribution. See the
 [Android application guide](docs/android.md) for its architecture, build requirements, storage model, and platform
