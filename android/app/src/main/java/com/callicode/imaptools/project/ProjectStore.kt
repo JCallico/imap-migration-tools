@@ -183,10 +183,22 @@ internal object DotenvCodec {
                 values.forEach { (key, value) -> appendLine("$key=${quote(value)}") }
             },
         )
+        temporary.ownerOnly()
         if (!temporary.renameTo(file)) {
             file.writeText(temporary.readText())
+            file.ownerOnly()
             temporary.delete()
+        } else {
+            file.ownerOnly()
         }
+    }
+
+    private fun File.ownerOnly() {
+        setReadable(false, false)
+        setWritable(false, false)
+        setExecutable(false, false)
+        setReadable(true, true)
+        setWritable(true, true)
     }
 
     private fun quote(value: String): String = buildString {

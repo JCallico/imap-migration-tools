@@ -22,6 +22,28 @@ Acceptance criteria:
 
 The CLI project-selection experience should be designed alongside this work, while preserving direct `--env` usage.
 
+## Project deletion and retained-backup management for the terminal and desktop applications
+
+Bring the Android project-deletion decision and retained-backup manager to the Textual TUI and native desktop GUI when
+named projects are implemented. Adapt the storage operations to explicit desktop backup paths rather than assuming
+Android app-private storage.
+
+Acceptance criteria:
+
+- Deleting a project asks whether to delete only its configuration or also delete the backup workspaces owned by it.
+- The destructive choice names the exact project and backup paths, requires confirmation, and never includes exported
+  archives or mail-provider data.
+- Backups preserved during project deletion remain discoverable in a retained-backup manager instead of becoming
+  inaccessible filesystem orphans.
+- Users can inspect the location and size of each retained backup, attach it to another project, export or move it, and
+  permanently delete it with a separate confirmation.
+- External, removable, network, read-only, missing, and symbolic-link paths are handled safely. A partial filesystem
+  failure is reported without claiming that all requested data was deleted.
+- Project deletion does not silently revoke provider authorization, delete provider accounts, or reverse mailbox
+  changes. Those boundaries use the same wording as the Android privacy and lifecycle documentation.
+- The TUI and GUI share project ownership metadata and retained-backup services so a workspace managed in one interface
+  remains understandable in the other.
+
 ## User-friendly authentication for the terminal and desktop applications
 
 Bring the Android application's account authentication experience to the Textual TUI and native desktop GUI. Account

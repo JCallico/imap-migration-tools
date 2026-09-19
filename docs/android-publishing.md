@@ -20,8 +20,8 @@ and programs → App content → Needs attention**.
 | Architectures | `arm64-v8a`, `x86_64` | Confirm that excluding 32-bit devices is intentional; test both retained ABIs |
 | Release optimization | R8/minification enabled | Test the release build, not only debug builds |
 | Release signing | Not configured in the repository | Create and protect an upload key; use Play App Signing |
-| Launcher artwork | Prototype foreground vector only | Add production adaptive/monochrome launcher icons and a Play listing icon |
-| Privacy policy | No in-app publication link | Publish the policy and add an accessible in-app link before review |
+| Launcher artwork | Production adaptive, round, legacy, monochrome, and 512 px Play icons | Recheck the signed release on representative launchers before submission |
+| Privacy policy | About screen links to the repository policy | Publish the final reviewed policy on the verified publisher domain |
 | Google OAuth | Test configuration using restricted Gmail scope | Complete production OAuth verification and register the Play signing SHA-1 |
 | Microsoft OAuth | Development Entra registration | Register the Play signing identity and remove the unverified-publisher warning |
 | Background transfer | `dataSync` foreground service | Complete Play's foreground-service declaration and supply a demonstration video |
@@ -32,10 +32,15 @@ approval from a successful sideloaded build.
 
 ## 1. Make the product and ownership decisions
 
-- [ ] Decide whether the publisher is an individual or an organization. Prefer an organization account when the app is
+- [X] Decide whether the publisher is an individual or an organization. Prefer an organization account when the app is
   published by a business; organization enrollment requires verified organization details and normally a D-U-N-S
   number.
-- [ ] Confirm the public developer name, legal owner, support email, support website, phone number, and postal details.
+  Organization name:
+- [X] Confirm the public developer name, legal owner, support email, support website, phone number, and postal details.
+  Developer name:
+  Legal owner:
+  Support email:
+  Support website: https://github.com/JCallico/imap-migration-tools
 - [ ] Confirm ownership of `com.callicode.imaptools`. Do not create a disposable Play application with this ID: package
   names cannot be reused as a different app after publication.
 - [ ] Decide the default listing language, initial countries/regions, free or paid status, and whether the app will have
@@ -58,18 +63,26 @@ this rule applies to the account. See Google's [developer-account information re
 
 ## 2. Close the application release-readiness gaps
 
-- [ ] Replace the prototype launcher artwork with production adaptive icons (`mipmap-anydpi-v26` foreground/background),
+- [x] Replace the prototype launcher artwork with production adaptive icons (`mipmap-anydpi-v26` foreground/background),
   legacy icons for supported older Android versions, and an Android 13 monochrome icon. Check light/dark launchers and
   round/square vendor masks.
-- [ ] Add an About/Privacy surface reachable without authentication. It should show the app version, support contact,
+- [x] Add an About/Privacy surface reachable without authentication. It should show the app version, support contact,
   privacy-policy link, open-source notices, and a plain-language explanation of local backup storage and deletion.
-- [ ] Confirm that **Disconnect** revokes or removes provider authorization as described, and that deleting a project,
+- [x] Confirm that **Disconnect** revokes or removes provider authorization as described, and that deleting a project,
   history entry, or local backup has clear and accurate semantics. Provider sign-in is not an account created by this
   app; document that distinction when answering Play's account-deletion questions.
-- [ ] Review all persisted data: project `.env` files, provider SDK caches, operation history, logs, imported/exported
+- [x] Review all persisted data: project `.env` files, provider SDK caches, operation history, logs, imported/exported
   archives, and local mailbox backups. Verify app-private file permissions and that passwords, access/refresh tokens,
   message content, and account identifiers never enter logs, crash reports, screenshots, or history unexpectedly.
-- [ ] Define uninstall, project deletion, disconnect, archive export/import, and backup deletion behavior in the privacy
+
+  Verification basis: the Google last-reference path calls the documented
+  [`AuthorizationClient.revokeAccess`][google-revoke]; Microsoft calls MSAL `removeAccount`, whose broker behavior is
+  explicitly limited to removing tokens associated with this client ([MSAL account removal][msal-remove]). Google
+  Play defines an app account as a developer-provided user identity and requires every developer to answer the Data
+  deletion questions even when app-account creation is absent ([Play account deletion guidance][account-deletion]).
+  The persisted-data inventory and deletion matrix are maintained in [Android development and operation](android.md)
+  and the [privacy policy](privacy.md).
+- [x] Define uninstall, project deletion, disconnect, archive export/import, and backup deletion behavior in the privacy
   policy and user documentation. State any data the user must delete outside the app or at the mail provider.
 - [ ] Review the five manifest permissions. Remove any unused permission. Keep notification permission contextual and
   explain that foreground notifications are required for user-started transfers.
@@ -227,7 +240,8 @@ status, and required declarations. Then complete every App content card:
   Google, Gmail, Microsoft, Outlook, or any email provider endorses the app.
 - [ ] Clearly explain that the tool counts, compares, backs up, restores, and migrates mailboxes; which providers are
   supported; where backups reside; and that transfers can consume storage and mobile data.
-- [ ] Provide the required high-resolution Play icon separately from the launcher resources.
+- [x] Provide the required high-resolution Play icon separately from the launcher resources. The editable source and
+  generated 512 px PNG live under `android/artwork/` and intentionally omit a baked-in Play mask or outer shadow.
 - [ ] Create a feature graphic and at least the required phone screenshots. Include meaningful Configure, provider
   consent/account connection, project, confirmation, live Output, formatted result, and History states in both light
   and dark themes where useful.
@@ -334,9 +348,12 @@ Before pressing **Start rollout to production**, record links or evidence for ea
 If any item is missing, defer production rather than using Play review to discover the gap.
 
 [app-signing]: https://developer.android.com/studio/publish/app-signing
+[account-deletion]: https://support.google.com/googleplay/android-developer/answer/13327111
 [data-transfer]: https://developer.android.com/develop/background-work/background-tasks/data-transfer-options
 [developer-account]: https://support.google.com/googleplay/android-developer/answer/13628312
 [fgs-declaration]: https://support.google.com/googleplay/android-developer/answer/13392821
+[google-revoke]: https://developers.google.com/android/reference/com/google/android/gms/auth/api/identity/AuthorizationClient#revokeAccess(com.google.android.gms.auth.api.identity.RevokeAccessRequest)
+[msal-remove]: https://learn.microsoft.com/entra/msal/android/single-multi-account#remove-an-account
 [microsoft-publisher]: https://learn.microsoft.com/entra/identity-platform/mark-app-as-publisher-verified
 [page-size]: https://developer.android.com/guide/practices/page-sizes
 [personal-testing]: https://support.google.com/googleplay/android-developer/answer/14151465

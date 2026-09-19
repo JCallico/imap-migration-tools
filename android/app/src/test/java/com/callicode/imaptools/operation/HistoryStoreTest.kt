@@ -37,6 +37,7 @@ class HistoryStoreTest {
         store.append(state)
 
         assertEquals(state, store.entries().single().state)
+        assertEquals(36, store.entries().single().id.length)
     }
 
     @Test
@@ -50,5 +51,18 @@ class HistoryStoreTest {
         assertEquals(Operation.COUNT, entry.state.operation)
         assertEquals(RunStatus.SUCCEEDED, entry.state.status)
         assertEquals("12 messages", entry.state.result)
+    }
+
+    @Test
+    fun deletingOneEntryLeavesOtherSavedOutputIntact() {
+        val store = HistoryStore(File(temporaryFolder.root, "operation-history.json"))
+        store.append(OperationState(status = RunStatus.SUCCEEDED, operation = Operation.COUNT, result = "first"))
+        store.append(OperationState(status = RunStatus.FAILED, operation = Operation.BACKUP, error = "second"))
+        val entries = store.entries()
+
+        assertEquals(true, store.delete(entries.first().id))
+
+        assertEquals(listOf("first"), store.entries().map { it.summary })
+        assertEquals(false, store.delete("missing"))
     }
 }

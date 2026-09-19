@@ -24,6 +24,8 @@ import com.callicode.imaptools.operation.HistoryStore
 import com.callicode.imaptools.operation.OperationBus
 import com.callicode.imaptools.operation.OperationService
 import com.callicode.imaptools.project.ProjectStore
+import com.callicode.imaptools.storage.BackupWorkspaceStore
+import com.callicode.imaptools.storage.RetainedBackupGroup
 import com.callicode.imaptools.storage.StorageCapacity
 import com.callicode.imaptools.storage.WorkspaceArchive
 import kotlinx.coroutines.Dispatchers
@@ -49,7 +51,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val activeProject = mutableActiveProject.asStateFlow()
     private val mutableConfiguration = MutableStateFlow(initialProject.second)
     val configuration = mutableConfiguration.asStateFlow()
-    private val workspaceBaseRoot = File(application.filesDir, "backups").apply { mkdirs() }
+    private val workspaceBaseRoot = File(application.filesDir, "backups").apply {
+        mkdirs()
+        ownerOnlyDirectory()
+    }
+    private val backupWorkspaceStore = BackupWorkspaceStore(workspaceBaseRoot)
+    private val mutableRetainedBackups = MutableStateFlow(backupWorkspaceStore.retainedGroups())
+    val retainedBackups = mutableRetainedBackups.asStateFlow()
     private val pendingSaves = Channel<Pair<ProjectProfile, AppConfiguration>>(Channel.UNLIMITED)
     private val deletedProjects = Collections.synchronizedSet(mutableSetOf<String>())
     private val mutableStorageMessage = MutableStateFlow<String?>(null)
@@ -120,10 +128,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         mutableConfiguration.value = configuration
     }
 
-    fun deleteActiveProject(): String? {
+    fun deleteActiveProject(deleteBackups: Boolean): String? {
         if (operationRunning()) return "Wait for the current operation to finish"
         if (mutableProjects.value.size <= 1) return "At least one project is required"
         val deleting = mutableActiveProject.value
+        val storageError = runCatching {
+            if (deleteBackups) {
+                backupWorkspaceStore.deleteProjectWorkspaces(deleting.id)
+            } else {
+                backupWorkspaceStore.retain(deleting)
+            }
+        }.exceptionOrNull()
+        if (storageError != null) return storageError.message ?: "Unable to update the project's backup workspaces"
         deletedProjects += deleting.id
         projectStore.delete(deleting)
         projectMemory.remove(deleting.id)
@@ -135,8 +151,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         mutableProjects.value = remaining
         mutableActiveProject.value = replacement
         mutableConfiguration.value = configuration
+        mutableRetainedBackups.value = backupWorkspaceStore.retainedGroups()
         return null
     }
+
+    fun activeProjectBackupNames(): List<String> =
+        backupWorkspaceStore.projectWorkspaceNames(mutableActiveProject.value.id)
 
     fun run(estimateInProgress: Boolean = false): String? {
         val configuration = mutableConfiguration.value
@@ -274,12 +294,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun history(): List<HistoryEntry> = HistoryStore(getApplication()).entries()
 
+    fun deleteHistoryEntry(id: String): Boolean = HistoryStore(getApplication()).delete(id)
+
     fun exportWorkspace(name: String, destination: Uri) = archive("Backup exported") {
         export(RequestEncoder.safeBackupName(name), destination)
     }
 
     fun importWorkspace(name: String, source: Uri) = archive("Backup imported") {
         import(RequestEncoder.safeBackupName(name), source)
+    }
+
+    fun exportRetainedWorkspace(projectId: String, name: String, destination: Uri) {
+        viewModelScope.launch {
+            mutableStorageMessage.value = withContext(Dispatchers.IO) {
+                runCatching {
+                    WorkspaceArchive(
+                        getApplication<Application>().contentResolver,
+                        backupWorkspaceStore.retainedOwnerRoot(projectId),
+                    ).export(RequestEncoder.safeBackupName(name), destination)
+                    "Backup exported"
+                }.getOrElse { it.message ?: "Storage operation failed" }
+            }
+        }
+    }
+
+    fun deleteRetainedWorkspace(projectId: String, name: String): String? {
+        if (operationRunning()) return "Wait for the current operation to finish"
+        return runCatching {
+            backupWorkspaceStore.deleteRetainedWorkspace(projectId, name)
+            mutableRetainedBackups.value = backupWorkspaceStore.retainedGroups()
+            null
+        }.getOrElse { it.message ?: "Unable to delete the retained backup workspace" }
     }
 
     fun clearStorageMessage() {
@@ -387,12 +432,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun activeWorkspaceRoot(): File =
-        File(workspaceBaseRoot, mutableActiveProject.value.id).apply { mkdirs() }
+        File(workspaceBaseRoot, mutableActiveProject.value.id).apply {
+            mkdirs()
+            ownerOnlyDirectory()
+        }
 
     private fun migrateLegacyWorkspaces(projectId: String) {
         if (preferences.getBoolean(LEGACY_WORKSPACES_MIGRATED, false)) return
         val legacyEntries = workspaceBaseRoot.listFiles().orEmpty()
-        val projectRoot = File(workspaceBaseRoot, projectId).apply { mkdirs() }
+        val projectRoot = File(workspaceBaseRoot, projectId).apply {
+            mkdirs()
+            ownerOnlyDirectory()
+        }
         legacyEntries.filter { it != projectRoot }.forEach { entry ->
             val destination = File(projectRoot, entry.name)
             if (!destination.exists()) entry.renameTo(destination)
@@ -454,6 +505,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun AppConfiguration.withAccount(slot: AccountSlot, account: AccountState): AppConfiguration = when (slot) {
         AccountSlot.SOURCE -> copy(source = account)
         AccountSlot.DESTINATION -> copy(destination = account)
+    }
+
+    private fun File.ownerOnlyDirectory() {
+        setReadable(false, false)
+        setWritable(false, false)
+        setExecutable(false, false)
+        setReadable(true, true)
+        setWritable(true, true)
+        setExecutable(true, true)
     }
 
     companion object {

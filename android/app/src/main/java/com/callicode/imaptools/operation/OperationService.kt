@@ -77,6 +77,7 @@ class OperationService : Service() {
         }
         val pending = pendingRequest.getAndSet(null) ?: return stopSelf(startId)
         val request = pending.request
+        val privacyRedactor = PrivacyRedactor(request, filesDir)
         val operation = intent.getStringExtra(EXTRA_OPERATION)?.let(Operation::valueOf) ?: return stopSelf(startId)
         val signal = CancellationSignal()
         cancellation = signal
@@ -132,10 +133,11 @@ class OperationService : Service() {
                     PythonEngine().run(
                         request,
                         EventListener { event ->
+                            val safeEvent = privacyRedactor.event(event)
                             OperationBus.update { state ->
-                                state.copy(events = (state.events + event).takeLast(MAX_VISIBLE_EVENTS))
+                                state.copy(events = (state.events + safeEvent).takeLast(MAX_VISIBLE_EVENTS))
                             }
-                            showNotification(event.message, indeterminate = event.total == null)
+                            showNotification(safeEvent.message, indeterminate = safeEvent.total == null)
                         },
                         signal,
                         SilentTokenProvider(applicationContext, request),
@@ -147,8 +149,14 @@ class OperationService : Service() {
             val finalResult = forcedFailure.get()?.let(EngineResult::Failed) ?: result
             OperationBus.update { state ->
                 when (finalResult) {
-                    is EngineResult.Succeeded -> state.copy(status = RunStatus.SUCCEEDED, result = finalResult.result)
-                    is EngineResult.Failed -> state.copy(status = RunStatus.FAILED, error = finalResult.message)
+                    is EngineResult.Succeeded -> state.copy(
+                        status = RunStatus.SUCCEEDED,
+                        result = privacyRedactor.text(finalResult.result),
+                    )
+                    is EngineResult.Failed -> state.copy(
+                        status = RunStatus.FAILED,
+                        error = privacyRedactor.text(finalResult.message),
+                    )
                     EngineResult.Cancelled -> state.copy(status = RunStatus.CANCELLED)
                 }
             }

@@ -332,12 +332,17 @@ same workspace name from reading or modifying one another. Migration resume cach
 non-identifying hash of both account endpoints.
 
 The first launch after upgrading creates a **Default** project from the previous Android configuration. A project can be
-deleted only when at least one other project exists. Deleting a project removes its `.env` configuration but does not
-remove backup workspaces or provider accounts from the device.
+deleted only when at least one other project exists. When backups exist, the deletion prompt lists their workspace names
+and offers **Delete project only**, which preserves them under **Manage retained backups**, and **Delete project +
+backups**, which permanently removes all of the project’s private workspaces. A project without backups receives a
+single **Delete project** action. Every choice removes the project `.env` but leaves operation history, exported
+archives, provider authorization, mail, and provider accounts unchanged. Retained workspaces can be exported or
+permanently deleted individually from the project screen.
 
 Project `.env` files use the shared variable names where the concepts match, including `SRC_IMAP_HOST`,
 `DEST_IMAP_HOST`, `MAX_WORKERS`, and `PRESERVE_FLAGS`. Android-only UI state uses `ANDROID_`-prefixed keys. These files
-are an internal persistence format for now; document-provider import and export can be added independently.
+are an internal persistence format; project-configuration import and export are not currently exposed. Backup-workspace
+ZIP import and export are separate operations described below.
 
 ## Storage and credentials
 
@@ -348,12 +353,72 @@ and exports compatible workspaces as ZIP archives; imports reject path traversal
 replacement of an existing workspace. Removing the app removes private workspaces, so export a verified backup before
 uninstalling the application.
 
+### Data lifecycle and deletion
+
+| Action | What the app does | What remains and must be removed elsewhere |
+| --- | --- | --- |
+| **Disconnect** | Removes the account association from that project endpoint. If the same provider account has no other project or endpoint references, the app asks Google to revoke authorization or asks MSAL to remove the Microsoft account from this app’s cache. The disconnect completes only if that SDK operation succeeds. | It does not delete mail or the provider account, sign the account out of Android or other apps, or undo completed operations. Remove any remaining authorization in the provider’s connected-app/security settings and delete mail at the provider. |
+| **Delete project only** | Deletes that project’s private `.env` configuration and account references, while placing its private workspaces under **Manage retained backups**. Each retained workspace can be exported or permanently deleted later. | Operation history, exported ZIPs, provider authorization, accounts, and mail remain. |
+| **Delete project + backups** | Deletes the project configuration and permanently deletes all private backup workspaces owned by that project. | Operation history, exported ZIPs, provider authorization, accounts, and mail remain. Delete those separately where they are stored. |
+| **Export ZIP** | Writes a separate copy of the selected private workspace to the document-provider location chosen by the user. The private workspace remains. | Delete the ZIP with Files or the selected storage/cloud application. Also empty its trash or remove synchronized/versioned copies when required. |
+| **Import ZIP** | Reads the selected ZIP into a new private workspace under the active project. The source ZIP is not changed. A failed import removes its temporary private extraction directory. | Delete the original ZIP separately. The imported private copy can be removed with its project using **Delete project + backups**, retained and managed after **Delete project only**, or removed by clearing storage/uninstalling. |
+| **Delete local backup orphans** | During Backup, removes individual local message files which are no longer on the source mailbox. This synchronizes a workspace; it does not delete the entire backup. | Other workspace content, exported copies, and provider mail remain. |
+| **Delete saved output** | Permanently removes one operation's timestamp, status, progress events, result, and error from private history. History otherwise retains the 100 newest completed runs. | It does not undo the operation, change mail, delete projects/backups/archives, or disconnect an account. |
+| **Clear storage / uninstall** | Permanently removes all app-private projects, history/output, app-held authentication state, imported copies, and backup workspaces. | Exported ZIPs, source ZIPs used for import, provider accounts, mail, completed mailbox changes, provider-side grants/sessions, and cloud/file-provider copies remain and must be removed in those systems. |
+
+Clearing storage and uninstalling are all-or-nothing cleanup operations in the current prototype. Before using either,
+export and verify every backup which must be retained. Neither action reverses a restore or migration. To permanently
+remove restored or migrated messages, delete them at the mail provider and complete that provider’s Trash, Deleted
+Items, retention, or purge workflow. Android vendors label the cleanup command differently; it is normally under
+**Settings → Apps → IMAP Migration Tools → Storage & cache → Clear storage**. Confirm the application name before
+proceeding because the action cannot be undone.
+
 Passwords and OAuth access tokens remain in memory and are not written to project `.env` files, preferences, or history.
 They remain associated with their project while the application process is running. Hostnames, usernames, provider
 account identifiers, modes, and operation options persist in the active project's private `.env`. The application asks
 the native provider SDK for a current access token immediately before each run and supplies it through the existing
 service boundary using `OAuth2Config.access_token`. The desktop-only browser and encrypted cache implementations are not
 used on Android.
+
+Output events, foreground-notification text, operation results, and errors pass through an Android privacy redactor
+before display or history retention. It removes credentials and account identifiers known to the request, email
+addresses, app-private paths, `.eml` filenames, and the subject/filename field from per-message transfer progress.
+Folder names and aggregate counts remain visible as intended operation results. The application does not bundle an
+analytics or remote crash-reporting SDK. Mail bodies and attachments exist locally only inside backup workspaces the
+user explicitly creates or imports.
+
+All project files, history, authentication-library caches, imported workspaces, and local backups are below Android's
+app-private data directory. Project and history writers additionally set owner-only file access, `allowBackup` is
+disabled in the manifest, and no component exposes these files through a content provider. Export is the deliberate
+exception: the user chooses a document-provider destination, and that provider controls the exported ZIP's permissions,
+sync, versioning, and deletion behavior.
+
+### Google Play account-deletion answers
+
+The current app does not create an IMAP Migration Tools account or maintain a developer backend. Google/Microsoft
+sign-in and password IMAP authenticate an existing mail-provider account for a direct mailbox operation; a local
+project is configuration, not an app account. In Play Console, answer the app-account-creation question **No** for this
+architecture, while still completing the mandatory data-deletion questions accurately. Do not describe Disconnect or
+Delete project as deleting the user's Google, Microsoft, or mail-provider account.
+
+Google Disconnect on the last local reference calls `AuthorizationClient.revokeAccess`, which revokes this app's
+requested Gmail authorization. Microsoft Disconnect on the last reference calls MSAL `removeAccount`, which removes
+tokens associated with this client from its application cache but, especially with a broker, does not remove the
+account from the device or claim to revoke provider-side consent. The user must use the provider's account/security or
+organization controls for any remaining grant or session.
+
+### Persisted-data audit
+
+| Data | Location and protection | Deletion behavior |
+| --- | --- | --- |
+| Project configuration | Private `files/projects/<id>/.env`, owner-only; contains hosts, usernames/provider IDs, modes, names, and options but no password or access/refresh token | Delete project, Clear storage, or uninstall |
+| Provider authentication | Provider SDK-managed cache in app-private storage; access tokens are otherwise held only in process memory | Last-reference Disconnect removes/revokes as described above; Clear storage/uninstall removes this app's local cache; provider-side state may remain |
+| Operation history | Private, owner-only `files/operation-history.json`; capped at 100; redacted before persistence | Delete saved output, Clear storage, or uninstall |
+| Active/retained/imported backups | Private `files/backups/<project-id>/`; may intentionally contain complete RFC 5322 messages and attachments | Delete project + backups, Delete backup for retained workspaces, Clear storage, or uninstall |
+| Migration progress cache | Private hashed path inside the owning project workspace; contains message identifiers used to resume | Deleted with its workspace/project backup data, Clear storage, or uninstall |
+| Exported ZIP | User-selected document-provider location outside app-private storage | Delete in Files/provider and empty provider trash/version history if required |
+| Source ZIP selected for import | Original provider location; the app reads but does not modify it | Delete separately in Files/provider |
+| Logs/crash reports | No app log file, analytics SDK, or remote crash reporter is included | Android/vendor system diagnostics are controlled outside the app |
 
 ## Configure OAuth
 
@@ -495,7 +560,9 @@ Build and install the app using the emulator steps above. Then:
    opens the provider screen and resumes the operation afterward.
 5. Tap **Disconnect** to remove the account association from the current project. If no other project or endpoint uses
    that provider account, the app also revokes Google authorization or removes the account from its MSAL cache. This
-   does not sign the account out of Android or the provider's other applications.
+   does not sign the account out of Android or the provider's other applications, delete mail, or necessarily end a
+   browser, broker, or provider session. Remove any remaining grant in the provider’s connected-app or account-security
+   settings.
 
 ## Background execution
 

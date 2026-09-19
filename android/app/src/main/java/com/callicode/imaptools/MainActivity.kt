@@ -28,9 +28,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -59,6 +61,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -78,7 +83,9 @@ import com.callicode.imaptools.model.RunStatus
 import com.callicode.imaptools.model.TargetType
 import com.callicode.imaptools.operation.HistoryEntry
 import com.callicode.imaptools.operation.OperationBus
+import com.callicode.imaptools.storage.RetainedBackupGroup
 import com.callicode.imaptools.ui.components.CollapsibleTerminalPanel
+import com.callicode.imaptools.ui.about.AboutPrivacyScreen
 import com.callicode.imaptools.ui.components.KeyValue
 import com.callicode.imaptools.ui.components.StatusIndicator
 import com.callicode.imaptools.ui.components.TerminalBrand
@@ -95,8 +102,17 @@ class MainActivity : ComponentActivity() {
         oauthCoordinator.onGoogleAuthorizationResult(it.resultCode, it.data)
     }
     private var archiveWorkspace = "default"
+    private var retainedArchiveProjectId: String? = null
     private val exportArchive = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
-        uri?.let { viewModel.exportWorkspace(archiveWorkspace, it) }
+        uri?.let {
+            val projectId = retainedArchiveProjectId
+            if (projectId == null) {
+                viewModel.exportWorkspace(archiveWorkspace, it)
+            } else {
+                viewModel.exportRetainedWorkspace(projectId, archiveWorkspace, it)
+            }
+        }
+        retainedArchiveProjectId = null
     }
     private val importArchive = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { viewModel.importWorkspace(archiveWorkspace, it) }
@@ -112,6 +128,12 @@ class MainActivity : ComponentActivity() {
                 ImapToolsApp(
                     viewModel,
                     onExport = { name ->
+                        retainedArchiveProjectId = null
+                        archiveWorkspace = name
+                        exportArchive.launch("${name.ifBlank { "backup" }}.zip")
+                    },
+                    onExportRetained = { projectId, name ->
+                        retainedArchiveProjectId = projectId
                         archiveWorkspace = name
                         exportArchive.launch("${name.ifBlank { "backup" }}.zip")
                     },
@@ -128,13 +150,19 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen(val title: String) { CONFIGURE("Configure"), OUTPUT("Output"), HISTORY("History") }
+private enum class Screen(val title: String) {
+    CONFIGURE("Configure"),
+    OUTPUT("Output"),
+    HISTORY("History"),
+    ABOUT("About"),
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ImapToolsApp(
     viewModel: MainViewModel,
     onExport: (String) -> Unit,
+    onExportRetained: (String, String) -> Unit,
     onImport: (String) -> Unit,
     onConnect: (AccountSlot, Authentication, (String?) -> Unit) -> Unit,
     onDisconnect: (AccountSlot, AccountState, (String?) -> Unit) -> Unit,
@@ -148,6 +176,7 @@ private fun ImapToolsApp(
     val backupEstimate by viewModel.backupEstimate.collectAsStateWithLifecycle()
     val projects by viewModel.projects.collectAsStateWithLifecycle()
     val activeProject by viewModel.activeProject.collectAsStateWithLifecycle()
+    val retainedBackups by viewModel.retainedBackups.collectAsStateWithLifecycle()
     var screen by remember { mutableStateOf(Screen.CONFIGURE) }
     var confirmation by remember { mutableStateOf(false) }
     var networkConfirmation by remember { mutableStateOf(false) }
@@ -157,8 +186,12 @@ private fun ImapToolsApp(
     var showNewProject by remember { mutableStateOf(false) }
     var newProjectName by remember { mutableStateOf("") }
     var confirmProjectDeletion by remember { mutableStateOf(false) }
+    var projectBackupsForDeletion by remember { mutableStateOf(emptyList<String>()) }
+    var showRetainedBackups by remember { mutableStateOf(false) }
+    var retainedBackupToDelete by remember { mutableStateOf<Pair<String, String>?>(null) }
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val launchOperation: (Boolean) -> Unit = { estimateInProgress ->
         message = viewModel.run(estimateInProgress)
         if (message == null) {
@@ -207,6 +240,7 @@ private fun ImapToolsApp(
                         Screen.CONFIGURE -> Icons.Default.Build
                         Screen.OUTPUT -> Icons.Default.Terminal
                         Screen.HISTORY -> Icons.Default.History
+                        Screen.ABOUT -> Icons.Default.Info
                     }
                     NavigationBarItem(
                         selected = screen == item,
@@ -249,7 +283,12 @@ private fun ImapToolsApp(
                     newProjectName = ""
                     showNewProject = true
                 },
-                onDeleteProject = { confirmProjectDeletion = true },
+                onDeleteProject = {
+                    projectBackupsForDeletion = viewModel.activeProjectBackupNames()
+                    confirmProjectDeletion = true
+                },
+                retainedBackups = retainedBackups,
+                onManageRetainedBackups = { showRetainedBackups = true },
                 modifier = Modifier.padding(padding),
             )
             Screen.OUTPUT -> OutputScreen(
@@ -263,6 +302,15 @@ private fun ImapToolsApp(
                     selectedHistory = entry
                     screen = Screen.OUTPUT
                 },
+                onDelete = { entry ->
+                    if (viewModel.deleteHistoryEntry(entry.id) && selectedHistory?.id == entry.id) {
+                        selectedHistory = null
+                    }
+                },
+                modifier = Modifier.padding(padding),
+            )
+            Screen.ABOUT -> AboutPrivacyScreen(
+                onOpenLink = uriHandler::openUri,
                 modifier = Modifier.padding(padding),
             )
         }
@@ -299,10 +347,10 @@ private fun ImapToolsApp(
                 Button(onClick = {
                     confirmation = false
                     continueToNetworkCheck()
-                }) { Text("Run destructive operation") }
+                }) { Text("Continue") }
             },
-            title = { Text("Confirm deletion") },
-            text = { Text("This operation can delete messages. Verify both accounts and your backup before continuing.") },
+            title = { Text("Delete messages?") },
+            text = { Text("This operation will delete messages using the selected options. Check the accounts and backup before continuing.") },
         )
     }
     if (networkConfirmation) {
@@ -318,8 +366,7 @@ private fun ImapToolsApp(
             title = { Text("Use this network?") },
             text = {
                 Text(
-                    "This operation can transfer a large amount of mail and the active connection is not an " +
-                        "unmetered Wi-Fi network. Continuing may use mobile data or incur charges.",
+                    "This transfer may use a large amount of mobile data and may incur carrier charges.",
                 )
             },
         )
@@ -360,19 +407,196 @@ private fun ImapToolsApp(
         )
     }
     if (confirmProjectDeletion) {
-        AlertDialog(
-            onDismissRequest = { confirmProjectDeletion = false },
-            dismissButton = { TextButton(onClick = { confirmProjectDeletion = false }) { Text("Cancel") } },
-            confirmButton = {
-                Button(onClick = {
-                    confirmProjectDeletion = false
-                    message = viewModel.deleteActiveProject()
-                }) { Text("Delete project") }
+        ProjectDeletionDialog(
+            projectName = activeProject.name,
+            backupNames = projectBackupsForDeletion,
+            onCancel = { confirmProjectDeletion = false },
+            onKeepBackups = {
+                confirmProjectDeletion = false
+                message = viewModel.deleteActiveProject(deleteBackups = false)
             },
-            title = { Text("Delete ${activeProject.name}?") },
-            text = { Text("This removes the project's private .env configuration. Backup workspaces are not deleted.") },
+            onDeleteBackups = {
+                confirmProjectDeletion = false
+                message = viewModel.deleteActiveProject(deleteBackups = true)
+            },
         )
     }
+    if (showRetainedBackups) {
+        RetainedBackupsDialog(
+            groups = retainedBackups,
+            onDismiss = { showRetainedBackups = false },
+            onExport = { projectId, workspace ->
+                showRetainedBackups = false
+                onExportRetained(projectId, workspace)
+            },
+            onDelete = { projectId, workspace ->
+                showRetainedBackups = false
+                retainedBackupToDelete = projectId to workspace
+            },
+        )
+    }
+    retainedBackupToDelete?.let { (projectId, workspace) ->
+        AlertDialog(
+            onDismissRequest = {
+                retainedBackupToDelete = null
+                showRetainedBackups = true
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    retainedBackupToDelete = null
+                    showRetainedBackups = true
+                }) { Text("Cancel") }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        retainedBackupToDelete = null
+                        message = viewModel.deleteRetainedWorkspace(projectId, workspace)
+                        showRetainedBackups = viewModel.retainedBackups.value.isNotEmpty()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) { Text("Delete backup") }
+            },
+            title = {
+                Text(
+                    "DELETE $workspace?",
+                    color = MaterialTheme.colorScheme.error,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            text = { Text("This permanently deletes this backup workspace from the device.") },
+            shape = MaterialTheme.shapes.medium,
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.error,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            tonalElevation = 0.dp,
+        )
+    }
+}
+
+@Composable
+internal fun ProjectDeletionDialog(
+    projectName: String,
+    backupNames: List<String>,
+    onCancel: () -> Unit,
+    onKeepBackups: () -> Unit,
+    onDeleteBackups: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        confirmButton = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (backupNames.isNotEmpty()) {
+                    OutlinedButton(onClick = onKeepBackups, modifier = Modifier.fillMaxWidth()) {
+                        Text("DELETE PROJECT ONLY")
+                    }
+                }
+                Button(
+                    onClick = onDeleteBackups,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) {
+                    Text(if (backupNames.isEmpty()) "DELETE PROJECT" else "DELETE PROJECT + BACKUPS")
+                }
+                TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("CANCEL") }
+            }
+        },
+        title = {
+            Text(
+                "DELETE $projectName?",
+                color = MaterialTheme.colorScheme.error,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (backupNames.isEmpty()) {
+                    Text("This permanently deletes the project configuration.")
+                } else {
+                    Text("Private backup workspaces (${backupNames.size}):")
+                    backupNames.forEach { name ->
+                        Text("> $name", fontFamily = FontFamily.Monospace)
+                    }
+                    Text("Choose whether to keep these backups on the device or delete them with the project.")
+                }
+            }
+        },
+        shape = MaterialTheme.shapes.medium,
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.error,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 0.dp,
+    )
+}
+
+@Composable
+private fun RetainedBackupsDialog(
+    groups: List<RetainedBackupGroup>,
+    onDismiss: () -> Unit,
+    onExport: (String, String) -> Unit,
+    onDelete: (String, String) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+        title = {
+            Text(
+                "RETAINED BACKUPS",
+                color = MaterialTheme.colorScheme.primary,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text("Backups retained when their project was deleted. Export or permanently delete each workspace.")
+                groups.forEach { group ->
+                    TerminalPanel(group.projectName, Modifier.fillMaxWidth()) {
+                        group.workspaces.forEach { workspace ->
+                            Text(workspace, fontFamily = FontFamily.Monospace)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { onExport(group.projectId, workspace) },
+                                    modifier = Modifier.semantics {
+                                        contentDescription = "Export retained backup $workspace"
+                                    },
+                                ) { Text("EXPORT") }
+                                TextButton(
+                                    onClick = { onDelete(group.projectId, workspace) },
+                                    modifier = Modifier.semantics {
+                                        contentDescription = "Delete retained backup $workspace"
+                                    },
+                                ) { Text("DELETE") }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        shape = MaterialTheme.shapes.medium,
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.primary,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 0.dp,
+    )
 }
 
 @Composable
@@ -442,10 +666,9 @@ internal fun BackupPreflightDialog(
             title = { Text("Storage estimate unavailable") },
             text = {
                 Text(
-                    "We couldn’t estimate how much storage this backup requires. The backup may fill your device " +
-                        "and stop before completion.\n\nAvailable storage: " +
-                        MainViewModel.formatBytes(state.availableBytes) +
-                        "\n\nDo you want to continue without an estimate?",
+                        "Continue without a size estimate? Available storage will be monitored while the backup runs.\n\n" +
+                        "Available storage: " +
+                        MainViewModel.formatBytes(state.availableBytes),
                 )
             },
         )
@@ -470,6 +693,8 @@ private fun ConfigurationScreen(
     onSelectProject: (ProjectProfile) -> Unit,
     onNewProject: () -> Unit,
     onDeleteProject: () -> Unit,
+    retainedBackups: List<RetainedBackupGroup>,
+    onManageRetainedBackups: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val controlsLocked = authenticationBusy || status == RunStatus.RUNNING
@@ -489,6 +714,8 @@ private fun ConfigurationScreen(
                 onSelectProject,
                 onNewProject,
                 onDeleteProject,
+                retainedBackups.isNotEmpty(),
+                onManageRetainedBackups,
                 controlsLocked,
             )
             Section("Operation") {
@@ -631,6 +858,8 @@ private fun ProjectSelector(
     onSelect: (ProjectProfile) -> Unit,
     onNew: () -> Unit,
     onDelete: () -> Unit,
+    hasRetainedBackups: Boolean,
+    onManageRetainedBackups: () -> Unit,
     authenticationBusy: Boolean,
 ) {
     Section("Project") {
@@ -658,6 +887,11 @@ private fun ProjectSelector(
                 onClick = onDelete,
                 enabled = projects.size > 1 && !authenticationBusy,
             ) { Text("DELETE") }
+        }
+        if (hasRetainedBackups) {
+            OutlinedButton(onClick = onManageRetainedBackups, enabled = !authenticationBusy) {
+                Text("MANAGE RETAINED BACKUPS")
+            }
         }
     }
 }
@@ -1051,8 +1285,10 @@ private fun ResultSummary(
 private fun HistoryScreen(
     viewModel: MainViewModel,
     onSelect: (HistoryEntry) -> Unit,
+    onDelete: (HistoryEntry) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var entryToDelete by remember { mutableStateOf<HistoryEntry?>(null) }
     val history = viewModel.history()
     val terminal = LocalTerminalPalette.current
     Column(
@@ -1089,8 +1325,51 @@ private fun HistoryScreen(
                     color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.labelMedium,
                 )
+                TextButton(
+                    onClick = { entryToDelete = item },
+                    modifier = Modifier.semantics {
+                        contentDescription = "Delete ${item.operation} history entry from ${item.timestamp}"
+                    },
+                ) {
+                    Text("DELETE SAVED OUTPUT", color = MaterialTheme.colorScheme.error)
+                }
             }
         }
+    }
+    entryToDelete?.let { item ->
+        AlertDialog(
+            onDismissRequest = { entryToDelete = null },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDelete(item)
+                        entryToDelete = null
+                    },
+                    modifier = Modifier.semantics { contentDescription = "Confirm delete saved output" },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError,
+                    ),
+                ) { Text("DELETE SAVED OUTPUT") }
+            },
+            dismissButton = { TextButton(onClick = { entryToDelete = null }) { Text("CANCEL") } },
+            title = {
+                Text(
+                    "DELETE HISTORY ENTRY?",
+                    color = MaterialTheme.colorScheme.error,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            text = {
+                Text("This permanently deletes the saved output for this run.")
+            },
+            shape = MaterialTheme.shapes.medium,
+            containerColor = MaterialTheme.colorScheme.surface,
+            titleContentColor = MaterialTheme.colorScheme.error,
+            textContentColor = MaterialTheme.colorScheme.onSurface,
+            tonalElevation = 0.dp,
+        )
     }
 }
 

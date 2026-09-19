@@ -11,8 +11,9 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
-data class HistoryEntry(val timestamp: String, val state: OperationState) {
+data class HistoryEntry(val id: String, val timestamp: String, val state: OperationState) {
     val operation: String = state.operation?.title ?: "Unknown"
     val status: String = state.status.name.lowercase()
     val summary: String = state.error ?: state.result ?: state.events.lastOrNull()?.message.orEmpty()
@@ -26,6 +27,7 @@ class HistoryStore internal constructor(private val file: File) {
         val entries = readJson()
         entries.put(
             JSONObject()
+                .put("id", UUID.randomUUID().toString())
                 .put("timestamp", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssXXX", Locale.US).format(Date()))
                 .put("operation", state.operation?.title ?: "Unknown")
                 .put("status", state.status.name.lowercase())
@@ -35,12 +37,20 @@ class HistoryStore internal constructor(private val file: File) {
                 .put("events", state.events.toJson()),
         )
         while (entries.length() > 100) entries.remove(0)
-        val temporary = File(file.parentFile, "${file.name}.tmp")
-        temporary.writeText(entries.toString())
-        if (!temporary.renameTo(file)) {
-            file.writeText(entries.toString())
-            temporary.delete()
+        writeJson(entries)
+    }
+
+    @Synchronized
+    fun delete(id: String): Boolean {
+        val entries = readJson()
+        val retained = JSONArray()
+        var deleted = false
+        for (index in 0 until entries.length()) {
+            val value = entries.getJSONObject(index)
+            if (entryId(value, index) == id) deleted = true else retained.put(value)
         }
+        if (deleted) writeJson(retained)
+        return deleted
     }
 
     @Synchronized
@@ -51,6 +61,7 @@ class HistoryStore internal constructor(private val file: File) {
                 val status = enumValueOrDefault(value.optString("status").uppercase(), RunStatus.IDLE)
                 val summary = value.optString("summary")
                 HistoryEntry(
+                    id = entryId(value, index),
                     timestamp = value.getString("timestamp"),
                     state = OperationState(
                         status = status,
@@ -66,6 +77,32 @@ class HistoryStore internal constructor(private val file: File) {
 
     private fun readJson(): JSONArray =
         runCatching { if (file.exists()) JSONArray(file.readText()) else JSONArray() }.getOrDefault(JSONArray())
+
+    private fun writeJson(entries: JSONArray) {
+        file.parentFile?.mkdirs()
+        val temporary = File(file.parentFile, "${file.name}.tmp")
+        temporary.writeText(entries.toString())
+        temporary.ownerOnly()
+        if (!temporary.renameTo(file)) {
+            file.writeText(entries.toString())
+            file.ownerOnly()
+            temporary.delete()
+        } else {
+            file.ownerOnly()
+        }
+    }
+
+    private fun entryId(value: JSONObject, index: Int): String = value.optString("id").ifBlank {
+        "legacy:${value.optString("timestamp")}:$index"
+    }
+
+    private fun File.ownerOnly() {
+        setReadable(false, false)
+        setWritable(false, false)
+        setExecutable(false, false)
+        setReadable(true, true)
+        setWritable(true, true)
+    }
 
     private fun List<OperationEvent>.toJson(): JSONArray = JSONArray().apply {
         forEach { event ->
