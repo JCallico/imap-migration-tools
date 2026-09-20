@@ -103,7 +103,14 @@ class OAuthCoordinator(
             return
         }
         runCatching { googleClient.getAuthorizationResultFromIntent(data) }
-            .onSuccess { acceptGoogleResult(pending.slot, it, pending.complete) }
+            .onSuccess {
+                continueGoogleAuthorization(
+                    pending.slot,
+                    it,
+                    pending.complete,
+                    pending.resolutionCount,
+                )
+            }
             .onFailure {
                 val message = if (resultCode == Activity.RESULT_OK) {
                     friendlyGoogleError(it)
@@ -142,20 +149,27 @@ class OAuthCoordinator(
             builder.setAccount(Account(email, GOOGLE_ACCOUNT_TYPE))
         }
         googleClient.authorize(builder.build())
-            .addOnSuccessListener { result ->
-                if (result.hasResolution()) {
-                    val pendingIntent = result.pendingIntent
-                    if (pendingIntent == null) {
-                        complete("Google sign-in could not open the consent screen")
-                        return@addOnSuccessListener
-                    }
-                    pendingGoogle = GoogleRequest(slot, complete)
-                    launchGoogleAuthorization(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
-                } else {
-                    acceptGoogleResult(slot, result, complete)
-                }
-            }
+            .addOnSuccessListener { result -> continueGoogleAuthorization(slot, result, complete, 0) }
             .addOnFailureListener { complete(friendlyGoogleError(it)) }
+    }
+
+    private fun continueGoogleAuthorization(
+        slot: AccountSlot,
+        result: AuthorizationResult,
+        complete: (String?) -> Unit,
+        resolutionCount: Int,
+    ) {
+        if (!result.hasResolution()) {
+            acceptGoogleResult(slot, result, complete)
+            return
+        }
+        val pendingIntent = result.pendingIntent
+        if (pendingIntent == null || resolutionCount >= MAX_GOOGLE_RESOLUTIONS) {
+            complete("Google sign-in needs another step. Try connecting again.")
+            return
+        }
+        pendingGoogle = GoogleRequest(slot, complete, resolutionCount + 1)
+        launchGoogleAuthorization(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
     }
 
     private fun acceptGoogleResult(slot: AccountSlot, result: AuthorizationResult, complete: (String?) -> Unit) {
@@ -179,7 +193,10 @@ class OAuthCoordinator(
                     viewModel.updateOAuthAccount(slot, email, email, token)
                     complete(null)
                 }
-                .onFailure { error -> complete(friendlyGoogleProfileError(error)) }
+                .onFailure { error ->
+                    if (isExpiredGoogleAuthorization(error)) viewModel.clearOAuthAccount(slot)
+                    complete(googleProfileFailureMessage(error))
+                }
         }
     }
 
@@ -367,11 +384,16 @@ class OAuthCoordinator(
         complete(error)
     }
 
-    private data class GoogleRequest(val slot: AccountSlot, val complete: (String?) -> Unit)
+    private data class GoogleRequest(
+        val slot: AccountSlot,
+        val complete: (String?) -> Unit,
+        val resolutionCount: Int,
+    )
 
     companion object {
         private const val GOOGLE_IMAP_SCOPE = "https://mail.google.com/"
         private const val GOOGLE_ACCOUNT_TYPE = "com.google"
+        private const val MAX_GOOGLE_RESOLUTIONS = 3
         private const val MICROSOFT_AUTHORITY = "https://login.microsoftonline.com/common"
         private val MICROSOFT_SCOPES = listOf("https://outlook.office.com/IMAP.AccessAsUser.All")
 
@@ -421,11 +443,6 @@ class OAuthCoordinator(
             }
             return "Google sign-in did not complete. If you did not cancel it, the app provider must verify this " +
                 "build's Android OAuth package and signing certificate registration."
-        }
-
-        private fun friendlyGoogleProfileError(error: Throwable): String {
-            val detail = error.message?.takeIf { it.isNotBlank() } ?: "unknown error"
-            return "Google authorized mailbox access, but its account address could not be read: $detail"
         }
 
         private fun friendlyMicrosoftError(error: Throwable): String =

@@ -1,6 +1,7 @@
 package com.callicode.imaptools
 
 import android.Manifest
+import android.os.Build
 import androidx.activity.compose.setContent
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
@@ -34,11 +35,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.junit.rules.TestRule
 
 @RunWith(AndroidJUnit4::class)
 class ProjectFlowTest {
     @get:Rule(order = 0)
-    val notificationPermission: GrantPermissionRule = GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
+    val notificationPermission: TestRule = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        GrantPermissionRule.grant(Manifest.permission.POST_NOTIFICATIONS)
+    } else {
+        TestRule { statement, _ -> statement }
+    }
 
     @get:Rule(order = 1)
     val compose = createAndroidComposeRule<MainActivity>()

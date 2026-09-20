@@ -49,162 +49,68 @@ theme automatically. Light mode uses an off-white workspace and accessible dark 
 near-black workspace and bright green accent. Dynamic system colors are intentionally not applied so the command-line,
 terminal, desktop, and mobile applications retain a recognizable shared identity.
 
-## Run on an Android emulator
+## Run the app
 
-### Android Studio
+The repository launchers build, test, install, and launch the application on an Android emulator or a connected
+physical device using the same commands. A physical device needs one-time preparation before the launcher can select
+it; the emulator needs none.
 
-1. Install Android Studio and open the repository's `android` directory as the project.
-2. In **Tools → SDK Manager**, install Android SDK Platform 36, Android SDK Build-Tools 35, Android SDK Platform-Tools,
-   Android Emulator, and an API 35 or 36 Google APIs/Google Play system image for the workstation architecture.
-3. In **Tools → Device Manager**, select **Create virtual device**, choose a phone profile such as Medium Phone, select
-   the installed system image, and finish the wizard.
-4. Start the device with its play button. Wait for the Android home screen on the first boot.
-5. Select the `app` run configuration and the running virtual device, then click **Run**.
+### One-command launcher (recommended)
 
-Android Studio performs the Gradle build, installs the debug application, and opens it. The Android project is the
-top-level `android` directory; it is intentionally not inside the Python `src` package.
+The repository launchers install missing SDK packages, create or reuse an emulator, wait for Android, run the local
+build checks, install the APK, and open the application. They can also select a connected physical device. The only
+one-time host prerequisite is Android Studio/SDK command-line tools plus either `mise` or an existing JDK 17 and Gradle
+8.13 installation. When `mise` is available, the launchers install the repository-pinned JDK, Gradle, and Python
+versions automatically.
 
-### Command line
-
-The following commands are for a POSIX shell on Linux or macOS. First open the `android` project in Android Studio at
-least once. Android Studio writes the selected SDK location to the ignored `android/local.properties` file. From the
-repository root, load and validate that exact location:
+On Linux or macOS, run this from the repository root and choose a target:
 
 ```bash
-export ANDROID_HOME="$(sed -n 's/^sdk.dir=//p' android/local.properties)"
-export ANDROID_SDK_ROOT="$ANDROID_HOME"
-export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/emulator:$ANDROID_HOME/platform-tools:$PATH"
-test -n "$ANDROID_HOME" && test -d "$ANDROID_HOME" || {
-    echo "Open the android project in Android Studio and configure its SDK first." >&2
-    exit 1
-}
+tools/run_android.sh
 ```
 
-Do not copy an example SDK pathname into `local.properties`. If `ANDROID_HOME` was previously exported with an invalid
-value, the commands above replace it with the project configuration.
+On Windows PowerShell:
 
-Install the build, emulator, and system-image components with the standard Android SDK command-line tools. The example
-below uses the x86_64 image commonly used on Intel and AMD workstations; use the corresponding `arm64-v8a` image on an
-ARM workstation. Then create and verify the phone AVD:
+```powershell
+.\tools\run_android.ps1
+```
+
+The interactive choices are a normal emulator, an Android 15 emulator with 16 KB memory pages, or an authorized
+physical device. Useful non-interactive examples are:
 
 ```bash
-sdkmanager \
-    "platforms;android-36" \
-    "build-tools;35.0.0" \
-    "platform-tools" \
-    "emulator" \
-    "system-images;android-36;google_apis;x86_64"
-avdmanager create avd \
-    --name medium_phone \
-    --package "system-images;android-36;google_apis;x86_64" \
-    --device pixel_5
-emulator -list-avds
+tools/run_android.sh --target emulator
+tools/run_android.sh --target emulator --16kb --connected-tests
+tools/run_android.sh --target device --serial DEVICE_SERIAL
 ```
 
-Start the resulting `medium_phone` AVD in one terminal:
-
-```bash
-emulator -avd medium_phone -no-snapshot-load
+```powershell
+.\tools\run_android.ps1 -Target emulator
+.\tools\run_android.ps1 -Target emulator -PageSize16Kb -ConnectedTests
+.\tools\run_android.ps1 -Target device -Serial DEVICE_SERIAL
 ```
 
-On Linux, enabling KVM is strongly recommended for acceptable emulator performance.
-
-Leave that terminal open while using the emulator. In a second terminal, return to the repository root, reload the SDK
-environment, wait for Android to finish booting, build and install the APK, and explicitly open its main Activity:
-
-```bash
-export ANDROID_HOME="$(sed -n 's/^sdk.dir=//p' android/local.properties)"
-export ANDROID_SDK_ROOT="$ANDROID_HOME"
-export PATH="$ANDROID_HOME/platform-tools:$PATH"
-adb wait-for-device
-until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do sleep 2; done
-gradle -p android lintDebug testDebugUnitTest installDebug
-adb shell am start -W -n com.callicode.imaptools/.MainActivity
-```
-
-The command succeeds when `am start` reports `Status: ok` and `Activity: com.callicode.imaptools/.MainActivity`.
-
-#### Linux Wayland fallback
-
-Some Android Emulator distributions do not include a Qt Wayland platform plugin. If the graphical start command
-reports that `wayland` is unavailable and its `xcb` fallback cannot connect to the X display, run the emulator without
-its Qt window and display it with `scrcpy` instead. This also applies when `am start` reports success but no simulator
-window is visible: `am start` opens the application inside Android; it does not create a host-side viewer for an
-emulator which was started with `-no-window`.
-
-Install `scrcpy` through the operating system's package manager, then run these commands from the repository root. The
-example explicitly targets `emulator-5554`, so it remains safe when a physical Android device is connected at the same
-time. If `adb devices -l` reports a different emulator serial, use that value instead:
-
-```bash
-export ANDROID_HOME="$(sed -n 's/^sdk.dir=//p' android/local.properties)"
-export ANDROID_SDK_ROOT="$ANDROID_HOME"
-export PATH="$ANDROID_HOME/platform-tools:$PATH"
-export ANDROID_SERIAL="emulator-5554"
-
-if systemctl --user is-active --quiet android-emulator-medium-phone.service; then
-    echo "The medium_phone emulator service is already running."
-else
-    systemctl --user reset-failed android-emulator-medium-phone.service 2>/dev/null || true
-    systemd-run --user --unit=android-emulator-medium-phone --collect \
-        --setenv=ANDROID_HOME="$ANDROID_HOME" \
-        --setenv=ANDROID_SDK_ROOT="$ANDROID_HOME" \
-        "$ANDROID_HOME/emulator/emulator" -avd medium_phone \
-        -no-window -no-audio -no-snapshot-load -gpu software
-fi
-
-adb -s "$ANDROID_SERIAL" wait-for-device
-until [ "$(adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1" ]; do
-    sleep 2
-done
-ANDROID_SERIAL="$ANDROID_SERIAL" gradle -p android lintDebug testDebugUnitTest installDebug
-adb -s "$ANDROID_SERIAL" shell am start -W -n com.callicode.imaptools/.MainActivity
-SDL_VIDEODRIVER=wayland scrcpy --serial "$ANDROID_SERIAL" --no-audio \
-    --window-title "IMAP Migration Tools — Android Emulator"
-```
-
-`systemd-run` makes the headless emulator independent of the terminal which launched it. Keep the `scrcpy` terminal
-open while interacting with Android. The `--no-audio` option avoids initializing an unnecessary audio-forwarding
-channel; it does not mute Android operations because this application has no audio interface. Closing the `scrcpy`
-window only closes the viewer; it does not stop the emulator or application. If the service is already active, do not
-start a second copy of the same AVD—run only the final `scrcpy` command to reopen its viewer.
-
-Inspect the detached emulator log with:
-
-```bash
-journalctl --user -u android-emulator-medium-phone -f
-```
-
-On Android 13 and newer, choose **Allow** when the application requests notification permission. Operations use a
-persistent progress notification with a Cancel action.
+Instrumentation tests are opt-in because they install a test package and take control of the selected device. Add
+`--connected-tests` or `-ConnectedTests` to run them before the launcher reinstalls and opens the application. Use
+`--headless` or `-Headless` when a graphical emulator window cannot be displayed. If Windows blocks local PowerShell
+scripts, use `powershell -ExecutionPolicy Bypass -File .\tools\run_android.ps1` for that invocation. The 16 KB Windows
+path also uses `bash.exe` from Git for Windows to run the common ELF validator. A physical device target must be
+prepared and authorized first; see [Prepare a physical device](#prepare-a-physical-device).
 
 Confirm that the Configure screen offers Count, Compare, Backup, Restore, and Migrate, then use Output to follow a run
 and History to inspect completed runs. Selecting a history item replaces the Output view with that saved run's events
 and formatted result. Merely navigating between screens preserves the displayed output; it changes only when a history
 item is selected or a new operation starts. Tap an Output section header to collapse or expand the operation monitor,
-live or saved output, and result summary independently. The emulator has normal outbound network access. When connecting
-to a test IMAP server bound to the development machine's loopback interface, enter `10.0.2.2` instead of `127.0.0.1` as
-its hostname; inside the emulator, `127.0.0.1` refers to Android itself.
+live or saved output, and result summary independently. On Android 13 and newer, choose **Allow** when the application
+requests notification permission; operations use a persistent progress notification with a Cancel action.
 
-Useful diagnostics and cleanup commands are:
+The emulator has normal outbound network access. When connecting to a test IMAP server bound to the development
+machine's loopback interface, enter `10.0.2.2` instead of `127.0.0.1` as its hostname; inside the emulator, `127.0.0.1`
+refers to Android itself. A physical device cannot use `10.0.2.2`; use a hostname or LAN address routable from the
+device instead, ensure the workstation firewall permits the test connection, and retain valid TLS certificate
+verification. Public IMAP provider hostnames require no special routing.
 
-```bash
-adb devices -l
-adb logcat --pid="$(adb shell pidof com.callicode.imaptools)"
-adb uninstall com.callicode.imaptools
-adb emu kill
-```
-
-If the emulator was started with the Wayland fallback, `adb emu kill` also causes the temporary user service to become
-inactive. If necessary, stop it directly with `systemctl --user stop android-emulator-medium-phone`.
-
-## Run on a physical Android device
-
-The prototype supports Android 7.0 (API 24) or newer on 64-bit ARM and x86_64 devices. Google authentication also
-requires Google Play services. Use a test device or test Android user profile when possible: uninstalling the prototype
-removes its private projects and backup workspaces.
-
-### Prepare the device
+### Prepare a physical device
 
 1. Open **Settings → About phone** and tap **Build number** seven times. Device manufacturers may use slightly
    different names or locations.
@@ -216,10 +122,10 @@ removes its private projects and backup workspaces.
 
 Windows may require the device manufacturer's ADB USB driver. macOS normally requires no additional setup. Linux must
 have suitable `udev` rules and permission for the logged-in user; distribution packages commonly provide Android
-platform-tools rules. Android Studio's **Tools → Troubleshoot Device Connections** can diagnose USB discovery issues.
+platform-tools rules.
 
-Load the configured SDK and confirm that ADB reports the authorization state as `device`, not `unauthorized` or
-`offline`:
+Confirm that ADB reports the authorization state as `device`, not `unauthorized` or `offline`, before running the
+launcher with `--target device`:
 
 ```bash
 export ANDROID_HOME="$(sed -n 's/^sdk.dir=//p' android/local.properties)"
@@ -229,14 +135,10 @@ adb start-server
 adb devices -l
 ```
 
-If more than one emulator or device is connected, copy the desired serial from `adb devices -l` and use it explicitly:
+Copy the desired serial from `adb devices -l` and pass it to the launcher's `--serial`/`-Serial` option; the launcher
+also prompts for one interactively when more than one device or emulator is connected.
 
-```bash
-export ANDROID_SERIAL="DEVICE_SERIAL_FROM_ADB"
-adb -s "$ANDROID_SERIAL" get-state
-```
-
-### Optional wireless debugging
+#### Optional wireless debugging
 
 Android 11 and newer can use ADB over Wi-Fi. Keep the device and workstation on the same trusted network, enable
 **Wireless debugging** in Developer options, then choose **Pair device with pairing code**. The pairing port and the
@@ -246,36 +148,91 @@ debugging port shown by Android may be different:
 adb pair DEVICE_IP:PAIRING_PORT
 adb connect DEVICE_IP:DEBUGGING_PORT
 adb devices -l
-export ANDROID_SERIAL="DEVICE_IP:DEBUGGING_PORT"
 ```
 
-Enter the six-digit code from the device when `adb pair` requests it. Android Studio also supports pairing through
-**Device Manager → Pair Devices Using Wi-Fi**.
-
-### Build, install, and launch
+Enter the six-digit code from the device when `adb pair` requests it, then pass the resulting
+`DEVICE_IP:DEBUGGING_PORT` value to the launcher's `--serial`/`-Serial` option.
 
 OAuth registration follows the APK signing certificate, not the physical device. A debug build made with a different
-debug keystore has a different Google SHA-1 and Microsoft signature hash. Before testing provider login, ensure the
-certificate used for this build is registered and that `android/local.properties` contains the corresponding Microsoft
-redirect configuration described in [Configure OAuth](#configure-oauth).
+debug keystore has a different Google SHA-1 and Microsoft signature hash. Before testing provider login on a physical
+device, ensure the certificate used for this build is registered and that `android/local.properties` contains the
+corresponding Microsoft redirect configuration described in [Configure OAuth](#configure-oauth).
 
-From the repository root, run the normal verification build, install the APK onto the selected device, and launch it:
+### Troubleshooting a graphical emulator window on Linux
+
+Some Android Emulator distributions do not include a Qt Wayland platform plugin. If a graphical emulator window
+reports that `wayland` is unavailable and its `xcb` fallback cannot connect to the X display, run the launcher with
+`--headless` (or `-Headless` on Windows) instead: it starts the emulator without a Qt window and prints a `scrcpy`
+command to view it. This also covers the case where `am start` reports success but no simulator window is visible —
+`am start` opens the application inside Android; it does not create a host-side viewer for an emulator started with
+`-no-window`. Install `scrcpy` through the operating system's package manager, then run the printed command, for
+example:
 
 ```bash
-gradle -p android lintDebug testDebugUnitTest assembleDebug
-adb -s "$ANDROID_SERIAL" install -r android/app/build/outputs/apk/debug/app-debug.apk
-adb -s "$ANDROID_SERIAL" shell am start -W -n com.callicode.imaptools/.MainActivity
+scrcpy --serial emulator-5554 --no-audio --window-title "IMAP Migration Tools — Android Emulator"
 ```
 
-`install -r` preserves the prototype's existing private data. On Android 13 and newer, allow notifications so foreground
-operations can display progress and cancellation controls. Android Studio users can instead open the `android`
-directory, select the connected device in the run target menu, and run the `app` configuration.
+Closing the `scrcpy` window only closes the viewer; it does not stop the emulator or application. Rerunning
+`tools/run_android.sh --headless` reuses the already-running emulator instead of starting a second copy. Inspect the
+emulator's own log at `~/.android/<avd-name>.log` if it does not register with ADB.
 
-Unlike the emulator, a physical device cannot use `10.0.2.2` to reach the workstation. Use a hostname or LAN address
-routable from the device, ensure the workstation firewall permits the test connection, and retain valid TLS certificate
-verification. Public IMAP provider hostnames require no special routing.
+### Validate 16 KB page-size compatibility
+
+The automated launcher is the shortest complete validation path. Choose option 2, or run:
+
+```bash
+tools/run_android.sh --target emulator --16kb --connected-tests
+```
+
+```powershell
+.\tools\run_android.ps1 -Target emulator -PageSize16Kb -ConnectedTests
+```
+
+This installs the stable Android 15 Google APIs 16 KB image for the workstation architecture, creates a separate
+`imap_tools_16k` AVD, verifies that `getconf PAGE_SIZE` returns `16384`, validates every packaged `.so`, runs the Android
+checks and optional instrumentation suite, and launches the app. It does not replace a normal development AVD.
+
+To audit an already-built APK without starting an emulator, install NDK 28 and run:
+
+```bash
+sdkmanager "build-tools;35.0.0" "ndk;28.2.13676358"
+ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}" \
+    tools/check_android_16kb.sh android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Validate the bundle configuration and its complete native-library set as well:
+
+```bash
+gradle -p android bundleDebug
+tools/check_android_16kb.sh android/app/build/outputs/bundle/debug/app-debug.aab
+```
+
+The validator inspects every ELF `LOAD` segment with NDK `llvm-readelf` and requires at least `0x4000` alignment. It
+then runs the official `zipalign -c -P 16 -v 4` APK check. For an AAB, it also uses Bundletool to require
+`PAGE_ALIGNMENT_16K` for Play-generated APKs. CI runs both audits after every Android build. When testing manually,
+confirm the emulator rather than inferring its page size from the AVD name:
+
+```bash
+adb -s EMULATOR_SERIAL shell getconf PAGE_SIZE
+```
+
+The expected result is `16384`. A successful launch and instrumentation run on that device verifies runtime loading;
+do not rely on Android's 16 KB compatibility mode as release evidence. Re-run both the packaged-library audit and the
+emulator test whenever Chaquopy, Python, AndroidX, AGP, NDK, or another native dependency changes. See Android's
+[official 16 KB page-size guide](https://developer.android.com/guide/practices/page-sizes).
+
+## Physical-device support notes
+
+The prototype supports Android 7.0 (API 24) or newer on 64-bit ARM and x86_64 devices. Google authentication also
+requires Google Play services. Use a test device or test Android user profile when possible: uninstalling the prototype
+removes its private projects and backup workspaces. See [Prepare a physical device](#prepare-a-physical-device) for
+one-time setup before running the launcher against a device.
 
 ### Physical-device test checklist
+
+For the complete release resilience and API/ABI matrix—including cancellation, process death, restart, storage,
+authorization, network, background, and minified-release cases—use
+[Android release resilience and compatibility testing](android-release-testing.md).
 
 1. Verify the Configure, Output, and History screens in both system light and dark themes and at the device's normal and
    largest practical font/display sizes.
@@ -289,10 +246,12 @@ verification. Public IMAP provider hostnames require no special routing.
    output remain coherent.
 7. Disconnect an OAuth account and confirm that another project referencing the same provider account remains usable.
 
-The optional instrumentation suite can also run on the selected device:
+The optional instrumentation suite can also run on the selected device. Set `ANDROID_SERIAL` to the device's serial
+from `adb devices -l` first if more than one device or emulator is connected:
 
 ```bash
-ANDROID_SERIAL="$ANDROID_SERIAL" gradle -p android connectedDebugAndroidTest
+export ANDROID_SERIAL="DEVICE_SERIAL_FROM_ADB"
+gradle -p android connectedDebugAndroidTest
 ```
 
 Use a test device/profile for instrumentation. Although the suite confines its project lifecycle checks to a temporary
@@ -300,19 +259,20 @@ project, automated UI tests install a test package and control the application.
 
 ### Logs, updates, and cleanup
 
-Capture only the application's logs while reproducing a problem:
+Capture only the application's logs while reproducing a problem, adding `-s SERIAL` when more than one device or
+emulator is connected:
 
 ```bash
-adb -s "$ANDROID_SERIAL" logcat --clear
-adb -s "$ANDROID_SERIAL" logcat --pid="$(adb -s "$ANDROID_SERIAL" shell pidof com.callicode.imaptools)"
+adb logcat --clear
+adb logcat --pid="$(adb shell pidof com.callicode.imaptools)"
 ```
 
-Rebuild and repeat `adb install -r` for later prototype revisions. Export any backup workspace which must be retained
-before uninstalling, because this command permanently removes the app's private projects, workspaces, history, and
-locally associated credentials:
+Rerun the launcher for later revisions; it rebuilds, reinstalls with `-r` (which preserves the app's existing private
+data), and reopens the app. Export any backup workspace which must be retained before uninstalling, because this
+command permanently removes the app's private projects, workspaces, history, and locally associated credentials:
 
 ```bash
-adb -s "$ANDROID_SERIAL" uninstall com.callicode.imaptools
+adb uninstall com.callicode.imaptools
 ```
 
 When testing is complete, disable USB or wireless debugging, forget the paired workstation under **Wireless
@@ -511,7 +471,7 @@ Compare the APK-derived package and SHA-1 again with **Google Auth Platform → 
 account is listed under **Audience → Test users** while an External app is in Testing. Cloud-side registration changes
 do not alter the APK, so a matching installed build can be retried without rebuilding or reinstalling it. If a different
 APK was installed, rebuild it, repeat the identity check, and install it with the explicit device serial described in
-[Run on a physical Android device](#run-on-a-physical-android-device).
+[Prepare a physical device](#prepare-a-physical-device).
 
 ### Microsoft
 
@@ -550,7 +510,7 @@ authentication; choosing Microsoft displays a configuration error instead of ask
 
 ### Test the sign-in flow
 
-Build and install the app using the emulator steps above. Then:
+Build and install the app using the launcher described in [Run the app](#run-the-app). Then:
 
 1. Choose an operation which uses an IMAP account.
 2. Select **Google** or **Microsoft** for that account and tap **Connect**.

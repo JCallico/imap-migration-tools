@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicReference
 internal class OperationRunner(
     private val context: Context,
     private val pending: PendingOperation,
+    private val availableBytes: (Context) -> Long = { StorageCapacity.availableBytes(it) },
     private val onEvent: (OperationEvent) -> Unit,
 ) {
     private val cancellation = CancellationSignal()
@@ -51,7 +52,7 @@ internal class OperationRunner(
             Executors.newSingleThreadScheduledExecutor().also { monitor ->
                 monitor.scheduleAtFixedRate(
                     {
-                        val available = StorageCapacity.availableBytes(context)
+                        val available = availableBytes(context)
                         if (available < StorageCapacity.RESERVED_BYTES &&
                             forcedFailure.compareAndSet(
                                 null,
@@ -72,7 +73,7 @@ internal class OperationRunner(
         }
 
         val result = if (operation == Operation.BACKUP &&
-            StorageCapacity.availableBytes(context) < StorageCapacity.RESERVED_BYTES
+            availableBytes(context) < StorageCapacity.RESERVED_BYTES
         ) {
             EngineResult.Failed(
                 "At least ${formatBytes(StorageCapacity.RESERVED_BYTES)} of available storage is required " +

@@ -98,11 +98,29 @@ this rule applies to the account. See Google's [developer-account information re
   silently. The generic API 34+ device test procedure is in [Android development and operation](android.md).
 - [ ] Test cancellation, process death, device restart, low storage, revoked authorization, token expiry, network loss,
   metered-network confirmation, background limits, and safe resume behavior with large mailboxes.
-- [ ] Test the minified release build on API 24, representative intermediate Android releases, API 36, a physical
+
+  Automated and emulator evidence is recorded in [Android release resilience and compatibility
+  testing](android-release-testing.md). Cancellation/retry uses a synthetic 2,000-message mailbox; storage, metered
+  network, UIDT constraints, system stops, token refresh/failure paths, offline launch, backgrounding, and reboot launch
+  are covered. Keep this item open until revoked-provider and active-transfer interruption cases pass on the physical
+  test device.
+- [x] Test the minified release build on API 24, representative intermediate Android releases, API 36, a physical
   Samsung-class device, an ARM64 device, and an x86-64 emulator.
-- [ ] Because Chaquopy packages native libraries, validate every `.so` for 16 KB page-size support and run on a 16 KB
+
+  The R8-minified release cold-launched on x86-64 API 24, API 30, and API 36 emulators, and all applicable connected
+  tests passed. The same artifact also passed cold launch, background/offline launch, post-reboot launch, and all ten
+  applicable tests on an ARM64 Samsung SM-G955W running API 28. See
+  [Android release resilience and compatibility testing](android-release-testing.md).
+- [x] Because Chaquopy packages native libraries, validate every `.so` for 16 KB page-size support and run on a 16 KB
   Android emulator. Google Play requires 16 KB support for 64-bit apps targeting Android 15+ beginning February 1,
   2027. Follow the official [16 KB compatibility checks][page-size].
+
+  Verification on September 19, 2026: the repository validator checked all 42 ARM64/x86-64 libraries in the debug APK;
+  every ELF `LOAD` segment is `0x4000` aligned and Build-Tools `zipalign -c -P 16 -v 4` passes. The app and all eight
+  instrumentation tests passed on the API 35 x86-64 `google_apis_ps16k` image reporting `PAGE_SIZE=16384`. The debug
+  AAB contains the same 42 aligned libraries and Bundletool reports `PAGE_ALIGNMENT_16K`. CI repeats both artifact
+  audits. Repeat this evidence for the signed release AAB/APKs before publication and after every native dependency or
+  build-tool update.
 - [ ] Run dependency, license, vulnerability, and Play SDK Index reviews for Chaquopy/Python, Google Play Services,
   MSAL, Compose, and transitive dependencies. Record versions and data behavior used to answer Data safety.
 - [ ] Confirm R8 rules preserve Chaquopy and authentication behavior. Exercise all five operations in a release build.
