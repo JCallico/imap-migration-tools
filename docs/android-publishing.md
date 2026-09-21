@@ -84,8 +84,19 @@ this rule applies to the account. See Google's [developer-account information re
   and the [privacy policy](privacy.md).
 - [x] Define uninstall, project deletion, disconnect, archive export/import, and backup deletion behavior in the privacy
   policy and user documentation. State any data the user must delete outside the app or at the mail provider.
-- [ ] Review the six manifest permissions. Remove any unused permission. Keep notification permission contextual and
+- [x] Review the six manifest permissions. Remove any unused permission. Keep notification permission contextual and
   explain that progress notifications are required for user-started transfers.
+
+  All six declared permissions are load-bearing and none were removed: `INTERNET` (all IMAP networking through
+  Chaquopy), `ACCESS_NETWORK_STATE` (unmetered-Wi-Fi detection for the large-transfer confirmation and job network
+  constraints), `POST_NOTIFICATIONS` (the progress notification), `FOREGROUND_SERVICE` and
+  `FOREGROUND_SERVICE_DATA_SYNC` (the API 24–33 compatibility foreground service), and `RUN_USER_INITIATED_JOBS` (the
+  API 34+ UIDT job path). `POST_NOTIFICATIONS` was previously requested unconditionally in `onCreate`, before the user
+  had done anything. It is now requested only when the user taps **Run**, alongside a dialog explaining that the
+  transfer is user-started and Android requires a progress notification with a Cancel action while it runs; declining
+  does not block the transfer, since the notification is best-effort. Verified on an emulator that the dialog appears
+  only at Run, that the operation proceeds and completes regardless of the permission decision, and that the real
+  Android permission prompt reflects the outcome.
 - [x] Reassess long transfers on Android 14 and newer. Android recommends user-initiated data-transfer jobs for long,
   user-triggered transfers; Android 15 limits `dataSync` foreground-service background time. Either migrate to the
   appropriate API or document, test, and declare the justified foreground-service behavior. See Android's

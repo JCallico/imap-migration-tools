@@ -2,6 +2,7 @@ package com.callicode.imaptools
 
 import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
@@ -69,6 +70,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.callicode.imaptools.auth.OAuthCoordinator
 import com.callicode.imaptools.model.AccountState
@@ -122,11 +124,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         if (savedInstanceState != null) viewModel.recoverInterruptedAuthentication()
         oauthCoordinator = OAuthCoordinator(this, viewModel, googleAuthorization::launch)
-        if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
         setContent {
             ImapToolsTheme {
                 ImapToolsApp(
                     viewModel,
+                    onRequestNotifications = { notifications.launch(Manifest.permission.POST_NOTIFICATIONS) },
                     onExport = { name ->
                         retainedArchiveProjectId = null
                         archiveWorkspace = name
@@ -161,6 +163,7 @@ private enum class Screen(val title: String) {
 @Composable
 private fun ImapToolsApp(
     viewModel: MainViewModel,
+    onRequestNotifications: () -> Unit,
     onExport: (String) -> Unit,
     onExportRetained: (String, String) -> Unit,
     onImport: (String) -> Unit,
@@ -178,6 +181,8 @@ private fun ImapToolsApp(
     val activeProject by viewModel.activeProject.collectAsStateWithLifecycle()
     val retainedBackups by viewModel.retainedBackups.collectAsStateWithLifecycle()
     var screen by remember { mutableStateOf(Screen.CONFIGURE) }
+    var notificationRationale by remember { mutableStateOf(false) }
+    var notificationRationaleShown by remember { mutableStateOf(false) }
     var confirmation by remember { mutableStateOf(false) }
     var networkConfirmation by remember { mutableStateOf(false) }
     var allowMeteredNetwork by remember { mutableStateOf(false) }
@@ -223,6 +228,24 @@ private fun ImapToolsApp(
             prepareOperation(!hasUnmeteredWifi)
         }
     }
+    val startRun: () -> Unit = {
+        if (configuration.requiresDestructiveConfirmation()) {
+            confirmation = true
+        } else {
+            continueToNetworkCheck()
+        }
+    }
+    val onRun: () -> Unit = {
+        if (!notificationRationaleShown &&
+            Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationRationale = true
+        } else {
+            startRun()
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -266,13 +289,7 @@ private fun ImapToolsApp(
                 operationState.status,
                 viewModel.readinessError(configuration, requireOAuthToken = false),
                 viewModel::update,
-                onRun = {
-                    if (configuration.requiresDestructiveConfirmation()) {
-                        confirmation = true
-                    } else {
-                        continueToNetworkCheck()
-                    }
-                },
+                onRun = onRun,
                 onCancel = viewModel::cancel,
                 onExport = onExport,
                 onImport = onImport,
@@ -340,6 +357,38 @@ private fun ImapToolsApp(
             confirmButton = { TextButton(onClick = viewModel::clearAuthenticationMessage) { Text("OK") } },
             title = { Text("Authentication") },
             text = { Text(result) },
+        )
+    }
+    if (notificationRationale) {
+        AlertDialog(
+            onDismissRequest = {
+                notificationRationale = false
+                notificationRationaleShown = true
+                startRun()
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    notificationRationale = false
+                    notificationRationaleShown = true
+                    startRun()
+                }) { Text("Not now") }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    notificationRationale = false
+                    notificationRationaleShown = true
+                    onRequestNotifications()
+                    startRun()
+                }) { Text("Allow notifications") }
+            },
+            title = { Text("Show transfer progress?") },
+            text = {
+                Text(
+                    "This is a user-started transfer, so Android requires a progress notification with a Cancel " +
+                        "action while it runs. Allow notifications to see progress and stop the transfer from the " +
+                        "notification.",
+                )
+            },
         )
     }
     if (confirmation) {
