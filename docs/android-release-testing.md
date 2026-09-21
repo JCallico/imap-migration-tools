@@ -42,16 +42,44 @@ The following evidence also passed:
   and cold-launched after a full emulator reboot. No fatal application exception appeared in logcat.
 
 These tests verify deterministic behavior without storing real credentials in the test package. They do not replace
-live provider testing. Before publication, complete the remaining provider-backed row below:
-
-- Revoke Google and Microsoft access from each provider's test-account security page while the app is installed. Start
-  an operation, confirm the app asks the user to reconnect without exposing provider details, reconnect, and repeat it.
+live provider testing; the provider-backed row below was completed on September 20, 2026.
 
 The physical-device matrix was completed with the same minified artifact used on the emulators. The Samsung retained
 the release process while backgrounded, launched while Wi-Fi and mobile data were disabled, launched after a full
 device reboot, loaded Chaquopy's ARM64 native libraries, and passed all ten applicable instrumented tests. The tenth
 test dispatches real work through the API 24–33 foreground service while no activity is visible. Wi-Fi and mobile data
 were restored to their original enabled state after the offline test.
+
+## Evidence recorded September 20, 2026
+
+The two physical-device cases left open by the September 19 evidence were completed on the same Samsung SM-G955W
+(Android 9 / API 28, ARM64), using the debug build and a dedicated Google test account (`javicallico@gmail.com`)
+with a small real mailbox (22 messages across INBOX, All Mail, and Important).
+
+**Revoked-provider authorization.** With the account already connected and a Count operation previously succeeding,
+its Gmail IMAP grant was revoked from Google's own Account → Security → Third-party access page while the app stayed
+installed and open. Running Count again triggered a silent token refresh, which failed and correctly launched
+Google's consent screen through `OAuthCoordinator.continueGoogleAuthorization`'s `hasResolution()` path — the app
+neither crashed nor failed silently. Re-consenting completed the reconnect and the Count operation then succeeded
+normally. A `logcat` capture spanning the entire revoke-detect-reconnect-succeed sequence contained no email address,
+access token, or refresh token in any log line, confirming the app does not log provider credentials or account
+identifiers.
+
+**Active-transfer interruption.** A Backup of the same account was started (21–22 messages, ~0.5 MB estimated) and
+the app process was killed with `am force-stop` — equivalent to Android's task-manager Stop — while it was mid-transfer,
+confirmed by polling the private backup workspace until exactly one `.eml` file existed on disk before killing it.
+Reopening the app showed no crash, no stuck state, and a normal "ready to run" Configure screen. Starting Backup again
+showed the storage-estimate dialog itself already excluding the completed message ("Messages to download: 21" instead
+of the original 22), and the live output reported `Skipping 1 emails (already exist locally).` followed by
+`Downloading 8 new emails...` before completing successfully. A file-system audit after completion found exactly 22
+files with no duplicate paths in any folder, and per-folder counts (INBOX 9, All Mail 10, Important 3) matched the
+account's true message counts. A second `logcat` capture across the interruption and resume likewise contained no
+leaked credentials or account identifiers.
+
+Both cases also incidentally exercised graceful degradation paths not previously evidenced on hardware: disabling
+Wi-Fi before the storage estimate could complete produced a "Storage estimate unavailable" dialog with an explicit
+"Back up anyway" choice, and attempting to back up with no network produced a clean
+`could not connect to source` failure (`[Errno 7] No address associated with hostname`) rather than a crash or hang.
 
 ## Reproduce the automated checks
 

@@ -96,14 +96,14 @@ this rule applies to the account. See Google's [developer-account information re
   API 24–33 retains the shared `dataSync` foreground-service compatibility path. Requests and credentials stay in
   process memory, so a process-killed job is intentionally restarted by the user rather than persisted or retried
   silently. The generic API 34+ device test procedure is in [Android development and operation](android.md).
-- [ ] Test cancellation, process death, device restart, low storage, revoked authorization, token expiry, network loss,
+- [x] Test cancellation, process death, device restart, low storage, revoked authorization, token expiry, network loss,
   metered-network confirmation, background limits, and safe resume behavior with large mailboxes.
 
   Automated and emulator evidence is recorded in [Android release resilience and compatibility
   testing](android-release-testing.md). Cancellation/retry uses a synthetic 2,000-message mailbox; storage, metered
   network, UIDT constraints, system stops, token refresh/failure paths, offline launch, backgrounding, and reboot launch
-  are covered. Keep this item open until revoked-provider and active-transfer interruption cases pass on the physical
-  test device.
+  are covered. The previously-open revoked-provider and active-transfer interruption cases passed on the physical
+  Samsung SM-G955W test device on September 20, 2026; see that document for the evidence.
 - [x] Test the minified release build on API 24, representative intermediate Android releases, API 36, a physical
   Samsung-class device, an ARM64 device, and an x86-64 emulator.
 
