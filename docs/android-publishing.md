@@ -132,8 +132,20 @@ this rule applies to the account. See Google's [developer-account information re
   AAB contains the same 42 aligned libraries and Bundletool reports `PAGE_ALIGNMENT_16K`. CI repeats both artifact
   audits. Repeat this evidence for the signed release AAB/APKs before publication and after every native dependency or
   build-tool update.
-- [ ] Run dependency, license, vulnerability, and Play SDK Index reviews for Chaquopy/Python, Google Play Services,
+- [x] Run dependency, license, vulnerability, and Play SDK Index reviews for Chaquopy/Python, Google Play Services,
   MSAL, Compose, and transitive dependencies. Record versions and data behavior used to answer Data safety.
+
+  Completed September 21, 2026; see [Android dependency, license, vulnerability, and Play SDK Index
+  review](android-dependency-review.md) for the full per-SDK findings across all 159 resolved release-classpath
+  artifacts. Headline results: no copyleft licenses anywhere in the graph (MIT/Apache 2.0/PSF throughout, Google Play
+  services under its proprietary but non-OSS-conflicting SDK license); no unpatched CVEs in any directly-declared
+  dependency (nimbus-jose-jwt 10.0.2, gson 2.8.9, and okio 3.7.0 are each the exact version that fixed a prior CVE);
+  one transitive CVE noted but not directly fixable (`httpcore5` 5.3, pinned by MSAL, has two low-practical-risk DoS
+  CVEs fixed in 5.5.0+); and one recommended but not yet applied version bump (MSAL 8.4.1 → 8.5.0). Corrected a
+  historical, since-fixed community report that MSAL collects the persistent `ANDROID_ID`: that was fixed in the
+  `common` library in 2021, and current versions use a non-hardware-tied random GUID for protocol telemetry instead.
+  [`docs/open-source-notices.md`](open-source-notices.md) was updated to accurately separate Android-bundled
+  components from desktop-only ones and to list the full license set.
 - [x] Confirm R8 rules preserve Chaquopy and authentication behavior. Exercise all five operations in a release build.
 
   Verified on September 21, 2026 with `assembleRelease` (R8-minified, debug-keystore-signed for local testing only;
@@ -265,7 +277,9 @@ status, and required declarations. Then complete every App content card:
 - [ ] **Content rating:** complete the IARC questionnaire accurately; save the issued rating.
 - [ ] **Data safety:** inventory app code and every SDK before answering. Distinguish on-device processing from data
   collected or shared off-device, disclose security practices, and complete the data-deletion questions. Never copy
-  another app's answers.
+  another app's answers. Start from the per-SDK data behavior already recorded in [Android dependency, license,
+  vulnerability, and Play SDK Index review](android-dependency-review.md#consolidated-data-safety-inputs), then add
+  the app's own data flows from [privacy.md](privacy.md).
 - [ ] **Account deletion:** determine accurately whether the app creates developer-controlled accounts. Provider account
   connection alone is not necessarily app-account creation, but all apps must answer the deletion questions. If future
   releases create app accounts, add both in-app and web deletion paths before release.
