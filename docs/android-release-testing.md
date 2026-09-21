@@ -81,6 +81,44 @@ Wi-Fi before the storage estimate could complete produced a "Storage estimate un
 "Back up anyway" choice, and attempting to back up with no network produced a clean
 `could not connect to source` failure (`[Errno 7] No address associated with hostname`) rather than a crash or hang.
 
+## Evidence recorded September 21, 2026: R8 and all five operations on a release build
+
+The test artifact was `assembleRelease` (R8-minified with `proguard-rules.pro`), zipaligned and signed locally with
+the developer's debug keystore purely so its already-registered Google/Microsoft OAuth clients would authorize it;
+this is not a Play upload artifact and must not be distributed. It was installed with `adb install -r` directly over
+the existing debug installation on both the Samsung SM-G955W (ARM64, API 28) and the medium_phone emulator (API 36),
+which preserves app data, so the already-connected accounts and existing local backup workspace carried over
+unchanged.
+
+On the Samsung, using the dedicated Google test account (`javicallico@gmail.com`, 22 messages across INBOX, All
+Mail, and Important) already exercised for the September 20 evidence:
+
+- **Count** succeeded via a silent Google token refresh, returning the expected per-folder counts.
+- **Backup** succeeded, correctly skipping all 22 already-backed-up messages via the existing local workspace.
+- **Compare** (source: the Google account; destination: the local backup workspace) succeeded with exact matches
+  (9/9, 10/10, 3/3) across every non-empty folder.
+- **Restore** (local backup to the same Google account) succeeded; live output reported "9 existing messages in
+  destination" and "Pre-filtering duplicates," so no duplicate messages were created in INBOX.
+- **Migrate** (the Google account to itself) succeeded; it pre-fetched destination Message-IDs, again reporting the
+  9 pre-existing INBOX messages and skipping them rather than duplicating them.
+
+None of these runs, nor the `logcat` output captured around them, contained a leaked email address, access token, or
+refresh token, confirming the privacy redactor and the absence of credential logging hold under R8 as well as debug.
+
+On the emulator, a second Google account flow (revoke, reconnect, and a completed Count) was exercised during setup
+before the release APK was installed, and the release build's own storage-estimate/network-loss degradation paths
+above were exercised on this same artifact. Separately, a **Microsoft account was connected on the release build**
+(`jcallico@hotmail.com`, a real account, not a disposable test mailbox) and **Count** was run against it, succeeding
+via MSAL's silent token path and returning real folder counts through the app's privacy redactor (folder names were
+shown; the account-identifying path segment was replaced with `[account hidden]`). Because this Microsoft account is
+not a dedicated test mailbox, only the read-only Count operation was exercised against it; Backup, Restore, and
+Migrate were not run there. This still confirms that the `-dontwarn` rules for Nimbus JOSE's optional Tink/Bouncy
+Castle probes and the `SilentTokenProvider` keep rule are sufficient for MSAL under R8, matching the Google-side
+result above.
+
+Together with the September 20 evidence, this closes the remaining gap between automated/emulator coverage and a
+real, R8-minified, multi-provider, all-five-operation run on physical and emulated hardware.
+
 ## Reproduce the automated checks
 
 Run the host and Android build tests from the repository root:

@@ -134,7 +134,16 @@ this rule applies to the account. See Google's [developer-account information re
   build-tool update.
 - [ ] Run dependency, license, vulnerability, and Play SDK Index reviews for Chaquopy/Python, Google Play Services,
   MSAL, Compose, and transitive dependencies. Record versions and data behavior used to answer Data safety.
-- [ ] Confirm R8 rules preserve Chaquopy and authentication behavior. Exercise all five operations in a release build.
+- [x] Confirm R8 rules preserve Chaquopy and authentication behavior. Exercise all five operations in a release build.
+
+  Verified on September 21, 2026 with `assembleRelease` (R8-minified, debug-keystore-signed for local testing only;
+  not a Play upload artifact) installed on the physical Samsung SM-G955W and the medium_phone emulator. Count,
+  Compare, Backup, Restore, and Migrate all succeeded against a real Gmail test account using silent Google OAuth
+  token refresh (`SilentTokenProvider`), including cross-operation dedup (Compare matched real/local counts exactly;
+  Restore and Migrate correctly pre-filtered already-present messages instead of duplicating them). Count also
+  succeeded against a real Microsoft/Outlook account via MSAL, confirming the Nimbus JOSE/Tink/Bouncy Castle
+  `-dontwarn` rules and `SilentTokenProvider` are preserved for both providers. See [Android release resilience and
+  compatibility testing](android-release-testing.md) for the full evidence.
 - [ ] Run Android lint, unit/instrumentation tests, the Python suite, and the Play pre-launch report. Resolve crashes,
   ANRs, accessibility findings, security findings, and severe compatibility warnings.
 
