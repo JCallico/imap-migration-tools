@@ -81,6 +81,9 @@ internal class OperationRunner(
             )
         } else {
             runCatching {
+                // Chaquopy unpacks the interpreter on first access; never let that
+                // happen on the main thread. This worker thread is the right place.
+                PythonRuntime.ensureStarted()
                 PythonEngine().run(
                     pending.request,
                     EventListener { event ->

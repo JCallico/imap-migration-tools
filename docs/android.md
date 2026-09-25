@@ -40,6 +40,27 @@ The debug APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
 Chaquopy packages `src/` directly, so edits to the shared Python services are included in the next Android build without
 copying source files.
 
+## Size strategy
+
+Chaquopy bundles a full CPython interpreter, the standard library, and per-ABI native libraries, which dominates the
+artifact size. The mitigations are structural rather than heroic:
+
+- **Ship an App Bundle.** Google Play filters native libraries per device ABI at install time, so each user downloads
+  one ABI's worth of native code instead of all of them. CI builds and validates `bundleDebug` alongside the APK.
+- **Keep both ABIs.** The artifact carries `arm64-v8a` (physical devices) and `x86_64` (the emulator). Dropping to a
+  single ABI would shrink the upload, but Play already removes the unused ABI per device, and the emulator build needs
+  `x86_64`.
+- **Lazy runtime startup.** `engine/PythonRuntime` starts the interpreter idempotently on a background thread —
+  `OperationRunner` and the backup estimator call `ensureStarted()` on their worker threads, and `MainViewModel`
+  best-effort `prewarm()`s at launch so the first operation skips the unpack latency. Python is never initialized on
+  the main thread.
+- **Budget in CI.** `tools/check_android_size.sh <artifact> <budget-mb>` fails the build when the bundle exceeds its
+  budget and prints the largest entries so regressions are actionable. CI currently budgets 100 MB for the debug AAB;
+  tighten it toward the measured size plus ~30% headroom after the first green run (a whole extra ABI is ~20-30 MB
+  compressed and should trip the check).
+- **Pinned interpreter.** Chaquopy 17.0.0 and CPython 3.13 are pinned in `android/build.gradle.kts` and exercised by
+  the Android CI job, so a Chaquopy upgrade that bumps the Python version surfaces in tests before it reaches users.
+
 ## Appearance
 
 The native interface follows the visual language of the terminal application without imitating terminal interaction.
