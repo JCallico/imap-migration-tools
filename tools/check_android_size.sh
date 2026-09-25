@@ -32,8 +32,7 @@ largest_entries="$(
     unzip -l "$artifact_path" 2>/dev/null \
         | awk '/^--------+ / { seen++; next } seen == 1 && $1 ~ /^[0-9]+$/ { print $1" "$4 }' \
         | sort -k1 -rn \
-        | head -8 \
-        | awk '{ printf "%s (%s bytes); ", $2, $1 }'
+        | awk 'NR <= 8 { printf "%s (%s bytes); ", $2, $1 }'
 )"
 
 if [[ "$over_budget" == "1" ]]; then
