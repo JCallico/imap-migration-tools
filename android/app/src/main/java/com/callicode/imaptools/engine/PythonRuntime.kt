@@ -40,8 +40,9 @@ object PythonRuntime {
             try {
                 starter()
                 started = true
+                startError.set(null)
             } catch (t: Throwable) {
-                startError.compareAndSet(null, t)
+                startError.set(t)
                 throw t
             }
         }
