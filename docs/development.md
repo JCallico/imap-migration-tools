@@ -61,6 +61,8 @@ headless Linux systems. OAuth2 continues with process-local caching when the opt
 | `src/providers/` | Provider-specific behavior |
 | `src/utils/` | Shared utilities, including `.env` loading |
 | `test/` | Unit and local IMAP integration tests mirroring the source tree |
+| `src/mobile/` | Platform-neutral JSON adapter used by native mobile clients |
+| `android/` | Native Kotlin/Compose Android application and JVM tests |
 
 ## TUI display compatibility
 
@@ -106,6 +108,10 @@ On macOS or Linux:
 ```bash
 PYTHONPATH=src python -m pytest test/ -v
 ```
+
+Linux GUI tests automatically run on a private Xvfb display when the development requirements and the `xvfb` system
+package are installed. They are skipped if isolation is unavailable, preventing test windows from appearing on the
+developer's desktop.
 
 On Windows PowerShell:
 
@@ -177,6 +183,17 @@ dependency and portability tradeoffs before implementation.
 `src/ui` owns reusable interface behavior. `src/tui` retains compatibility module aliases and Textual adapters.
 `src/gui` contains wxPython GUI adapters; it must not implement authentication or IMAP behavior.
 New tests live in `test/ui` and `test/gui`. See [desktop testing](gui.md#tests-and-bundles).
+
+## Native Android application
+
+The Android interface calls `src/mobile/bridge.py` in-process through Chaquopy. Keep the bridge JSON-only and free of
+Android imports. Mobile code must invoke `imap_services` rather than compatibility scripts or CLI subprocesses. Never
+persist passwords or access tokens in Android preferences, request logs, results, or history.
+
+Android operations run in a foreground service because migrations can outlive an Activity. Keep cancellation
+cooperative and preserve structured progress events. The Python bridge is covered by `test/mobile`; Kotlin request
+encoding and UI behavior belong under `android/app/src/test` and `android/app/src/androidTest` respectively. See the
+[Android guide](android.md) for build instructions and scoped-storage constraints.
 
 ## Pull request green loop
 

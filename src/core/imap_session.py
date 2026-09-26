@@ -75,7 +75,14 @@ def ensure_connection(conn, conf):
     # The OAuth2 provider implementations (MSAL for Microsoft, google-auth for Google)
     # use internal caching and will only contact the server if the token needs refresh.
     if conf.get("oauth2"):
-        imap_oauth2.refresh_oauth2_token(conf, conf.get("oauth2_token"))
+        if conf.get("external_oauth2_token"):
+            token_provider = conf.get("oauth2_token_provider")
+            if token_provider is not None:
+                refreshed_token = token_provider()
+                if refreshed_token:
+                    conf["oauth2_token"] = refreshed_token
+        else:
+            imap_oauth2.refresh_oauth2_token(conf, conf.get("oauth2_token"))
     return imap_common.ensure_connection_from_conf(conn, conf)
 
 

@@ -31,18 +31,14 @@ jobs:
         shell: bash
         run: |
           python -m pip install '.[gui,tui]' pytest pytest-cov pyinstaller
+          if [ "$RUNNER_OS" = Linux ]; then python -m pip install 'pytest-xvfb>=3.1.1,<4'; fi
       - name: Verify native toolkit is available
         run: python -c "import wx; print(wx.version())"
       - name: Test desktop and shared core
         shell: bash
         env:
           PYTHONPATH: src
-        run: |
-          if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a python -m pytest test/gui test/ui -v --cov=src/gui --cov=src/ui --cov-report=xml:coverage-gui.xml
-          else
-            python -m pytest test/gui test/ui -v
-          fi
+        run: python -m pytest test/gui test/ui -v --cov=src/gui --cov=src/ui --cov-report=xml:coverage-gui.xml
       - name: Upload desktop coverage to Codecov
         if: runner.os == 'Linux'
         uses: codecov/codecov-action@v4

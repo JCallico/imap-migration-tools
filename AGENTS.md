@@ -5,6 +5,8 @@
 - `src/imap_backup.py`, `src/imap_restore.py`, `src/imap_migrate.py`, `src/imap_count.py`, and `src/imap_compare.py` are the primary CLI entry points.
 - `src/*_imap_*.py` files are compatibility wrappers for older script names. Keep them working when changing an entry point.
 - Shared IMAP, authentication, provider, and cache logic belongs in `src/core/`, `src/auth/`, `src/providers/`, and `src/utils/`.
+- `src/mobile/` owns the JSON-only adapter over `imap_services`; the independent native Gradle project lives in
+  `android/`, not in the Python package tree.
 - Tests mirror the source layout. CLI integration tests live in the corresponding `test/test_imap_*.py` file.
 
 ## Development workflow
@@ -45,6 +47,14 @@ Tests use local mock IMAP servers and bind loopback ports. In restricted environ
 CI test jobs must install the project (for example, `pip install .`) before
 running pytest. Installing test tools alone can hide missing runtime
 dependencies locally and cause collection failures in the clean CI matrix.
+
+The native Android application requires JDK 17, Gradle 8.13, Python 3.13, and Android SDK 36. Its repository-pinned
+tool versions are in `.mise.toml`. Configure the Android SDK with `ANDROID_HOME` or ignored `android/local.properties`,
+then verify Android changes with:
+
+```bash
+gradle -p android lintDebug testDebugUnitTest assembleDebug
+```
 
 ## Code conventions
 

@@ -1,15 +1,30 @@
 """Native widget interactions and real CLI/IMAP integration."""
 
 import os
+import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+if sys.platform.startswith("linux"):
+    # GTK otherwise prefers the live Wayland session even when pytest-xvfb has
+    # replaced DISPLAY, allowing native test windows to reach the desktop.
+    os.environ["GDK_BACKEND"] = "x11"
+    os.environ.pop("WAYLAND_DISPLAY", None)
+
 wx = pytest.importorskip("wx")
-if os.name != "nt" and __import__("sys").platform != "darwin" and not os.environ.get("DISPLAY"):
-    pytest.skip("Native GUI tests require a display (use xvfb-run on Linux)", allow_module_level=True)
+if sys.platform.startswith("linux"):
+    pytest_xvfb = pytest.importorskip(
+        "pytest_xvfb",
+        reason="Native GUI tests require pytest-xvfb on Linux so windows never use the desktop display",
+    )
+    if pytest_xvfb.xvfb_instance is None:
+        pytest.skip(
+            "Native GUI tests require Xvfb on Linux so windows never use the desktop display",
+            allow_module_level=True,
+        )
 
 import gui.app as native_gui  # noqa: E402
 from gui.app import (  # noqa: E402
@@ -25,6 +40,16 @@ from ui.appearance import load_appearance  # noqa: E402
 from ui.config import FIELDS, read_env, save_form  # noqa: E402
 from ui.layout import load_window_size, save_layout  # noqa: E402
 from ui.operations import OPERATION_BY_NAME  # noqa: E402
+
+
+def test_linux_native_widgets_use_only_the_xvfb_display():
+    if not sys.platform.startswith("linux"):
+        pytest.skip("Xvfb isolation is Linux-specific")
+
+    assert pytest_xvfb.xvfb_instance is not None
+    assert os.environ["GDK_BACKEND"] == "x11"
+    assert "WAYLAND_DISPLAY" not in os.environ
+    assert os.environ["DISPLAY"] == f":{pytest_xvfb.xvfb_instance.display}"
 
 
 @pytest.fixture(scope="module")

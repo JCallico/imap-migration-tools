@@ -4,7 +4,7 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from imap_services.exceptions import CallbackError
+from imap_services.exceptions import CallbackError, OperationCancelled
 
 
 @dataclass(frozen=True)
@@ -47,6 +47,8 @@ class EventSink:
         try:
             with self._lock:
                 self.callback(event)
+        except OperationCancelled:
+            raise
         except Exception as exc:
             raise CallbackError("operation event callback failed") from exc
 

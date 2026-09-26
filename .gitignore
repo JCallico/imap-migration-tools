@@ -11,6 +11,9 @@ venv/
 .claude
 
 .venv/
+.gradle/
+local.properties
+*.iml
 build/
 dist/
 *.spec

@@ -56,6 +56,50 @@ def test_connect_translates_missing_connection(monkeypatch):
         _common.connect(password_account(), "destination")
 
 
+def test_explicit_oauth_access_token_keeps_shared_refresh_by_default(monkeypatch):
+    account = AccountConfig(
+        "imap.example.com",
+        "person@example.com",
+        oauth2=OAuth2Config("client", access_token="token", provider="google"),
+    )
+    conf = _common.build_connection_config(account)
+    refresh_calls = []
+    monkeypatch.setattr(
+        _common.imap_session.imap_oauth2,
+        "refresh_oauth2_token",
+        lambda *args: refresh_calls.append(args),
+    )
+    monkeypatch.setattr(
+        _common.imap_session.imap_common, "ensure_connection_from_conf", lambda connection, _conf: connection
+    )
+
+    assert _common.imap_session.ensure_connection(object(), conf) is not None
+    assert conf["external_oauth2_token"] is False
+    assert refresh_calls == [(conf, "token")]
+
+
+def test_external_token_provider_owns_refresh(monkeypatch):
+    supplied_tokens = iter(("initial", "refreshed"))
+    account = AccountConfig(
+        "imap.example.com",
+        "person@example.com",
+        oauth2=OAuth2Config(
+            "client",
+            access_token=next(supplied_tokens),
+            provider="google",
+            token_provider=lambda: next(supplied_tokens),
+        ),
+    )
+    conf = _common.build_connection_config(account)
+    monkeypatch.setattr(
+        _common.imap_session.imap_common, "ensure_connection_from_conf", lambda connection, _conf: connection
+    )
+
+    assert _common.imap_session.ensure_connection(object(), conf) is not None
+    assert conf["external_oauth2_token"] is True
+    assert conf["oauth2_token"] == "refreshed"
+
+
 def test_event_sink_is_silent_without_callback_and_wraps_callback_errors():
     EventSink("count", None).message("ignored")
     sink = EventSink("count", lambda _event: (_ for _ in ()).throw(RuntimeError("boom")))

@@ -9,16 +9,22 @@ from typing import Optional
 @dataclass(frozen=True)
 class FolderResult:
     name: str
-    processed: int = 0
-    skipped: int = 0
-    failed: int = 0
-    deleted: int = 0
+    processed: Optional[int] = None
+    skipped: Optional[int] = None
+    failed: Optional[int] = None
+    deleted: Optional[int] = None
 
 
 @dataclass(frozen=True)
 class TransferResult:
     folders: tuple[FolderResult, ...] = ()
     artifacts: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True)
+class BackupEstimateResult:
+    estimated_bytes: int
+    message_count: int
 
 
 @dataclass(frozen=True)
