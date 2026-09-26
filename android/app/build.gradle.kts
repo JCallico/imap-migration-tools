@@ -94,7 +94,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("com.google.android.gms:play-services-auth:21.5.1")
-    implementation("com.microsoft.identity.client:msal:8.4.1")
+    implementation("com.microsoft.identity.client:msal:8.5.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")

@@ -140,8 +140,7 @@ this rule applies to the account. See Google's [developer-account information re
   artifacts. Headline results: no copyleft licenses anywhere in the graph (MIT/Apache 2.0/PSF throughout, Google Play
   services under its proprietary but non-OSS-conflicting SDK license); no unpatched CVEs in any directly-declared
   dependency (nimbus-jose-jwt 10.0.2, gson 2.8.9, and okio 3.7.0 are each the exact version that fixed a prior CVE);
-  one transitive CVE noted but not directly fixable (`httpcore5` 5.3, pinned by MSAL, has two low-practical-risk DoS
-  CVEs fixed in 5.5.0+); and one recommended but not yet applied version bump (MSAL 8.4.1 → 8.5.0). Corrected a
+  MSAL 8.5.0 resolves `httpcore5` 5.4.3 and addresses CVE-2026-54399 in the HTTP/1.1 message parser. Corrected a
   historical, since-fixed community report that MSAL collects the persistent `ANDROID_ID`: that was fixed in the
   `common` library in 2021, and current versions use a non-hardware-tied random GUID for protocol telemetry instead.
   [`docs/open-source-notices.md`](open-source-notices.md) was updated to accurately separate Android-bundled

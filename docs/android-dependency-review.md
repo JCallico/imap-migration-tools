@@ -85,19 +85,19 @@ general Google Sign-In, profile, or contacts scope is requested.
 
 ## Microsoft Authentication Library (MSAL) for Android
 
-Direct dependency `com.microsoft.identity.client:msal:8.4.1`, used only for the
+Direct dependency `com.microsoft.identity.client:msal:8.5.0`, used only for the
 `https://outlook.office365.com/IMAP.AccessAsUser.All` IMAP scope grant. MSAL pulls in a large transitive graph through
 Microsoft's shared `common`/`common4j` identity core:
 
 | Artifact | Resolved version | License | CVE status |
 | --- | --- | --- | --- |
-| `com.microsoft.identity.client:msal` | 8.4.1 | MIT | Only historical CVE-2019-1487 (fixed long ago, pre-0.3.1-Alpha); **not affected**. Outdated by two releases — 8.5.0 is current (Sep 2024); recommend upgrading to pick up `common`/transitive patches. |
-| `com.microsoft.identity:common` / `common4j` | 24.5.0 | MIT | No published CVEs. (CVE-2025-32016 is a *different*, .NET-only `Microsoft.Identity.Web` library — not applicable.) |
+| `com.microsoft.identity.client:msal` | 8.5.0 | MIT | Only historical CVE-2019-1487 (fixed long ago, pre-0.3.1-Alpha); **not affected**. Current release as of September 25, 2026. |
+| `com.microsoft.identity:common` / `common4j` | 24.7.0 | MIT | No published CVEs. (CVE-2025-32016 is a *different*, .NET-only `Microsoft.Identity.Web` library — not applicable.) |
 | `com.nimbusds:nimbus-jose-jwt` | 10.0.2 | Apache 2.0 | CVE-2025-53864 (JWT claim recursion DoS) affects 10.0.x **before** 10.0.2 — **fixed version, not affected**. |
 | `com.google.code.gson:gson` | 2.8.9 | Apache 2.0 | CVE-2022-25647 (deserialization DoS) affects versions **before** 2.8.9 — **exact fixed version, not affected**. |
 | `com.squareup.moshi:moshi` / `moshi-adapters` | 1.15.2 | Apache 2.0 | No CVEs found. |
 | `com.squareup.okio:okio` | 3.7.0 | Apache 2.0 | CVE-2023-3635 (GzipSource DoS) fixed in 1.17.6/3.4.0 — **not affected**. |
-| `org.apache.httpcomponents.core5:httpcore5` | 5.3 | Apache 2.0 | **Affected**: CVE-2026-54399 (header-size resource exhaustion) and CVE-2026-54428 (HPACK unlimited header size), both fixed in 5.5.0+. Low practical risk here (this app is an outbound OAuth/token client, not an HTTP server accepting attacker-controlled connections), but this is MSAL's transitive pin, not ours to bump directly — tracked as an upgrade-MSAL action item. |
+| `org.apache.httpcomponents.core5:httpcore5` | 5.4.3 | Apache 2.0 | MSAL 8.5.0 upgraded from 5.3 to 5.4.3 to address CVE-2026-54399 (uncontrolled resource consumption in the HTTP/1.1 message parser). |
 | `com.yubico.yubikit:android` / `core` / `piv` | 2.5.0 | Apache 2.0 | Dormant hardware-security-key support; only activates if a YubiKey is attached via USB/NFC and explicitly invoked. This app never does. No behavior or data impact. |
 | `io.opentelemetry:opentelemetry-*` | 1.62.0 / extension-kotlin 1.18.0 | Apache 2.0 | Local instrumentation API only; transmits nothing externally unless the host app registers an exporter, which this app does not. |
 | `androidx.webkit`, `androidx.browser`, `androidx.datastore`, `androidx.credentials` | current stable | Apache 2.0 | No CVEs found. |
@@ -128,9 +128,9 @@ and the **authentication token** (held in this app's own boundary) as collected 
 MSAL-generated correlation GUID is diagnostic/protocol telemetry sent only to Microsoft's own identity service, not a
 persistent device identifier, and should not be declared under "Device or other IDs."
 
-**Action item**: upgrade `com.microsoft.identity.client:msal` from 8.4.1 to 8.5.0 (or later) to pick up `common`
-library and transitive `httpcore5` patches. Not performed as part of this review; re-test the OAuth/reconnect flows on
-both providers if this upgrade is made.
+**Upgrade completed September 25, 2026**: MSAL 8.5.0 updates `common`/`common4j` to 24.7.0 and `httpcore5` to 5.4.3.
+The Android build, Microsoft authentication unit tests, R8-minified release build, and real Microsoft connect,
+silent-token, disconnect, and reconnect flows must remain green before publication.
 
 ## AndroidX Compose, Jetpack, and Kotlin
 
