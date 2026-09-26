@@ -73,7 +73,7 @@ class PythonRuntimeTest {
     }
 
     @Test
-    fun prewarmDoesNotThrowAndEventuallyStarts() {
+    fun prewarmRecordsBackgroundFailureWithoutThrowing() {
         PythonRuntime.prewarm()
         // The default starter touches Chaquopy, which is unavailable on the JVM;
         // assert only that prewarm itself never throws from the calling thread and

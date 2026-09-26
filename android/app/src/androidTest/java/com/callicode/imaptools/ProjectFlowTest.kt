@@ -113,7 +113,11 @@ class ProjectFlowTest {
 
     @Test
     fun savedHistoryOutputRequiresConfirmationAndCanBeDeleted() {
-        HistoryStore(compose.activity).append(
+        val historyStore = HistoryStore(compose.activity)
+        historyStore.entries().forEach { entry ->
+            assertTrue(historyStore.delete(entry.id))
+        }
+        historyStore.append(
             OperationState(status = RunStatus.SUCCEEDED, operation = Operation.COUNT, result = "{\"total\":12}"),
         )
 
@@ -125,7 +129,7 @@ class ProjectFlowTest {
         compose.onNodeWithContentDescription("Confirm delete saved output").performClick()
 
         compose.onNodeWithText("─ NO RUNS RECORDED ").assertIsDisplayed()
-        assertTrue(HistoryStore(compose.activity).entries().isEmpty())
+        assertTrue(historyStore.entries().isEmpty())
     }
 
     @Test

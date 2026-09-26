@@ -42,7 +42,7 @@ jobs:
           tools/check_android_16kb.sh android/app/build/outputs/bundle/debug/app-debug.aab
 
       - name: Enforce Android size budget
-        run: tools/check_android_size.sh android/app/build/outputs/bundle/debug/app-debug.aab 100
+        run: tools/check_android_size.sh android/app/build/outputs/bundle/debug/app-debug.aab 50
 
       - uses: actions/upload-artifact@v4
         with:

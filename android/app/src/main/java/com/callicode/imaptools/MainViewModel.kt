@@ -73,8 +73,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var estimateCancellation: CancellationSignal? = null
 
     init {
-        // Best-effort warm-up of the embedded Python runtime. Runs on a background
-        // thread; a user who never starts an operation simply skips first-use latency.
+        // Best-effort warm-up of the embedded Python runtime. This trades modest
+        // background work at launch for lower latency when the first operation starts.
         PythonRuntime.prewarm()
         migrateLegacyWorkspaces(initialProject.first.id)
         viewModelScope.launch(Dispatchers.IO) {
