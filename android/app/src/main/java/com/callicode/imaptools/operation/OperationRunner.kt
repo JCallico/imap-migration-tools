@@ -6,6 +6,7 @@ import com.callicode.imaptools.engine.CancellationSignal
 import com.callicode.imaptools.engine.EngineResult
 import com.callicode.imaptools.engine.EventListener
 import com.callicode.imaptools.engine.PythonEngine
+import com.callicode.imaptools.engine.PythonRuntime
 import com.callicode.imaptools.model.Operation
 import com.callicode.imaptools.model.OperationEvent
 import com.callicode.imaptools.model.OperationState
@@ -81,6 +82,9 @@ internal class OperationRunner(
             )
         } else {
             runCatching {
+                // Chaquopy unpacks the interpreter on first access; never let that
+                // happen on the main thread. This worker thread is the right place.
+                PythonRuntime.ensureStarted()
                 PythonEngine().run(
                     pending.request,
                     EventListener { event ->

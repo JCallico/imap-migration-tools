@@ -8,6 +8,7 @@ import com.callicode.imaptools.auth.SilentTokenProvider
 import com.callicode.imaptools.engine.BackupEstimateResult
 import com.callicode.imaptools.engine.CancellationSignal
 import com.callicode.imaptools.engine.PythonEngine
+import com.callicode.imaptools.engine.PythonRuntime
 import com.callicode.imaptools.engine.RequestEncoder
 import com.callicode.imaptools.model.AccountState
 import com.callicode.imaptools.model.AccountSlot
@@ -72,6 +73,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var estimateCancellation: CancellationSignal? = null
 
     init {
+        // Best-effort warm-up of the embedded Python runtime. Runs on a background
+        // thread; a user who never starts an operation simply skips first-use latency.
+        PythonRuntime.prewarm()
         migrateLegacyWorkspaces(initialProject.first.id)
         viewModelScope.launch(Dispatchers.IO) {
             for ((project, configuration) in pendingSaves) {
@@ -195,6 +199,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         mutableBackupEstimate.value = BackupEstimateState.Estimating(available)
         estimateJob = viewModelScope.launch(Dispatchers.IO) {
             val result = runCatching {
+                PythonRuntime.ensureStarted()
                 PythonEngine().estimateBackup(
                     request,
                     cancellation,
