@@ -9,13 +9,14 @@ import pytest
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, OptionList, RichLog, Select, Static
 
 import tui.app as app_module
-from tui.app import OPERATION_PANEL_HEIGHTS, ConfirmationModal, ImapToolsApp, InformationModal
+from tui.app import OPERATION_PANEL_HEIGHTS, ConfirmationModal, ImapToolsApp, InformationModal, ProjectNameModal
 from tui.config import FIELDS, read_env
 from tui.display import resolve_display_profile
 from tui.history import RunRecord
 from tui.layout import load_layout
 from tui.operations import RunOptions
 from tui.splitter import ResizeHandle
+from ui.projects import ProjectStore
 
 
 @pytest.mark.parametrize(
@@ -388,7 +389,8 @@ def test_configuration_is_one_form_populated_with_defaults(tmp_path):
         app = ImapToolsApp(tmp_path / ".env")
         async with app.run_test(size=(160, 40)) as pilot:
             await pilot.pause()
-            assert app.query_one("#config-panel").border_title == "Configuration"
+            separator = " - " if app.display_profile.mode == "ascii" else " · "
+            assert app.query_one("#config-panel").border_title == f"Configuration{separator}local"
             section_titles = list(app.query(".group-title"))
             assert len(section_titles) == 9
             assert all(title.region.height == 1 for title in section_titles)
@@ -538,7 +540,7 @@ def test_run_request_does_not_flatten_configuration_into_os_environment(tmp_path
     )
     app = ImapToolsApp(env_path)
     request = app._make_run_request("backup", RunOptions(environment={"SRC_LOCAL_PATH": ""}))
-    assert request.environment == {"SRC_LOCAL_PATH": ""}
+    assert request.environment == {"IMAP_TOOLS_ENV_FILE": str(env_path.resolve()), "SRC_LOCAL_PATH": ""}
     assert "SRC_IMAP_HOST" not in request.environment
     assert "SRC_IMAP_PASSWORD" not in request.environment
 
@@ -1440,6 +1442,212 @@ def test_unmounted_and_entrypoint_guard_branches(tmp_path, monkeypatch):
 
     launched = Mock()
     fake_app = Mock(run=launched)
-    monkeypatch.setattr(app_module, "ImapToolsApp", lambda **_kwargs: fake_app)
+    monkeypatch.setattr(app_module, "ImapToolsApp", lambda *_args, **_kwargs: fake_app)
     app_module.main([])
     launched.assert_called_once()
+
+
+def test_switching_projects_reloads_the_complete_form_without_merging(tmp_path):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        store.ensure_root()
+        store.default_path.write_text(
+            'SRC_IMAP_HOST="default.example.com"\nSRC_IMAP_PASSWORD="default-secret"\nGMAIL_MODE="true"\n',
+            encoding="utf-8",
+        )
+        acme = store.create("acme")
+        acme.path.write_text('SRC_IMAP_HOST="acme.example.com"\n', encoding="utf-8")
+        app = ImapToolsApp(projects=store)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            assert app.project.name == "default"
+            assert app.query_one("#env-src-imap-password", Input).password
+            assert app.query_one("#rename-project", Button).disabled
+
+            app.query_one("#project-select", Select).value = "acme"
+            await pilot.pause()
+
+            assert app.project == acme
+            assert app.env_path == acme.path
+            assert app.query_one("#env-src-imap-host", Input).value == "acme.example.com"
+            assert app.query_one("#env-src-imap-password", Input).value == ""
+            assert app.query_one("#env-gmail-mode", Checkbox).value is False
+            separator = " - " if app.display_profile.mode == "ascii" else " · "
+            assert app.query_one("#config-panel").border_title == f"Configuration{separator}acme"
+            assert not app.query_one("#delete-project", Button).disabled
+            assert store.remembered() == "acme"
+            assert app._make_run_request("count", RunOptions()).environment == {
+                "IMAP_TOOLS_ENV_FILE": str(acme.path.resolve())
+            }
+            assert "default-secret" not in acme.path.read_text(encoding="utf-8")
+
+    asyncio.run(run_test())
+
+
+def test_pending_edit_is_saved_to_the_previous_project_before_switching(tmp_path):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        app = ImapToolsApp(projects=store)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#env-src-imap-host", Input).value = "pending.example.com"
+            await pilot.pause()
+            assert app.configuration_save_timer is not None
+
+            assert app.switch_project(acme)
+
+            assert read_env(store.default_path)["SRC_IMAP_HOST"] == "pending.example.com"
+            assert read_env(acme.path)["SRC_IMAP_HOST"] == ""
+            await pilot.pause(0.8)
+            assert read_env(acme.path)["SRC_IMAP_HOST"] == ""
+
+    asyncio.run(run_test())
+
+
+def test_invalid_pending_edit_blocks_project_switch(tmp_path, monkeypatch):
+    notices = []
+
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        app = ImapToolsApp(projects=store)
+        monkeypatch.setattr(app, "notify", lambda message, **kwargs: notices.append(message))
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#env-max-workers", Input).value = "0"
+            await pilot.pause()
+
+            assert not app.switch_project(acme)
+
+            assert app.project.name == "default"
+            assert app.query_one("#project-select", Select).value == "default"
+            assert "Fix or discard the pending configuration edit before changing projects" in notices
+
+    asyncio.run(run_test())
+
+
+def test_create_rename_and_delete_projects_from_the_workspace(tmp_path, monkeypatch):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        app = ImapToolsApp(projects=store)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#new-project", Button).press()
+            await pilot.pause()
+            assert isinstance(app.screen, ProjectNameModal)
+            app.screen.query_one("#project-name", Input).value = "acme"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.project.name == "acme"
+            assert (store.root / "acme.env").is_file()
+            app.query_one("#env-src-imap-host", Input).value = "acme.example.com"
+            await pilot.pause(0.8)
+
+            app.query_one("#rename-project", Button).press()
+            await pilot.pause()
+            app.screen.query_one("#project-name", Input).value = "Acme Corp"
+            app.screen.query_one("#project-ok", Button).press()
+            await pilot.pause()
+
+            assert app.project.name == "Acme Corp"
+            assert not (store.root / "acme.env").exists()
+            assert read_env(app.env_path)["SRC_IMAP_HOST"] == "acme.example.com"
+            assert app.query_one("#env-src-imap-host", Input).value == "acme.example.com"
+            assert store.remembered() == "Acme Corp"
+
+            app.query_one("#delete-project", Button).press()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmationModal)
+            assert "Acme Corp" in app.screen.message
+            app.screen.query_one("#confirm-input", Input).value = "DELETE"
+            app.screen.query_one("#yes-action", Button).press()
+            await pilot.pause()
+
+            assert app.project.name == "default"
+            assert store.named_projects() == []
+            assert store.remembered() == "default"
+
+    asyncio.run(run_test())
+
+
+def test_invalid_project_name_is_reported_without_changing_projects(tmp_path, monkeypatch):
+    notices = []
+
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        app = ImapToolsApp(projects=store)
+        monkeypatch.setattr(app, "notify", lambda message, **kwargs: notices.append(message))
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            notices.clear()
+            app.project_name_entered("new", "default")
+            app.project_name_entered("new", None)
+
+            assert app.project.name == "default"
+            assert notices == ['"default" is reserved']
+
+    asyncio.run(run_test())
+
+
+def test_other_instance_changes_refresh_projects_and_protect_a_deleted_active_project(tmp_path, monkeypatch):
+    notices = []
+
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        app = ImapToolsApp(projects=store, project_name="acme")
+        monkeypatch.setattr(app, "notify", lambda message, **kwargs: notices.append(message))
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            ProjectStore(store.root).create("beta")
+            await pilot.pause(1.1)
+            assert "beta" in [value for _label, value in app.project_options()]
+
+            acme.path.unlink()
+            await pilot.pause(1.1)
+
+            assert ("acme (missing)", "acme") in app.project_options()
+            assert (
+                app.query_one("#config-panel").border_subtitle == f"{app.display_profile.error} external .env invalid"
+            )
+            app.query_one("#env-src-imap-host", Input).value = "after-delete.example.com"
+            await pilot.pause(0.8)
+            assert not acme.path.exists()
+            assert any("missing" in notice for notice in notices)
+
+    asyncio.run(run_test())
+
+
+def test_local_env_is_listed_and_launch_arguments_select_projects(tmp_path, monkeypatch):
+    launched = []
+
+    class FakeApp:
+        def __init__(self, env_path=None, *, display_profile, projects, project_name):
+            launched.append((env_path, projects.initial(env_path, project_name).name))
+
+        def run(self):
+            pass
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").touch()
+    ProjectStore().create("acme")
+    monkeypatch.setattr(app_module, "ImapToolsApp", FakeApp)
+
+    app_module.main([])
+    app_module.main(["--project", "acme"])
+    app_module.main(["--env", str(tmp_path / "chosen.env")])
+    monkeypatch.setenv("IMAP_TOOLS_ENV_FILE", str(tmp_path / "variable.env"))
+    app_module.main([])
+
+    assert launched == [
+        (None, "local"),
+        (None, "acme"),
+        (tmp_path / "chosen.env", "local"),
+        (tmp_path / "variable.env", "local"),
+    ]
+    with pytest.raises(SystemExit):
+        app_module.main(["--project", "missing"])
+    with pytest.raises(SystemExit):
+        app_module.main(["--project", "acme", "--env", "x.env"])

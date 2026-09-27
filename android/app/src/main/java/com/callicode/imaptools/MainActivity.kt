@@ -191,6 +191,8 @@ private fun ImapToolsApp(
     var selectedHistory by remember { mutableStateOf<HistoryEntry?>(null) }
     var showNewProject by remember { mutableStateOf(false) }
     var newProjectName by remember { mutableStateOf("") }
+    var showRenameProject by remember { mutableStateOf(false) }
+    var renamedProjectName by remember { mutableStateOf("") }
     var confirmProjectDeletion by remember { mutableStateOf(false) }
     var projectBackupsForDeletion by remember { mutableStateOf(emptyList<String>()) }
     var showRetainedBackups by remember { mutableStateOf(false) }
@@ -302,6 +304,10 @@ private fun ImapToolsApp(
                 onNewProject = {
                     newProjectName = ""
                     showNewProject = true
+                },
+                onRenameProject = {
+                    renamedProjectName = activeProject.name
+                    showRenameProject = true
                 },
                 onDeleteProject = {
                     projectBackupsForDeletion = viewModel.activeProjectBackupNames()
@@ -452,6 +458,28 @@ private fun ImapToolsApp(
                 OutlinedTextField(
                     value = newProjectName,
                     onValueChange = { newProjectName = it },
+                    label = { Text("Project name") },
+                    singleLine = true,
+                )
+            },
+        )
+    }
+    if (showRenameProject) {
+        AlertDialog(
+            onDismissRequest = { showRenameProject = false },
+            dismissButton = { TextButton(onClick = { showRenameProject = false }) { Text("Cancel") } },
+            confirmButton = {
+                Button(onClick = {
+                    val error = viewModel.renameActiveProject(renamedProjectName)
+                    showRenameProject = false
+                    if (error != null) message = error
+                }) { Text("Rename") }
+            },
+            title = { Text("Rename ${activeProject.name}") },
+            text = {
+                OutlinedTextField(
+                    value = renamedProjectName,
+                    onValueChange = { renamedProjectName = it },
                     label = { Text("Project name") },
                     singleLine = true,
                 )
@@ -626,13 +654,13 @@ private fun RetainedBackupsDialog(
                             Text(workspace, fontFamily = FontFamily.Monospace)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(
-                                    onClick = { onExport(group.projectId, workspace) },
+                                    onClick = { onExport(group.groupId, workspace) },
                                     modifier = Modifier.semantics {
                                         contentDescription = "Export retained backup $workspace"
                                     },
                                 ) { Text("EXPORT") }
                                 TextButton(
-                                    onClick = { onDelete(group.projectId, workspace) },
+                                    onClick = { onDelete(group.groupId, workspace) },
                                     modifier = Modifier.semantics {
                                         contentDescription = "Delete retained backup $workspace"
                                     },
@@ -744,6 +772,7 @@ private fun ConfigurationScreen(
     activeProject: ProjectProfile,
     onSelectProject: (ProjectProfile) -> Unit,
     onNewProject: () -> Unit,
+    onRenameProject: () -> Unit,
     onDeleteProject: () -> Unit,
     retainedBackups: List<RetainedBackupGroup>,
     onManageRetainedBackups: () -> Unit,
@@ -765,6 +794,7 @@ private fun ConfigurationScreen(
                 activeProject,
                 onSelectProject,
                 onNewProject,
+                onRenameProject,
                 onDeleteProject,
                 retainedBackups.isNotEmpty(),
                 onManageRetainedBackups,
@@ -909,6 +939,7 @@ private fun ProjectSelector(
     activeProject: ProjectProfile,
     onSelect: (ProjectProfile) -> Unit,
     onNew: () -> Unit,
+    onRename: () -> Unit,
     onDelete: () -> Unit,
     hasRetainedBackups: Boolean,
     onManageRetainedBackups: () -> Unit,
@@ -921,7 +952,7 @@ private fun ProjectSelector(
         ) {
             projects.forEach { project ->
                 FilterChip(
-                    selected = project.id == activeProject.id,
+                    selected = project == activeProject,
                     onClick = { onSelect(project) },
                     enabled = !authenticationBusy,
                     label = { Text(project.name) },
@@ -929,15 +960,23 @@ private fun ProjectSelector(
             }
         }
         Text(
-            "Each project autosaves to its own private .env file.",
+            if (activeProject.isDefault) {
+                "Autosaves to the default project's private .env file."
+            } else {
+                "Autosaves to ${activeProject.name}.env."
+            },
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onNew, enabled = !authenticationBusy) { Text("NEW PROJECT") }
             TextButton(
+                onClick = onRename,
+                enabled = !activeProject.isDefault && !authenticationBusy,
+            ) { Text("RENAME") }
+            TextButton(
                 onClick = onDelete,
-                enabled = projects.size > 1 && !authenticationBusy,
+                enabled = !activeProject.isDefault && !authenticationBusy,
             ) { Text("DELETE") }
         }
         if (hasRetainedBackups) {

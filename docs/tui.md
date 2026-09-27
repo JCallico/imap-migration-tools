@@ -51,9 +51,17 @@ ASCII mode uses portable borders and status markers, with bold or reverse-video 
 The default `auto` mode selects ASCII for `TERM=dumb` or a non-UTF-8 locale. Use an explicit mode when a terminal
 reports inaccurate capabilities. `NO_COLOR` is honored in every mode.
 
+## Projects
+
+The Project selector at the top of Configuration switches among the `default` project, the `local` project found from
+the launch directory, and named projects stored as `~/.imap-migration-tools/<name>.env`. Use `new`, `rename`, and
+`delete` beside the selector to manage named projects; deletion requires typing `DELETE`. `Alt+P` focuses the selector.
+Choose a project at launch with `imap-tools --project NAME` or open a specific file with `imap-tools --env PATH`. See
+[Projects](configuration.md#projects) for the storage layout, migration of existing `.env` files, and recovery.
+
 ## Configuration changes
 
-The interface autosaves valid form changes to `.env`. It also notices edits made outside the application and reloads
+The interface autosaves valid form changes to the selected project's `.env` file. It also notices edits made outside the application and reloads
 valid configuration automatically. An invalid external file leaves the current form unchanged and displays an error.
 If an external edit arrives while an autosave is pending, the external file takes precedence and is not overwritten.
 

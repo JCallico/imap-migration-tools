@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections import deque
 from pathlib import Path
+from typing import Optional
 
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -28,7 +29,6 @@ from textual.widgets import (
 
 from tui.config import (
     FIELDS,
-    discover_env,
     effective_values,
     read_env,
     save_form,
@@ -54,6 +54,7 @@ from tui.operations import (
 )
 from tui.runner import OperationRunner, RunRequest
 from tui.splitter import ResizeHandle
+from ui.projects import Project, ProjectStore, explicit_env, local_env, run_environment
 from ui.session import RunSession
 from ui.workspace import make_options, run_confirmation, validated_form
 from utils.filesystem_watch import FilesystemWatcher
@@ -144,8 +145,46 @@ class ConfirmationModal(ModalScreen[bool]):
         self.action_yes()
 
 
+class ProjectNameModal(ModalScreen[Optional[str]]):
+    """Centered prompt for a new or renamed project name."""
+
+    BINDINGS = [Binding("escape", "cancel", "cancel", show=False, priority=True)]
+
+    def __init__(self, title: str, value: str = "") -> None:
+        super().__init__()
+        self.dialog_title = title
+        self.value = value
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="project-dialog"):
+            yield Input(value=self.value, placeholder="project name", max_length=60, id="project-name")
+            with Horizontal(classes="compact-actions"):
+                yield Button("ok", id="project-ok", variant="success")
+                yield Button("cancel", id="project-cancel")
+
+    def on_mount(self) -> None:
+        self.query_one("#project-dialog").border_title = self.dialog_title
+        self.query_one("#project-name", Input).focus()
+
+    @on(Button.Pressed)
+    def button_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        if event.button.id == "project-ok":
+            self.action_accept()
+        else:
+            self.action_cancel()
+
+    @on(Input.Submitted, "#project-name")
+    def action_accept(self) -> None:
+        self.dismiss(self.query_one("#project-name", Input).value)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 KEY_REFERENCE = """GLOBAL
 Alt+1 … Alt+5   select Count, Compare, Backup, Restore, or Migrate
+Alt+P           focus the Project selector
 Alt+C           focus Configuration
 Alt+O           focus Operation
 Alt+L           focus Output filter
@@ -173,7 +212,9 @@ Esc             cancel or close"""
 GENERAL_HELP = """IMAP Migration Tools provides one workspace for configuring and running mailbox operations.
 
 1. CONFIGURE
-Enter account, authentication, local-path, and operation settings in Configuration. Changes are validated and saved automatically to the discovered .env file. Fields needed by the selected operation are highlighted; missing values receive stronger warning styling.
+Choose a project at the top of Configuration. Each project is one .env file: "default" is ~/.imap-migration-tools/.env, every named project is <name>.env in that directory, and "local" is a .env discovered from the launch directory. Use new, rename, and delete to manage named projects; the last selected project reopens on the next launch.
+
+Enter account, authentication, local-path, and operation settings in Configuration. Changes are validated and saved automatically to the selected project's .env file. Fields needed by the selected operation are highlighted; missing values receive stronger warning styling.
 
 2. SELECT A TOOL
 Choose Count, Compare, Backup, Restore, or Migrate in Tools. The icon on the right indicates whether the current configuration is ready. Operation contains only choices specific to that run; shared settings remain in Configuration.
@@ -230,7 +271,7 @@ class ImapToolsApp(App[None]):
     TITLE = "IMAP Migration Tools"
     ENABLE_COMMAND_PALETTE = False
     DEFAULT_KEY_LEGEND = (
-        "[bold #388bff]Alt+1-5[/] tool   [bold #388bff]Alt+C/O/L[/] config/operation/log   "
+        "[bold #388bff]Alt+1-5[/] tool   [bold #388bff]Alt+P/C/O/L[/] project/config/operation/log   "
         "[bold #44dd55]F5[/] run   [bold #e6d84a]drag/arrows[/] resize   "
         "[bold #d45cff]F1/F2[/] help/keys   [bold #ff4d4d]F10[/] quit"
     )
@@ -240,6 +281,7 @@ class ImapToolsApp(App[None]):
         Binding("alt+3", "select_operation('backup')", "backup", show=False, priority=True),
         Binding("alt+4", "select_operation('restore')", "restore", show=False, priority=True),
         Binding("alt+5", "select_operation('migrate')", "migrate", show=False, priority=True),
+        Binding("alt+p", "focus_project", "project", show=False, priority=True),
         Binding("alt+c", "focus_config", "config", show=False, priority=True),
         Binding("alt+o", "focus_operation", "operation", show=False, priority=True),
         Binding("alt+l", "focus_log", "log", show=False, priority=True),
@@ -255,11 +297,15 @@ class ImapToolsApp(App[None]):
         env_path: Path | None = None,
         layout_path: Path | None = None,
         display_profile: DisplayProfile | None = None,
+        projects: ProjectStore | None = None,
+        project_name: str | None = None,
     ) -> None:
         super().__init__()
         self.display_profile = display_profile or resolve_display_profile()
         self.working_directory = Path.cwd()
-        self.env_path = env_path or discover_env()
+        self.projects = projects or ProjectStore(local_env=local_env(env_path))
+        self.project = self.projects.initial(env_path, project_name)
+        self.env_path = self.project.path
         self.layout_path = layout_path or default_layout_path()
         self.layout_path_explicit = layout_path is not None
         self.runner = OperationRunner()
@@ -282,6 +328,7 @@ class ImapToolsApp(App[None]):
         self.filesystem_watcher = FilesystemWatcher()
         self.filesystem_watcher.watch_file("configuration", self.env_path)
         self.filesystem_watcher.watch_directory("history", history_dir(), "*.json")
+        self.filesystem_watcher.watch_directory("projects", self.projects.root, "*.env")
         self.configuration_file_digest = self.env_digest()
         self.configuration_rejected_digest: str | None = None
 
@@ -290,6 +337,19 @@ class ImapToolsApp(App[None]):
         with Horizontal(id="workspace"):
             with Vertical(id="center-column"):
                 with Container(id="config-panel", classes="panel"):
+                    with Horizontal(id="project-bar"):
+                        yield Label("Project", classes="field-label")
+                        yield Select(
+                            self.project_options(),
+                            value=self.project.name,
+                            allow_blank=False,
+                            compact=True,
+                            id="project-select",
+                        )
+                    with Horizontal(id="project-actions"):
+                        yield Button("new", id="new-project")
+                        yield Button("rename", id="rename-project")
+                        yield Button("delete", id="delete-project")
                     with VerticalScroll(id="config-form"):
                         group = None
                         current = read_env(self.env_path)
@@ -480,7 +540,7 @@ class ImapToolsApp(App[None]):
         titles = {
             "tools-panel": "Tools",
             "history-panel": "History",
-            "config-panel": "Configuration",
+            "config-panel": f"Configuration{separator}{self.project.name}",
             "operation-panel": f"Operation{separator}Count",
             "monitor-panel": "Output",
         }
@@ -490,6 +550,7 @@ class ImapToolsApp(App[None]):
         history.add_column("operation", width=9)
         history.add_column("status", width=9)
         history.add_column("started", width=19)
+        self.refresh_project_controls()
         self.refresh_configuration()
         self.refresh_history()
         self.select_operation("count")
@@ -562,6 +623,8 @@ class ImapToolsApp(App[None]):
         self.check_external_configuration()
         if self.filesystem_watcher.poll("history"):
             self.refresh_history(self.selected_output_id)
+        if self.filesystem_watcher.poll("projects"):
+            self.refresh_project_controls()
 
     def check_external_configuration(self) -> None:
         """Reload a valid env file when its content changes outside the TUI."""
@@ -595,11 +658,19 @@ class ImapToolsApp(App[None]):
         self.configuration_file_digest = digest
         self.filesystem_watcher.refresh("configuration")
         self.configuration_rejected_digest = None
+        self.populate_form(form_values)
+        self.set_configuration_status(f"{self.display_profile.success} external .env reloaded", reset_after=1.5)
+        if pending_edit:
+            self.notify("External .env reloaded; the pending form edit was discarded", severity="warning")
+        return True
+
+    def populate_form(self, values: dict[str, str]) -> None:
+        """Replace every form value without triggering autosave."""
         self.configuration_reload_in_progress = True
         with self.prevent(Input.Changed, Select.Changed, Checkbox.Changed):
             for field in FIELDS:
                 widget = self.query_one(f"#{_field_id(field.name)}")
-                value = form_values[field.name]
+                value = values.get(field.name, field.default)
                 if isinstance(widget, Checkbox):
                     widget.value = value.lower() == "true"
                 elif isinstance(widget, Select):
@@ -607,10 +678,113 @@ class ImapToolsApp(App[None]):
                 else:
                     widget.value = value
         self.call_after_refresh(self.finish_external_configuration_reload)
-        self.set_configuration_status(f"{self.display_profile.success} external .env reloaded", reset_after=1.5)
-        if pending_edit:
-            self.notify("External .env reloaded; the pending form edit was discarded", severity="warning")
+
+    def project_options(self) -> list[tuple[str, str]]:
+        """Return selector entries, keeping a missing active project visible for recovery."""
+        projects = self.projects.projects()
+        options = [(project.name, project.name) for project in projects]
+        if all(project.name != self.project.name for project in projects):
+            options.append((f"{self.project.name} (missing)", self.project.name))
+        return options
+
+    def refresh_project_controls(self) -> None:
+        """Synchronize the selector and management buttons with the projects directory."""
+        select = self.query_one("#project-select", Select)
+        with self.prevent(Select.Changed):
+            select.set_options(self.project_options())
+            select.value = self.project.name
+        managed = self.project.managed
+        self.query_one("#rename-project", Button).disabled = not managed
+        self.query_one("#delete-project", Button).disabled = not managed
+        separator = " - " if self.display_profile.mode == "ascii" else " · "
+        self.query_one("#config-panel").border_title = f"Configuration{separator}{self.project.name}"
+
+    @on(Select.Changed, "#project-select")
+    def project_selected(self, event: Select.Changed) -> None:
+        if event.value is Select.BLANK or event.value == self.project.name:
+            return
+        project = self.projects.find(str(event.value))
+        if project is None:
+            self.notify(f"Project not found: {event.value}", severity="error")
+            self.refresh_project_controls()
+            return
+        self.switch_project(project)
+
+    def leave_project(self) -> bool:
+        """Flush pending edits of the current project before another one becomes active."""
+        if self.runner.active or self.operation_in_progress:
+            self.notify("Wait for the current operation to finish before changing projects", severity="warning")
+            return False
+        if self.configuration_save_timer is not None and not self.save_configuration():
+            self.notify("Fix or discard the pending configuration edit before changing projects", severity="error")
+            return False
         return True
+
+    def switch_project(self, project: Project) -> bool:
+        """Make ``project`` active after saving the current one, reloading the complete form."""
+        if not self.leave_project():
+            self.refresh_project_controls()
+            return False
+        self.activate_project(project)
+        return True
+
+    def activate_project(self, project: Project, reload_form: bool = True) -> None:
+        """Point configuration, watching, and runs at exactly one project file."""
+        if self.configuration_save_timer is not None:
+            self.configuration_save_timer.stop()
+            self.configuration_save_timer = None
+        self.project = project
+        self.env_path = project.path
+        self.filesystem_watcher.watch_file("configuration", self.env_path)
+        self.configuration_file_digest = self.env_digest()
+        self.configuration_rejected_digest = None
+        self.projects.remember(project)
+        if reload_form:
+            self.populate_form(read_env(self.env_path))
+        self.refresh_project_controls()
+        self.show_neutral_configuration_status()
+
+    def request_project_name(self, action: str) -> None:
+        if action == "rename" and not self.project.managed:
+            return
+        title, value = ("New project", "") if action == "new" else (f"Rename {self.project.name}", self.project.name)
+        self.push_screen(ProjectNameModal(title, value), lambda name: self.project_name_entered(action, name))
+
+    def project_name_entered(self, action: str, name: str | None) -> None:
+        if name is None or not self.leave_project():
+            return
+        try:
+            if action == "new":
+                project = self.projects.create(name)
+            else:
+                project = self.projects.rename(self.project, name)
+        except (OSError, ValueError) as exc:
+            self.notify(str(exc), severity="error")
+            return
+        self.activate_project(project, reload_form=action == "new")
+        self.notify(f"Project {project.name} {'created' if action == 'new' else 'renamed'}")
+
+    def request_project_deletion(self) -> None:
+        if not self.project.managed:
+            return
+        self.request_confirmation(
+            "delete-project",
+            f"Type DELETE to permanently delete project {self.project.name} ({self.project.path}).",
+            self.project,
+            True,
+        )
+
+    def delete_project(self, project: Project) -> None:
+        if self.runner.active or self.operation_in_progress:
+            self.notify("Wait for the current operation to finish before deleting a project", severity="warning")
+            return
+        try:
+            self.projects.delete(project)
+        except (OSError, ValueError) as exc:
+            self.notify(f"Unable to delete project: {exc}", severity="error")
+            return
+        self.activate_project(self.projects.default_project())
+        self.notify(f"Project {project.name} deleted")
 
     def reject_external_configuration(self, digest: str, detail: str) -> None:
         """Keep the form unchanged and report one warning per rejected file version."""
@@ -638,7 +812,7 @@ class ImapToolsApp(App[None]):
         self.configuration_status_timer = None
         override_active = any(field.name in os.environ for field in FIELDS)
         separator = " - " if self.display_profile.mode == "ascii" else " · "
-        status = "ENV override active" if override_active else f".env{separator}autosave"
+        status = "ENV override active" if override_active else f"{self.env_path.name}{separator}autosave"
         self.query_one("#config-panel").border_subtitle = status
 
     def on_resize(self, event: Resize) -> None:
@@ -887,6 +1061,12 @@ class ImapToolsApp(App[None]):
             self.cancel_operation()
         elif button_id == "force-stop":
             self.request_confirmation("force-stop", "Type DELETE to terminate the process immediately.", None, True)
+        elif button_id == "new-project":
+            self.request_project_name("new")
+        elif button_id == "rename-project":
+            self.request_project_name("rename")
+        elif button_id == "delete-project":
+            self.request_project_deletion()
         elif button_id == "export-history":
             self.export_history()
         elif button_id == "delete-history":
@@ -908,6 +1088,8 @@ class ImapToolsApp(App[None]):
         elif action == "delete-history":
             delete_record(str(payload))
             self.refresh_history()
+        elif action == "delete-project":
+            self.delete_project(payload)  # type: ignore[arg-type]
         elif action == "quit":
             if self.runner.active:
                 self.runner.terminate()
@@ -1046,8 +1228,8 @@ class ImapToolsApp(App[None]):
             self.notify(f"{operation.title} {record.status}", severity=severity)
 
     def _make_run_request(self, operation: OperationName, options: RunOptions) -> RunRequest:
-        """Build a request containing only genuine per-operation environment overrides."""
-        operation_environment = dict(options.environment)
+        """Build a request pinned to the active project file plus genuine per-operation overrides."""
+        operation_environment = {**run_environment(self.project), **options.environment}
         return RunRequest(
             build_command(OPERATION_BY_NAME[operation], options),
             self.working_directory,
@@ -1113,6 +1295,9 @@ class ImapToolsApp(App[None]):
 
     def action_select_operation(self, operation: str) -> None:
         self.select_operation(operation)  # type: ignore[arg-type]
+
+    def action_focus_project(self) -> None:
+        self.query_one("#project-select", Select).focus()
 
     def action_focus_config(self) -> None:
         self.query_one("#config-form").focus()
@@ -1187,8 +1372,23 @@ def main(argv: list[str] | None = None) -> None:
         default=os.environ.get("IMAP_TOOLS_DISPLAY_MODE", "auto"),
         help="terminal compatibility profile (default: IMAP_TOOLS_DISPLAY_MODE or auto)",
     )
+    parser.add_argument("--env", type=Path, help="open this .env file as the local project (or IMAP_TOOLS_ENV_FILE)")
+    parser.add_argument("--project", help="open this project by name: default, local, or a named project")
     args = parser.parse_args(argv)
-    ImapToolsApp(display_profile=resolve_display_profile(args.display_mode)).run()
+    env_path = explicit_env(args.env)
+    if env_path is not None and args.project:
+        parser.error("--env and --project cannot be combined")
+    projects = ProjectStore(local_env=local_env(env_path))
+    try:
+        projects.initial(env_path, args.project)
+    except ValueError as exc:
+        parser.error(str(exc))
+    ImapToolsApp(
+        env_path,
+        display_profile=resolve_display_profile(args.display_mode),
+        projects=projects,
+        project_name=args.project,
+    ).run()
 
 
 if __name__ == "__main__":
