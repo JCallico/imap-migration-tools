@@ -4,6 +4,8 @@ import builtins
 import os
 from pathlib import Path
 
+import pytest
+
 from conftest import temp_env
 from utils.dotenv import load_dotenv
 
@@ -64,3 +66,24 @@ def test_load_dotenv_reports_only_added_keys(tmp_path, monkeypatch):
         assert os.environ["SHARED_VALUE"] == "os"
 
     assert result.dotenv_keys == frozenset({"FROM_DOTENV"})
+
+
+def test_env_file_variable_loads_exactly_that_file(tmp_path, monkeypatch):
+    """A project file replaces discovery, so a working-directory ``.env`` is never merged."""
+    (tmp_path / ".env").write_text('FROM_LOCAL="local"\n', encoding="utf-8")
+    project = tmp_path / "acme.env"
+    project.write_text('FROM_PROJECT="project"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    with temp_env({"IMAP_TOOLS_ENV_FILE": str(project)}):
+        result = load_dotenv()
+        assert os.environ["FROM_PROJECT"] == "project"
+        assert "FROM_LOCAL" not in os.environ
+
+    assert result.dotenv_keys == frozenset({"FROM_PROJECT"})
+
+
+def test_missing_env_file_variable_stops_instead_of_running_unconfigured(tmp_path):
+    with temp_env({"IMAP_TOOLS_ENV_FILE": str(tmp_path / "deleted.env")}):
+        with pytest.raises(SystemExit, match="Configuration file not found"):
+            load_dotenv()

@@ -25,6 +25,8 @@ def isolate_test_dotenv(tmp_path_factory, monkeypatch):
     isolated_cwd = tmp_path_factory.mktemp("isolated-cwd")
     (isolated_cwd / ".env").touch()
     monkeypatch.chdir(isolated_cwd)
+    monkeypatch.setenv("IMAP_TOOLS_PROJECTS_DIR", str(tmp_path_factory.mktemp("isolated-projects")))
+    monkeypatch.delenv("IMAP_TOOLS_ENV_FILE", raising=False)
 
 
 def get_free_port():

@@ -3,29 +3,21 @@
 This backlog records planned cross-interface work which is intentionally outside the current Android implementation.
 It is not a release commitment or an indication that an item is already supported.
 
-## Project support for the terminal and desktop applications
+## Project support follow-ups
 
-Add named projects to the Textual TUI and native desktop GUI. Each project must map to exactly one `.env` file and make
-switching among independent migration configurations explicit.
+Projects are implemented for the Textual TUI, the native desktop GUI on Linux and Windows, and Android: a project is one
+`.env` file, `default` is `~/.imap-migration-tools/.env`, named projects are `<name>.env` in the same directory, and a
+discovered `.env` is the `local` project. The remaining work is:
 
-Acceptance criteria:
-
-- Users can create, select, rename, and delete projects without manually entering `.env` paths.
-- Every project has a stable `.env` path; renaming the project does not silently create a second configuration.
-- Existing `.env` discovery and explicit `--env` launches remain backward compatible.
-- Switching projects reloads the complete form and does not merge credentials or settings from the previous project.
-- Passwords, client secrets, and tokens retain the existing masking, file-permission, and cache protections.
-- External edits, validation errors, concurrent instances, and project deletion receive the same safety treatment as
-  the current single-`.env` workflow.
-- The TUI and GUI share project registry and lifecycle behavior instead of implementing incompatible formats.
-- Documentation includes migration from existing `.env` files and recovery when a registered file is moved or deleted.
-
-The CLI project-selection experience should be designed alongside this work, while preserving direct `--env` usage.
+- Verify and, where needed, adapt the desktop GUI project workflow on macOS, including the native menu bar placement of
+  the Project menu and keyboard access to the selector.
+- Add `--project NAME` to the five command-line tools. They already honor `IMAP_TOOLS_ENV_FILE`, which the TUI and GUI
+  use to pin each run to the active project file, and direct `.env` discovery must remain unchanged.
 
 ## Project deletion and retained-backup management for the terminal and desktop applications
 
-Bring the Android project-deletion decision and retained-backup manager to the Textual TUI and native desktop GUI when
-named projects are implemented. Adapt the storage operations to explicit desktop backup paths rather than assuming
+Bring the Android project-deletion decision and retained-backup manager to the Textual TUI and native desktop GUI,
+whose project deletion currently removes only the project's `.env` file. Adapt the storage operations to explicit desktop backup paths rather than assuming
 Android app-private storage.
 
 Acceptance criteria:

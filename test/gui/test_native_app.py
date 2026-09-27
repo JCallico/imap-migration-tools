@@ -40,6 +40,7 @@ from ui.appearance import load_appearance  # noqa: E402
 from ui.config import FIELDS, read_env, save_form  # noqa: E402
 from ui.layout import load_window_size, save_layout  # noqa: E402
 from ui.operations import OPERATION_BY_NAME  # noqa: E402
+from ui.projects import ProjectStore  # noqa: E402
 
 
 def test_linux_native_widgets_use_only_the_xvfb_display():
@@ -176,7 +177,7 @@ def test_header_omits_configuration_filename_and_view_uses_submenus(workspace):
     assert workspace.env_path.name not in header_labels
     assert "Count, compare, backup, restore, and migrate mailboxes with confidence." in header_labels
 
-    view = workspace.GetMenuBar().GetMenu(2)
+    view = workspace.GetMenuBar().GetMenu(workspace.GetMenuBar().FindMenu("View"))
     labels = [item.GetItemLabelText() for item in view.GetMenuItems() if not item.IsSeparator()]
     assert labels == ["Reset layout", "Zoom", "Transparency", "Appearance…"]
     zoom = next(item.GetSubMenu() for item in view.GetMenuItems() if item.GetItemLabelText() == "Zoom")
@@ -190,13 +191,14 @@ def test_header_omits_configuration_filename_and_view_uses_submenus(workspace):
 
 
 def test_help_menu_uses_structured_information_dialogs(workspace):
-    help_menu = workspace.GetMenuBar().GetMenu(3)
+    help_menu = workspace.GetMenuBar().GetMenu(workspace.GetMenuBar().FindMenu("Help"))
     labels = [item.GetItemLabelText() for item in help_menu.GetMenuItems() if not item.IsSeparator()]
     assert labels == ["Help", "Keyboard Reference", "About"]
 
     dialogs = [HelpDialog(workspace), KeyboardReferenceDialog(workspace), AboutDialog(workspace)]
     try:
         assert dialogs[0].section_titles == [
+            "Choose a project",
             "Configure accounts",
             "Choose and run an operation",
             "Monitor and stop work",
@@ -688,7 +690,7 @@ def test_window_events_and_main_launch(workspace, monkeypatch, tmp_path):
             launched.append("loop")
 
     class Frame:
-        def __init__(self, path):
+        def __init__(self, path, **_kwargs):
             launched.append(path)
 
         def Show(self):
@@ -713,3 +715,146 @@ def test_window_size_is_saved_and_restored(native_app, tmp_path):
     wx.Yield()
 
     assert load_window_size(layout_path) == (840, 640)
+
+
+@pytest.fixture
+def project_workspace(native_app, tmp_path, monkeypatch):
+    for field in FIELDS:
+        monkeypatch.delenv(field.name, raising=False)
+    root = tmp_path / "history"
+    root.mkdir()
+    monkeypatch.setattr(history, "history_dir", lambda: root)
+    store = ProjectStore(tmp_path / "projects")
+    store.ensure_root()
+    store.default_path.write_text(
+        'SRC_IMAP_HOST="default.example.com"\nSRC_IMAP_PASSWORD="default-secret"\nGMAIL_MODE="true"\n',
+        encoding="utf-8",
+    )
+    acme = store.create("acme")
+    acme.path.write_text('SRC_IMAP_HOST="acme.example.com"\n', encoding="utf-8")
+    frame = Workspace(layout_path=tmp_path / "layout.json", projects=store)
+    frame.Show()
+    wx.Yield()
+    yield frame, store, acme
+    frame.autosave.Stop()
+    frame.Close()
+    wx.Yield()
+
+
+def test_switching_projects_reloads_the_complete_form_without_merging(project_workspace, monkeypatch):
+    frame, store, acme = project_workspace
+    assert frame.project.name == "default"
+    assert frame.project_choice.GetItems() == ["default", "acme"]
+    assert frame.controls["SRC_IMAP_PASSWORD"].HasFlag(wx.TE_PASSWORD)
+    assert not frame.project_buttons["rename"].IsEnabled()
+    assert not frame.delete_project_item.IsEnabled()
+
+    frame.project_choice.SetStringSelection("acme")
+    frame.on_project_choice()
+
+    assert frame.env_path == acme.path.resolve()
+    assert frame.controls["SRC_IMAP_HOST"].GetValue() == "acme.example.com"
+    assert frame.controls["SRC_IMAP_PASSWORD"].GetValue() == ""
+    assert frame.controls["GMAIL_MODE"].GetValue() is False
+    assert frame.GetTitle() == "IMAP Migration Tools — acme"
+    assert frame.project_buttons["delete"].IsEnabled()
+    assert store.remembered() == "acme"
+
+    started = []
+    monkeypatch.setattr(frame.controller, "start", lambda operation, values, request: started.append(request))
+    monkeypatch.setattr(frame, "confirm", lambda *args: True)
+    frame.controls["SRC_IMAP_USERNAME"].ChangeValue("user")
+    frame.controls["SRC_IMAP_PASSWORD"].ChangeValue("acme-secret")
+    frame.prepare_run()
+    assert started[0].environment["IMAP_TOOLS_ENV_FILE"] == str(acme.path.resolve())
+    assert "default-secret" not in acme.path.read_text(encoding="utf-8")
+
+
+def test_pending_edit_is_saved_to_the_previous_project_and_invalid_edits_block_switching(project_workspace):
+    frame, store, acme = project_workspace
+    frame.controls["SRC_IMAP_HOST"].SetValue("pending.example.com")
+    assert frame.autosave.IsRunning()
+
+    assert frame.switch_project(acme)
+    assert read_env(store.default_path)["SRC_IMAP_HOST"] == "pending.example.com"
+    assert read_env(acme.path)["SRC_IMAP_HOST"] == "acme.example.com"
+
+    frame.controls["MAX_WORKERS"].SetValue("0")
+    assert not frame.switch_project(store.default_project())
+    assert frame.project == acme
+    assert frame.project_choice.GetStringSelection() == "acme"
+    assert "before changing projects" in frame.GetStatusBar().GetStatusText()
+
+
+def test_create_rename_and_delete_projects(project_workspace, monkeypatch):
+    frame, store, _acme = project_workspace
+    names = iter(["default", "Client", "Client Renamed"])
+    monkeypatch.setattr(frame, "ask_project_name", lambda *args: next(names))
+
+    frame.request_project_name("new")
+    assert frame.project.name == "default"
+    assert frame.GetStatusBar().GetStatusText() == '"default" is reserved'
+
+    frame.request_project_name("new")
+    assert frame.project.name == "Client"
+    assert (store.root / "Client.env").is_file()
+    frame.controls["SRC_IMAP_HOST"].ChangeValue("client.example.com")
+    assert frame.save_configuration()
+
+    frame.request_project_name("rename")
+    assert frame.project.name == "Client Renamed"
+    assert not (store.root / "Client.env").exists()
+    assert frame.controls["SRC_IMAP_HOST"].GetValue() == "client.example.com"
+
+    prompts = []
+    monkeypatch.setattr(frame, "confirm", lambda message, require_delete=False: prompts.append(message) or False)
+    frame.request_project_deletion()
+    assert frame.project.name == "Client Renamed"
+    monkeypatch.setattr(frame, "confirm", lambda message, require_delete=False: prompts.append(message) or True)
+    frame.request_project_deletion()
+
+    assert "Client Renamed.env" in prompts[0]
+    assert frame.project.name == "default"
+    assert [project.name for project in store.named_projects()] == ["acme"]
+
+
+def test_other_instance_changes_refresh_projects_and_protect_a_deleted_active_project(project_workspace):
+    frame, store, acme = project_workspace
+    frame.switch_project(acme)
+    ProjectStore(store.root).create("beta")
+    frame.poll()
+    assert frame.project_choice.GetItems() == ["default", "acme", "beta"]
+
+    acme.path.unlink()
+    frame.poll()
+    assert frame.project_choice.GetItems() == ["default", "beta", "acme"]
+    assert frame.project_location.GetLabel().endswith("(missing)")
+    frame.controls["SRC_IMAP_HOST"].ChangeValue("after-delete.example.com")
+    assert not frame.save_configuration()
+    assert not acme.path.exists()
+
+
+def test_main_opens_named_projects_and_rejects_unknown_ones(monkeypatch, tmp_path):
+    launched = []
+
+    class App:
+        def __init__(self, redirect):
+            pass
+
+        def MainLoop(self):
+            pass
+
+    class Frame:
+        def __init__(self, path, *, projects, project_name):
+            launched.append(projects.initial(path, project_name).name)
+
+        def Show(self):
+            pass
+
+    ProjectStore().create("acme")
+    monkeypatch.setattr(native_gui.wx, "App", App)
+    monkeypatch.setattr(native_gui, "Workspace", Frame)
+    native_gui.main(["--project", "acme"])
+    assert launched == ["acme"]
+    with pytest.raises(SystemExit):
+        native_gui.main(["--project", "missing"])

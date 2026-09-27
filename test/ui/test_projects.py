@@ -1,0 +1,178 @@
+"""Tests for the shared project store."""
+
+import os
+import stat
+
+import pytest
+
+from ui.projects import (
+    ProjectStore,
+    default_projects_dir,
+    explicit_env,
+    local_env,
+    run_environment,
+    validate_name,
+)
+
+
+def test_projects_directory_defaults_to_home_and_honors_override(tmp_path, monkeypatch):
+    monkeypatch.delenv("IMAP_TOOLS_PROJECTS_DIR")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    assert default_projects_dir() == tmp_path / ".imap-migration-tools"
+    monkeypatch.setenv("IMAP_TOOLS_PROJECTS_DIR", str(tmp_path / "custom"))
+    assert default_projects_dir() == tmp_path / "custom"
+
+
+def test_default_project_always_listed_before_local_and_sorted_named_projects(tmp_path):
+    local = tmp_path / "work" / ".env"
+    local.parent.mkdir()
+    local.touch()
+    store = ProjectStore(tmp_path / "projects", local)
+    store.create("zeta")
+    store.create("Alpha")
+
+    projects = store.projects()
+
+    assert [(project.name, project.kind) for project in projects] == [
+        ("default", "default"),
+        ("local", "local"),
+        ("Alpha", "named"),
+        ("zeta", "named"),
+    ]
+    assert projects[0].path == tmp_path / "projects" / ".env"
+    assert projects[2].path == tmp_path / "projects" / "Alpha.env"
+
+
+def test_local_project_is_hidden_when_it_is_a_project_file(tmp_path):
+    store = ProjectStore(tmp_path, tmp_path / ".env")
+    assert store.local_project() is None
+    named = store.create("acme")
+    assert ProjectStore(tmp_path, named.path).local_project() is None
+
+
+def test_create_writes_owner_only_template_and_never_replaces(tmp_path):
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create("  acme  ")
+
+    assert project.name == "acme"
+    assert 'SRC_IMAP_HOST=""' in project.path.read_text(encoding="utf-8")
+    if os.name != "nt":
+        assert stat.S_IMODE(project.path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(store.root.stat().st_mode) == 0o700
+    with pytest.raises(ValueError, match="already exists"):
+        store.create("ACME")
+
+
+@pytest.mark.parametrize(
+    ("name", "message"),
+    [
+        ("", "required"),
+        ("a" * 61, "60 characters"),
+        ("a/b", "cannot contain"),
+        ("line\nbreak", "cannot contain"),
+        (".hidden", "period"),
+        ("Default", "reserved"),
+        ("LOCAL", "reserved"),
+        ("con", "Windows"),
+        ("com1.backup", "Windows"),
+    ],
+)
+def test_invalid_project_names_are_rejected(name, message):
+    with pytest.raises(ValueError, match=message):
+        validate_name(name)
+
+
+def test_rename_moves_the_single_file_and_follows_the_remembered_selection(tmp_path):
+    store = ProjectStore(tmp_path)
+    project = store.create("acme")
+    project.path.write_text('SRC_IMAP_HOST="imap.example.com"\n', encoding="utf-8")
+    store.remember(project)
+
+    renamed = store.rename(project, "Acme Corp")
+
+    assert not project.path.exists()
+    assert renamed.path.read_text(encoding="utf-8") == 'SRC_IMAP_HOST="imap.example.com"\n'
+    assert [item.name for item in store.named_projects()] == ["Acme Corp"]
+    assert store.remembered() == "Acme Corp"
+
+
+def test_rename_supports_case_only_change_and_refuses_existing_names(tmp_path):
+    store = ProjectStore(tmp_path)
+    project = store.create("acme")
+    store.create("other")
+
+    assert store.rename(project, "ACME").path.name == "ACME.env"
+    with pytest.raises(ValueError, match="already exists"):
+        store.rename(store.find("ACME"), "Other")
+    assert {item.name for item in store.named_projects()} == {"ACME", "other"}
+
+
+def test_rename_reports_a_file_removed_by_another_instance(tmp_path):
+    store = ProjectStore(tmp_path)
+    project = store.create("acme")
+    project.path.unlink()
+    with pytest.raises(ValueError, match="no longer exists"):
+        store.rename(project, "renamed")
+
+
+def test_default_and_local_projects_cannot_be_renamed_or_deleted(tmp_path):
+    local = tmp_path / "work.env"
+    local.touch()
+    store = ProjectStore(tmp_path / "projects", local)
+    for project in (store.default_project(), store.local_project()):
+        with pytest.raises(ValueError, match="cannot be renamed"):
+            store.rename(project, "other")
+        with pytest.raises(ValueError, match="cannot be deleted"):
+            store.delete(project)
+
+
+def test_delete_removes_the_file_and_resets_the_remembered_selection(tmp_path):
+    store = ProjectStore(tmp_path)
+    project = store.create("acme")
+    store.remember(project)
+
+    store.delete(project)
+    store.delete(project)
+
+    assert not project.path.exists()
+    assert store.remembered() == "default"
+
+
+def test_initial_project_precedence(tmp_path):
+    local = tmp_path / "work" / ".env"
+    local.parent.mkdir()
+    local.touch()
+    store = ProjectStore(tmp_path / "projects", local)
+    acme = store.create("acme")
+
+    assert store.initial().name == "local"
+    store.remember(acme)
+    assert store.initial().name == "acme"
+    assert store.initial(project_name="DEFAULT").name == "default"
+    assert store.initial(env_path=acme.path) == acme
+    assert store.initial(env_path=tmp_path / "other.env").path == tmp_path / "other.env"
+    with pytest.raises(ValueError, match="Project not found"):
+        store.initial(project_name="missing")
+
+    acme.path.unlink()
+    assert store.initial().name == "local"
+    assert ProjectStore(tmp_path / "projects").initial().name == "default"
+
+
+def test_local_and_explicit_env_resolution(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    assert local_env() is None
+    (tmp_path / ".env").touch()
+    assert local_env() == (tmp_path / ".env").resolve()
+    assert local_env(tmp_path / "chosen.env") == tmp_path / "chosen.env"
+
+    assert explicit_env() is None
+    monkeypatch.setenv("IMAP_TOOLS_ENV_FILE", str(tmp_path / "variable.env"))
+    assert explicit_env() == tmp_path / "variable.env"
+    assert explicit_env(tmp_path / "argument.env") == tmp_path / "argument.env"
+
+
+def test_run_environment_pins_the_resolved_project_file(tmp_path):
+    project = ProjectStore(tmp_path).create("acme")
+    assert run_environment(project) == {"IMAP_TOOLS_ENV_FILE": str(project.path.resolve())}
