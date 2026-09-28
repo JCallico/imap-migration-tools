@@ -257,7 +257,8 @@ authorization, network, background, and minified-release cases—use
 
 1. Verify the Configure, Output, and History screens in both system light and dark themes and at the device's normal and
    largest practical font/display sizes.
-2. Create and switch projects, restart the app, and confirm each project's non-secret settings return independently.
+2. Create, rename, and switch projects, restart the app, and confirm each project's non-secret settings return
+   independently.
 3. Connect a Google or Microsoft test account, run Count, restart the app, and confirm silent reauthentication works.
 4. Back up a deliberately small test folder. Verify the storage estimate, **Start while estimating**, live Output,
    completion history, workspace export, and the foreground notification's Cancel action.
@@ -305,20 +306,31 @@ For platform-level details, see Android's official guides for
 
 ## Projects
 
-The Configure screen supports named projects for separate migration configurations. Creating a project immediately
-selects it, and selecting another project replaces the complete configuration form. Changes autosave to a real `.env`
-file under the application's private `files/projects/<stable-id>/` directory. Stable IDs keep a project's storage path
-independent of its display name. Backup workspaces live under `files/backups/<stable-id>/`, preventing projects with the
-same workspace name from reading or modifying one another. Migration resume caches are additionally partitioned by a
+The Configure screen supports projects for separate migration configurations, using the same model as the terminal
+and desktop applications: a project is exactly one `.env` file. The **default** project is `.env` and every other project
+is `<name>.env` in the application's private `files/projects/` directory. Creating a project immediately selects it, and
+selecting another project replaces the complete configuration form. Changes autosave to the selected file. Project names
+follow the desktop rules: 60 characters or fewer, valid file names on every platform, unique regardless of letter case,
+and never `default` or `local`.
+
+Backup workspaces live under `files/backups/projects/<name>/`, preventing projects with the same workspace name from
+reading or modifying one another. **RENAME** moves the project's `.env` file and its backup folder together; if the
+backup folder cannot be moved, the rename is undone. Migration resume caches are additionally partitioned by a
 non-identifying hash of both account endpoints.
 
-The first launch after upgrading creates a **Default** project from the previous Android configuration. A project can be
-deleted only when at least one other project exists. When backups exist, the deletion prompt lists their workspace names
+The default project cannot be renamed or deleted. When backups exist, the deletion prompt lists their workspace names
 and offers **Delete project only**, which preserves them under **Manage retained backups**, and **Delete project +
-backups**, which permanently removes all of the project’s private workspaces. A project without backups receives a
-single **Delete project** action. Every choice removes the project `.env` but leaves operation history, exported
-archives, provider authorization, mail, and provider accounts unchanged. Retained workspaces can be exported or
-permanently deleted individually from the project screen.
+backups**, which permanently removes all of the project’s private workspaces. Retained workspaces move to
+`files/backups/retained/<group>/`, so a later project with the same name starts with its own empty folder. A project
+without backups receives a single **Delete project** action. Every choice removes the project `.env` but leaves
+operation history, exported archives, provider authorization, mail, and provider accounts unchanged. Retained
+workspaces can be exported or permanently deleted individually from the project screen.
+
+The first launch of this version converts the earlier `files/projects/<id>/.env` layout. The project named **Default**
+becomes `.env`; every other project becomes `<name>.env`, replacing characters that are not valid in file names with
+`_` and adding a ` (2)` suffix when two names would collide. Backup workspaces and retained backups move to the new
+folders, and the previously selected project remains selected. The earliest single-configuration installations become
+the default project.
 
 Project `.env` files use the shared variable names where the concepts match, including `SRC_IMAP_HOST`,
 `DEST_IMAP_HOST`, `MAX_WORKERS`, and `PRESERVE_FLAGS`. Android-only UI state uses `ANDROID_`-prefixed keys. These files

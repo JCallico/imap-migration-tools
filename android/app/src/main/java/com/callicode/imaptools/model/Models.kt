@@ -18,7 +18,15 @@ enum class AccountSlot { SOURCE, DESTINATION }
 
 enum class TargetType { SOURCE_ACCOUNT, DESTINATION_ACCOUNT, LOCAL_BACKUP }
 
-data class ProjectProfile(val id: String, val name: String)
+/** A project is its `.env` file: [DEFAULT_NAME] is `.env`, every other project is `<name>.env`. */
+data class ProjectProfile(val name: String) {
+    val isDefault: Boolean get() = name == DEFAULT_NAME
+
+    companion object {
+        const val DEFAULT_NAME = "default"
+        val DEFAULT = ProjectProfile(DEFAULT_NAME)
+    }
+}
 
 data class AccountState(
     val host: String = "",

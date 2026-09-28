@@ -48,10 +48,17 @@ python3 -m venv --system-site-packages .venv
 
 ## Configuration and workspace
 
-The application discovers `.env` from the working directory and its parents. Desktop launchers do not always start
-in a project directory. Choose a specific configuration with:
+Configuration is organized as projects shared with the terminal interface. The Project selector at the top of
+Configuration, and the Project menu, switch among the `default` project (`~/.imap-migration-tools/.env`), named
+projects (`~/.imap-migration-tools/<name>.env`), and a `local` project found from the working directory and its
+parents. Because `default` and named projects live in your home directory, they are available however the application
+is launched. New…, Rename…, and Delete… manage named projects; deletion requires typing `DELETE`. See
+[Projects](configuration.md#projects) for the storage layout, migration of existing `.env` files, and recovery.
+
+Choose a project, or open a specific file as the `local` project, at launch:
 
 ```bash
+imap-tools-gui --project "Acme Corp"
 imap-tools-gui --env /path/to/project/.env
 ```
 
@@ -61,7 +68,7 @@ On Windows PowerShell or Command Prompt, use a Windows path:
 imap-tools-gui --env "C:\Users\your-name\project\.env"
 ```
 
-The selected configuration directory is also the operation working directory. Form changes autosave after validation.
+The selected project file's directory is also the operation working directory. Form changes autosave after validation.
 Existing OS environment values override `.env`; the status bar reports when such overrides are present. Passwords
 and client secrets are masked. External valid edits replace pending local edits; invalid external files leave the
 form intact and prevent accidental overwrite.

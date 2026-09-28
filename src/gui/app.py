@@ -23,9 +23,10 @@ from ui.appearance import (
     load_appearance,
     save_appearance,
 )
-from ui.config import FIELDS, discover_env, effective_values, read_env, save_form, validate
+from ui.config import FIELDS, effective_values, read_env, save_form, validate
 from ui.layout import load_layout, load_window_size, save_layout
 from ui.operations import OPERATION_BY_NAME, OPERATIONS, account_ready, build_command, readiness
+from ui.projects import ProjectStore, display_path, explicit_env, local_env, run_environment
 from ui.runner import RunRequest
 from ui.workspace import make_options, run_confirmation, validated_form
 from utils.dotenv import load_dotenv
@@ -41,9 +42,17 @@ MINIMUM_WINDOW_SIZE = (720, 520)
 
 HELP_SECTIONS = (
     (
+        "Choose a project",
+        "Each project is one .env file. The default project is ~/.imap-migration-tools/.env, each named project is "
+        "<name>.env in the same directory, and local is a .env found from the launch directory. Use the Project "
+        "menu or the buttons below the selector to create, rename, or delete named projects. The last selected "
+        "project reopens at the next launch.",
+    ),
+    (
         "Configure accounts",
         "Enter source and destination connection details, authentication, local paths, and operation options. Valid "
-        "changes save automatically to the selected .env file; existing operating-system values take precedence.",
+        "changes save automatically to the selected project's .env file; existing operating-system values take "
+        "precedence.",
     ),
     (
         "Choose and run an operation",
@@ -293,7 +302,9 @@ class AppearanceDialog(wx.Dialog):
 class Workspace(wx.Frame):
     """Native widgets bound to shared configuration and operation behavior."""
 
-    def __init__(self, env_path=None, layout_path=None, controller=None, settings_path=None):
+    def __init__(
+        self, env_path=None, layout_path=None, controller=None, settings_path=None, projects=None, project_name=None
+    ):
         layout_path = Path(layout_path or user_config_path("imap-migration-tools", "CallicoCode") / "gui-layout.json")
         saved_size = load_window_size(layout_path)
         window_size = (
@@ -302,7 +313,10 @@ class Workspace(wx.Frame):
             else DEFAULT_WINDOW_SIZE
         )
         super().__init__(None, title="IMAP Migration Tools", size=window_size)
-        self.env_path = Path(env_path or discover_env()).resolve()
+        explicit = Path(env_path) if env_path else None
+        self.projects = projects or ProjectStore(local_env=local_env(explicit))
+        self.project = self.projects.initial(explicit, project_name)
+        self.env_path = self.project.path.resolve()
         self.working_directory = self.env_path.parent
         self.layout_path = layout_path
         self.settings_path = Path(settings_path or Path(self.layout_path).with_name("gui-settings.json"))
@@ -331,6 +345,7 @@ class Workspace(wx.Frame):
         self.digest = file_content_fingerprint(self.env_path)
         self.rejected_digest = None
         self.history_digest = None
+        self.projects_digest = directory_fingerprint(self.projects.root, "*.env")
         self.colours = self._system_colours()
         self.SetBackgroundColour(self.colours["background"])
         self.CreateStatusBar()
@@ -354,7 +369,8 @@ class Workspace(wx.Frame):
         self.select_operation("count")
         self.refresh_history()
         self.SetMinSize(MINIMUM_WINDOW_SIZE)
-        self.SetStatusText(f"Configuration: {self.env_path}")
+        self.refresh_project_controls()
+        self.SetStatusText(f"Project: {self.project.name} ({self.env_path})")
 
     def _build_menu(self):
         bar = wx.MenuBar()
@@ -363,6 +379,13 @@ class Workspace(wx.Frame):
         file_menu.AppendSeparator()
         self._menu_action(file_menu, "Quit\tCtrl+Q", self.Close, wx.ID_EXIT)
         bar.Append(file_menu, "&File")
+        project_menu = wx.Menu()
+        self._menu_action(project_menu, "New project…", lambda: self.request_project_name("new"))
+        self.rename_project_item = self._menu_action(
+            project_menu, "Rename project…", lambda: self.request_project_name("rename")
+        )
+        self.delete_project_item = self._menu_action(project_menu, "Delete project…", self.request_project_deletion)
+        bar.Append(project_menu, "&Project")
         tools = wx.Menu()
         for index, operation in enumerate(OPERATIONS, 1):
             self._menu_action(
@@ -653,11 +676,38 @@ class Workspace(wx.Frame):
         config.SetBackgroundColour(self.colours["surface_soft"])
         form = wx.BoxSizer(wx.VERTICAL)
         form.Add(
-            self._heading(config, "Configuration", "Changes save automatically to the selected .env file"),
+            self._heading(config, "Configuration", "Changes save automatically to the project's .env file"),
             0,
             wx.BOTTOM,
             10,
         )
+        project_label = wx.StaticText(config, label="Project")
+        project_label.SetFont(project_label.GetFont().Bold())
+        project_label.SetForegroundColour(self.colours["accent_label"])
+        self._theme_accent_labels.append(project_label)
+        form.Add(project_label, 0, wx.TOP, 4)
+        self.project_choice = wx.Choice(config)
+        self.project_choice.SetName("Project")
+        self.project_choice.Bind(wx.EVT_CHOICE, self.on_project_choice)
+        form.Add(self.project_choice, 0, wx.EXPAND | wx.BOTTOM, 6)
+        project_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.project_buttons = {}
+        for action, label in (("new", "New…"), ("rename", "Rename…"), ("delete", "Delete…")):
+            button = wx.Button(config, label=label)
+            button.SetName(f"{label.rstrip('…')} project")
+            handler = (
+                self.request_project_deletion
+                if action == "delete"
+                else (lambda action=action: self.request_project_name(action))
+            )
+            button.Bind(wx.EVT_BUTTON, lambda event, handler=handler: handler())
+            self.project_buttons[action] = button
+            project_row.Add(button, 0, wx.RIGHT, 8)
+        form.Add(project_row, 0, wx.BOTTOM, 4)
+        self.project_location = wx.StaticText(config, label="")
+        self.project_location.SetForegroundColour(self.colours["muted"])
+        self._theme_muted.append(self.project_location)
+        form.Add(self.project_location, 0, wx.BOTTOM, 6)
         group = None
         for field in FIELDS:
             if field.group != group:
@@ -901,6 +951,109 @@ class Workspace(wx.Frame):
         self.SetStatusText("Saved; OS environment overrides are active" if override else "Configuration saved")
         return True
 
+    def project_names(self):
+        """Return selector entries, keeping a missing active project visible for recovery."""
+        names = [project.name for project in self.projects.projects()]
+        return names if self.project.name in names else [*names, self.project.name]
+
+    def refresh_project_controls(self):
+        """Synchronize the selector, buttons, menu, and location with the projects directory."""
+        names = self.project_names()
+        if self.project_choice.GetItems() != names:
+            self.project_choice.Set(names)
+        self.project_choice.SetStringSelection(self.project.name)
+        managed = self.project.managed
+        for action in ("rename", "delete"):
+            self.project_buttons[action].Enable(managed)
+        self.rename_project_item.Enable(managed)
+        self.delete_project_item.Enable(managed)
+        missing = "" if self.env_path.exists() else " (missing)"
+        self.project_location.SetLabel(f"{display_path(self.env_path)}{missing}")
+        self.SetTitle(f"IMAP Migration Tools — {self.project.name}")
+
+    def on_project_choice(self, event=None):
+        name = self.project_choice.GetStringSelection()
+        if not name or name == self.project.name:
+            return
+        project = self.projects.find(name)
+        if project is None:
+            self.SetStatusText(f"Project not found: {name}")
+            self.refresh_project_controls()
+            return
+        self.switch_project(project)
+
+    def leave_project(self):
+        """Flush pending edits of the current project before another one becomes active."""
+        if self.controller.active:
+            self.SetStatusText("Wait for the current operation to finish before changing projects")
+            return False
+        if self.autosave.IsRunning() and not self.save_configuration():
+            self.SetStatusText("Fix or discard the pending configuration edit before changing projects")
+            return False
+        return True
+
+    def switch_project(self, project):
+        """Make ``project`` active after saving the current one, reloading the complete form."""
+        if not self.leave_project():
+            self.refresh_project_controls()
+            return False
+        self.activate_project(project)
+        return True
+
+    def activate_project(self, project, reload_form=True):
+        """Point configuration, watching, and runs at exactly one project file."""
+        self.autosave.Stop()
+        self.project = project
+        self.env_path = project.path.resolve()
+        self.working_directory = self.env_path.parent
+        self.digest = file_content_fingerprint(self.env_path)
+        self.rejected_digest = None
+        self.projects.remember(project)
+        if reload_form:
+            self.load_form(read_env(self.env_path))
+        self.refresh_readiness()
+        self.refresh_project_controls()
+        self.SetStatusText(f"Project: {project.name} ({self.env_path})")
+
+    def ask_project_name(self, title, value=""):
+        with wx.TextEntryDialog(self, "Project name", title, value) as dialog:
+            dialog.SetMaxLength(60)
+            return dialog.GetValue() if dialog.ShowModal() == wx.ID_OK else None
+
+    def request_project_name(self, action):
+        if action == "rename" and not self.project.managed:
+            return
+        title, value = ("New project", "") if action == "new" else (f"Rename {self.project.name}", self.project.name)
+        self.project_name_entered(action, self.ask_project_name(title, value))
+
+    def project_name_entered(self, action, name):
+        if name is None or not self.leave_project():
+            return None
+        try:
+            project = self.projects.create(name) if action == "new" else self.projects.rename(self.project, name)
+        except (OSError, ValueError) as exc:
+            self.SetStatusText(str(exc))
+            wx.Bell()
+            return None
+        self.activate_project(project, reload_form=action == "new")
+        self.SetStatusText(f"Project {project.name} {'created' if action == 'new' else 'renamed'}")
+        return project
+
+    def request_project_deletion(self):
+        if not self.project.managed or not self.leave_project():
+            return
+        project = self.project
+        message = f"Type DELETE to permanently delete project {project.name} ({project.path})."
+        if not self.confirm(message, True):
+            return
+        try:
+            self.projects.delete(project)
+        except (OSError, ValueError) as exc:
+            self.SetStatusText(f"Unable to delete project: {exc}")
+            return
+        self.activate_project(self.projects.default_project())
+        self.SetStatusText(f"Project {project.name} deleted")
+
     def select_operation(self, operation):
         self.operation = operation
         spec = OPERATION_BY_NAME[operation]
@@ -1008,11 +1161,12 @@ class Workspace(wx.Frame):
         message, destructive = run_confirmation(self.operation, options, values)
         if not self.confirm(message, destructive):
             return
+        environment = {**run_environment(self.project), **options.environment}
         request = RunRequest(
             build_command(OPERATION_BY_NAME[self.operation], options),
             self.working_directory,
-            options.environment,
-            options.environment,
+            environment,
+            environment,
             desktop_worker=True,
         )
         self.lines.clear()
@@ -1090,6 +1244,13 @@ class Workspace(wx.Frame):
                 self.history_digest = fingerprint
         except OSError as exc:
             self.SetStatusText(f"History unavailable: {exc}")
+        try:
+            projects = directory_fingerprint(self.projects.root, "*.env")
+        except OSError:
+            projects = self.projects_digest
+        if projects != self.projects_digest:
+            self.projects_digest = projects
+            self.refresh_project_controls()
 
     def refresh_history(self):
         try:
@@ -1249,14 +1410,26 @@ class Workspace(wx.Frame):
 
 def main(argv=None):
     """Discover configuration without pinning dotenv values as OS overrides."""
-    loaded = load_dotenv()
-    for name in loaded.dotenv_keys:
+    try:
+        loaded = load_dotenv()
+    except SystemExit:
+        loaded = None
+    for name in loaded.dotenv_keys if loaded else ():
         os.environ.pop(name, None)
     parser = argparse.ArgumentParser(description="Native IMAP Migration Tools workspace")
-    parser.add_argument("--env", type=Path, help="Configuration .env file (default: discover from working directory)")
+    parser.add_argument("--env", type=Path, help="Open this .env file as the local project (or IMAP_TOOLS_ENV_FILE)")
+    parser.add_argument("--project", help="Open this project by name: default, local, or a named project")
     args = parser.parse_args(argv)
+    env_path = explicit_env(args.env)
+    if env_path is not None and args.project:
+        parser.error("--env and --project cannot be combined")
+    projects = ProjectStore(local_env=local_env(env_path))
+    try:
+        projects.initial(env_path, args.project)
+    except ValueError as exc:
+        parser.error(str(exc))
     app = wx.App(False)
-    frame = Workspace(args.env)
+    frame = Workspace(env_path, projects=projects, project_name=args.project)
     frame.Show()
     app.MainLoop()
 

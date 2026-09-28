@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.GrantPermissionRule
@@ -50,14 +51,24 @@ class ProjectFlowTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun projectCanBeCreatedSelectedAndDeleted() {
+    fun projectCanBeCreatedRenamedSelectedAndDeleted() {
+        val originalName = "UI Test Draft"
         val projectName = "UI Test Project"
+        val projects = File(compose.activity.filesDir, "projects")
 
         compose.onNodeWithText("NEW PROJECT").performClick()
-        compose.onNodeWithText("Project name").performTextInput(projectName)
+        compose.onNodeWithText("Project name").performTextInput(originalName)
         compose.onNodeWithText("Create").performClick()
+        assertTrue(File(projects, "$originalName.env").isFile)
+
+        compose.onNodeWithText("RENAME").performClick()
+        compose.onNodeWithText("Project name").performTextClearance()
+        compose.onNodeWithText("Project name").performTextInput(projectName)
+        compose.onNodeWithText("Rename").performClick()
 
         compose.onNodeWithText(projectName).assertIsDisplayed()
+        assertFalse(File(projects, "$originalName.env").exists())
+        assertTrue(File(projects, "$projectName.env").isFile)
         compose.onNodeWithText("DELETE").performClick()
         compose.onNodeWithText("DELETE $projectName?").assertIsDisplayed()
         compose.onNodeWithText("This permanently deletes the project configuration.").assertIsDisplayed()
@@ -89,10 +100,8 @@ class ProjectFlowTest {
         compose.onNodeWithText("Project name").performTextInput(projectName)
         compose.onNodeWithText("Create").performClick()
 
-        val projectDirectory = File(compose.activity.filesDir, "projects").listFiles().orEmpty().first { directory ->
-            File(directory, ".env").readText().contains(projectName)
-        }
-        val workspace = File(compose.activity.filesDir, "backups/${projectDirectory.name}/$workspaceName")
+        assertTrue(File(compose.activity.filesDir, "projects/$projectName.env").isFile)
+        val workspace = File(compose.activity.filesDir, "backups/projects/$projectName/$workspaceName")
         assertTrue(workspace.mkdirs())
         File(workspace, "message.eml").writeText("message")
 
