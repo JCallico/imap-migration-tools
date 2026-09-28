@@ -1437,6 +1437,7 @@ def test_unmounted_and_entrypoint_guard_branches(tmp_path, monkeypatch):
     app = ImapToolsApp(tmp_path / ".env")
     monkeypatch.setattr(app, "query_one_optional", lambda _selector: None)
     app.apply_responsive_layout(narrow=True)
+    app.show_neutral_configuration_status()
     monkeypatch.setattr(app, "query", lambda _selector: Mock(nodes=[]))
     assert not app.save_configuration()
 
@@ -1647,7 +1648,77 @@ def test_local_env_is_listed_and_launch_arguments_select_projects(tmp_path, monk
         (tmp_path / "chosen.env", "local"),
         (tmp_path / "variable.env", "local"),
     ]
-    with pytest.raises(SystemExit):
+    monkeypatch.delenv("IMAP_TOOLS_ENV_FILE")
+    with pytest.raises(SystemExit, match="2"):
         app_module.main(["--project", "missing"])
     with pytest.raises(SystemExit):
         app_module.main(["--project", "acme", "--env", "x.env"])
+
+
+def test_project_guards_protect_default_projects_running_operations_and_failures(tmp_path, monkeypatch):
+    notices = []
+
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        app = ImapToolsApp(projects=store)
+        monkeypatch.setattr(app, "notify", lambda message, **kwargs: notices.append(message))
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.request_project_name("rename")
+            app.request_project_deletion()
+            assert not isinstance(app.screen, (ProjectNameModal, ConfirmationModal))
+
+            app.query_one("#project-select", Select).value = "acme"
+            await pilot.pause()
+            acme.path.unlink()
+            app.project_selected(Select.Changed(app.query_one("#project-select", Select), "acme"))
+            assert app.project == acme
+            app.project_selected(Select.Changed(app.query_one("#project-select", Select), "vanished"))
+            assert "Project not found: vanished" in notices
+
+            app.operation_in_progress = True
+            assert not app.switch_project(store.default_project())
+            app.delete_project(acme)
+            app.operation_in_progress = False
+            assert "Wait for the current operation to finish before changing projects" in notices
+            assert "Wait for the current operation to finish before deleting a project" in notices
+
+            monkeypatch.setattr(store, "delete", lambda project: (_ for _ in ()).throw(OSError("busy")))
+            app.delete_project(acme)
+            assert "Unable to delete project: busy" in notices
+            assert app.project == acme
+
+            app.query_one("#env-src-imap-host", Input).value = "pending.example.com"
+            await pilot.pause()
+            assert app.configuration_save_timer is not None
+            app.activate_project(store.default_project())
+            assert app.configuration_save_timer is None
+            assert not acme.path.exists()
+
+            app.action_focus_project()
+            assert app.focused is app.query_one("#project-select", Select)
+
+    asyncio.run(run_test())
+
+
+def test_project_name_dialog_supports_buttons_and_cancel(tmp_path):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        app = ImapToolsApp(projects=store)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.request_project_name("new")
+            await pilot.pause()
+            app.screen.query_one("#project-cancel", Button).press()
+            await pilot.pause()
+            assert not isinstance(app.screen, ProjectNameModal)
+
+            app.request_project_name("new")
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, ProjectNameModal)
+            assert store.named_projects() == []
+
+    asyncio.run(run_test())

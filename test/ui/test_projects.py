@@ -1,12 +1,17 @@
 """Tests for the shared project store."""
 
+import errno
 import os
 import stat
+from pathlib import Path
 
 import pytest
 
+import ui.projects as projects_module
 from ui.projects import (
     ProjectStore,
+    _move_without_replacing,
+    _resolve,
     default_projects_dir,
     explicit_env,
     local_env,
@@ -176,3 +181,85 @@ def test_local_and_explicit_env_resolution(tmp_path, monkeypatch):
 def test_run_environment_pins_the_resolved_project_file(tmp_path):
     project = ProjectStore(tmp_path).create("acme")
     assert run_environment(project) == {"IMAP_TOOLS_ENV_FILE": str(project.path.resolve())}
+
+
+def test_rename_to_the_same_name_is_a_no_op(tmp_path):
+    store = ProjectStore(tmp_path)
+    project = store.create("acme")
+    assert store.rename(project, " acme ") == project
+    assert project.path.is_file()
+
+
+def test_create_reports_a_file_created_concurrently_by_another_instance(tmp_path, monkeypatch):
+    store = ProjectStore(tmp_path)
+    store.create("acme")
+    monkeypatch.setattr(store, "_check_available", lambda *args, **kwargs: None)
+    with pytest.raises(ValueError, match="already exists"):
+        store.create("acme")
+
+
+def test_unreadable_or_unwritable_projects_directory_degrades_gracefully(tmp_path, monkeypatch):
+    store = ProjectStore(tmp_path / "projects")
+    monkeypatch.setattr(Path, "chmod", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("read-only")))
+    store.ensure_root()
+    assert store.root.is_dir()
+
+    monkeypatch.setattr(Path, "glob", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("unreadable")))
+    assert store.named_projects() == []
+
+    blocked = ProjectStore(tmp_path / "file-not-directory")
+    blocked.root.write_text("", encoding="utf-8")
+    blocked.remember(blocked.default_project())
+    assert blocked.remembered() == ""
+
+
+def test_resolve_falls_back_to_an_absolute_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "resolve", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("loop")))
+    assert _resolve(tmp_path / "project.env") == (tmp_path / "project.env").absolute()
+
+
+def test_windows_move_refuses_to_replace_an_existing_project(tmp_path):
+    source = tmp_path / "old.env"
+    source.write_text("old", encoding="utf-8")
+    existing = tmp_path / "taken.env"
+    existing.write_text("taken", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="already exists"):
+        _move_without_replacing(source, existing, case_only=False, windows=True)
+    _move_without_replacing(source, tmp_path / "new.env", case_only=False, windows=True)
+
+    assert existing.read_text(encoding="utf-8") == "taken"
+    assert (tmp_path / "new.env").read_text(encoding="utf-8") == "old"
+
+
+def test_move_falls_back_to_rename_where_hard_links_are_unsupported(tmp_path, monkeypatch):
+    def unsupported(*args, **kwargs):
+        raise OSError(errno.EPERM, "hard links unsupported")
+
+    monkeypatch.setattr(projects_module.os, "link", unsupported)
+    source = tmp_path / "old.env"
+    source.write_text("old", encoding="utf-8")
+    taken = tmp_path / "taken.env"
+    taken.write_text("taken", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="already exists"):
+        _move_without_replacing(source, taken, case_only=False, windows=False)
+    _move_without_replacing(source, tmp_path / "new.env", case_only=False, windows=False)
+
+    assert not source.exists()
+    assert taken.read_text(encoding="utf-8") == "taken"
+    assert (tmp_path / "new.env").read_text(encoding="utf-8") == "old"
+
+
+def test_move_reports_link_races_and_unexpected_errors(tmp_path, monkeypatch):
+    source = tmp_path / "old.env"
+    source.write_text("old", encoding="utf-8")
+
+    monkeypatch.setattr(projects_module.os, "link", lambda *args: (_ for _ in ()).throw(FileExistsError()))
+    with pytest.raises(ValueError, match="already exists"):
+        _move_without_replacing(source, tmp_path / "new.env", case_only=False, windows=False)
+
+    monkeypatch.setattr(projects_module.os, "link", lambda *args: (_ for _ in ()).throw(OSError(errno.EIO, "io")))
+    with pytest.raises(OSError, match="io"):
+        _move_without_replacing(source, tmp_path / "new.env", case_only=False, windows=False)
+    assert source.is_file()
