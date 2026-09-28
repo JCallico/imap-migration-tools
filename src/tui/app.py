@@ -810,10 +810,13 @@ class ImapToolsApp(App[None]):
     def show_neutral_configuration_status(self) -> None:
         """Show autosave status while making OS environment precedence visible."""
         self.configuration_status_timer = None
+        panel = self.query_one_optional("#config-panel")
+        if panel is None:
+            return
         override_active = any(field.name in os.environ for field in FIELDS)
         separator = " - " if self.display_profile.mode == "ascii" else " · "
         status = "ENV override active" if override_active else f"{self.env_path.name}{separator}autosave"
-        self.query_one("#config-panel").border_subtitle = status
+        panel.border_subtitle = status
 
     def on_resize(self, event: Resize) -> None:
         was_responsive = self.has_class("narrow") or self.has_class("medium")

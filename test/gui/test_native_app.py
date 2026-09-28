@@ -858,3 +858,62 @@ def test_main_opens_named_projects_and_rejects_unknown_ones(monkeypatch, tmp_pat
     assert launched == ["acme"]
     with pytest.raises(SystemExit):
         native_gui.main(["--project", "missing"])
+    with pytest.raises(SystemExit):
+        native_gui.main(["--project", "acme", "--env", str(tmp_path / "other.env")])
+
+    monkeypatch.setenv("IMAP_TOOLS_ENV_FILE", str(tmp_path / "not-created-yet.env"))
+    native_gui.main([])
+    assert launched == ["acme", "local"]
+
+
+def test_project_guards_and_name_prompt(project_workspace, monkeypatch):
+    frame, store, acme = project_workspace
+    frame.request_project_name("rename")
+    frame.request_project_deletion()
+    assert frame.project.name == "default"
+
+    frame.on_project_choice()
+    assert frame.project.name == "default"
+    monkeypatch.setattr(frame.project_choice, "GetStringSelection", lambda: "vanished")
+    frame.on_project_choice()
+    assert frame.GetStatusBar().GetStatusText() == "Project not found: vanished"
+    monkeypatch.undo()
+
+    frame.controller.active = True
+    assert not frame.switch_project(acme)
+    assert "Wait for the current operation" in frame.GetStatusBar().GetStatusText()
+    frame.controller.active = False
+
+    assert frame.project_name_entered("new", None) is None
+    frame.switch_project(acme)
+    monkeypatch.setattr(frame, "confirm", lambda *args: True)
+    monkeypatch.setattr(store, "delete", lambda project: (_ for _ in ()).throw(OSError("busy")))
+    frame.request_project_deletion()
+    assert frame.GetStatusBar().GetStatusText() == "Unable to delete project: busy"
+    assert frame.project == acme
+
+    prompts = []
+
+    class Dialog:
+        def __init__(self, parent, message, title, value):
+            prompts.append((message, title, value))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def SetMaxLength(self, length):
+            prompts.append(length)
+
+        def ShowModal(self):
+            return wx.ID_CANCEL if len(prompts) > 2 else wx.ID_OK
+
+        def GetValue(self):
+            return "typed"
+
+    monkeypatch.setattr(native_gui.wx, "TextEntryDialog", Dialog)
+    assert frame.ask_project_name("New project") == "typed"
+    assert frame.ask_project_name("Rename acme", "acme") is None
+    assert prompts[:2] == [("Project name", "New project", ""), 60]

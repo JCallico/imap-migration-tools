@@ -207,9 +207,9 @@ def _resolve(path: Path) -> Path:
         return path.expanduser().absolute()
 
 
-def _move_without_replacing(source: Path, target: Path, case_only: bool) -> None:
+def _move_without_replacing(source: Path, target: Path, case_only: bool, windows: bool = os.name == "nt") -> None:
     """Rename atomically, failing instead of replacing a file created concurrently."""
-    if case_only or os.name == "nt":
+    if case_only or windows:
         if not case_only and target.exists():
             raise ValueError(f"A project named {target.stem} already exists")
         os.rename(source, target)
