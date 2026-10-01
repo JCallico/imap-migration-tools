@@ -80,13 +80,20 @@ Desktop layout and the last normal window size are stored separately in `gui-lay
 the panel layout, F1 for help, and F2 for the structured keyboard reference. The Help menu also provides application
 and version information under About.
 Platform menu conventions remain available, including the macOS application menu.
-The interface reads the active operating-system palette through wxPython and uses native controls, consistent spacing,
-and theme-aware semantic readiness colours. On Linux it follows GTK light/dark and accent colours, including theme
-changes made while the application is open. The header uses GTK's active-caption and caption-text colours, while
-interactive accents use the system selection colour. Open
-**View → Appearance** (`Ctrl+,`) to adjust window opacity from 70% to 100%. The setting is saved in
-`gui-settings.json`; desktops whose compositor does not expose native window opacity leave the control disabled. The
-settings screen has separate buttons to reset opacity and zoom to their defaults.
+The interface uses the same terminal-inspired visual language as the TUI and Android application: monospaced text,
+prompt-like panel titles and actions, green operation accents, yellow warnings, red failures, and high-contrast panel
+surfaces. The light palette is a light terminal palette rather than a conventional desktop form theme. Open
+**View → Appearance** (`Ctrl+,`) to choose **System**, **Light**, or **Dark**. System mode follows the operating
+system's light/dark choice while retaining the application's own coordinated palette; supported operating-system
+theme changes are reflected while the application is open.
+
+The Appearance window also adjusts opacity from 70% to 100%. New profiles start fully opaque so the terminal palettes
+remain consistent across compositors and Windows desktops; transparency remains available as an opt-in setting.
+Theme, opacity, and zoom are independent and saved in
+`gui-settings.json`. Existing settings created before theme selection was available use System mode. Desktops whose
+compositor does not expose native window opacity leave that control disabled. High-contrast text and semantic status
+colours remain in use at every supported opacity, and the settings screen provides separate reset controls for opacity
+and zoom.
 On macOS, the fixed-width Output text follows the native body-text size for consistency with the other controls.
 The same dialog adjusts zoom from 80% to 150%. **View → Zoom → Zoom in**, **Zoom out**, and **Reset zoom** use `Ctrl+=`,
 `Ctrl+-`, and `Ctrl+0` on Windows/Linux and `Cmd` equivalents on macOS. Fonts, native control sizes, wrapped text, and
@@ -134,6 +141,11 @@ Bundles include a separate console-capable worker, allowing the GUI to run witho
 operation output. Windows cancellation uses the worker's private stdin channel; POSIX uses process-group signals.
 No local HTTP server or extra credential store is introduced. OAuth browser and encrypted token-cache behavior
 remain in the existing authentication modules.
+
+The desktop window and application bundles use the same terminal-envelope artwork selected for Android. The canonical
+store artwork remains `android/artwork/play-store-icon.png`; desktop runtime and Linux PNG resources plus the native
+Windows `.ico` and macOS `.icns` files are derived from it. When the artwork changes, regenerate all platform assets
+together so installed applications, task switchers, launchers, and window chrome keep the same identity.
 
 Build on each target OS. Linux builds depend on compatible system GTK libraries; they are not universal Linux binaries.
 The initial CI targets are Ubuntu 24.04, the hosted macOS runner, and the hosted Windows runner. Produced artifacts are

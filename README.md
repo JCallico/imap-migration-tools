@@ -224,13 +224,19 @@ imap-tools-gui
 ```
 
 The application provides an autosaving `.env` form, operation readiness guidance, confirmations, live output,
-cancellation, and shared local run history. It uses native GTK, Cocoa, or Windows controls and follows the active
-operating-system theme. View includes persistent zoom and transparency controls; transparency depends on compositor
-support.
+cancellation, and shared local run history. It uses native GTK, Cocoa, or Windows controls, detects the operating-system
+theme on first launch, and provides explicit System, Light, and Dark appearance choices. View also includes persistent
+zoom and transparency controls; transparency depends on compositor support.
 
-| Linux | macOS | Windows |
-| --- | --- | --- |
-| ![IMAP Migration Tools native desktop interface on Linux](https://raw.githubusercontent.com/JCallico/imap-migration-tools/main/docs/images/gui-overview-linux.png) | ![IMAP Migration Tools native desktop interface on macOS](https://raw.githubusercontent.com/JCallico/imap-migration-tools/main/docs/images/gui-overview-macos.png) | ![IMAP Migration Tools native desktop interface on Windows](https://raw.githubusercontent.com/JCallico/imap-migration-tools/main/docs/images/gui-overview-windows.png) |
+#### Desktop theme previews
+
+| Theme | Linux | Windows | macOS |
+| --- | --- | --- | --- |
+| Light | <img src="docs/images/gui-overview-linux-light.png" alt="IMAP Migration Tools light theme on Linux" width="420"> | <img src="docs/images/gui-overview-windows-light.png" alt="IMAP Migration Tools light theme on Windows" width="420"> | _Preview pending the native macOS theme update._ |
+| Dark | <img src="docs/images/gui-overview-linux-dark.png" alt="IMAP Migration Tools dark theme on Linux" width="420"> | <img src="docs/images/gui-overview-windows-dark.png" alt="IMAP Migration Tools dark theme on Windows" width="420"> | _Preview pending the native macOS theme update._ |
+
+The macOS application remains supported; its screenshots will be added after its native controls receive the same
+terminal-inspired theme treatment.
 
 The desktop application discovers `.env` from the current directory and its parents. Desktop launchers may start in a
 different directory, so select a configuration explicitly when needed:

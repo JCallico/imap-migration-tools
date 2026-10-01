@@ -8,7 +8,9 @@ env/
 venv/
 .env
 .coverage
-.claude
+.claude/*
+!.claude/skills/
+!.claude/skills/**
 
 .venv/
 .gradle/

@@ -1,5 +1,6 @@
 """Native widget interactions and real CLI/IMAP integration."""
 
+import ctypes
 import os
 import sys
 import time
@@ -31,9 +32,14 @@ from gui.app import (  # noqa: E402
     DEFAULT_OPERATION_HEIGHT,
     AboutDialog,
     AppearanceDialog,
+    ConfirmationDialog,
     HelpDialog,
     KeyboardReferenceDialog,
+    PaletteChoice,
+    PaletteMenuRenderer,
+    PaletteSplitter,
     Workspace,
+    application_icon_path,
 )
 from ui import history  # noqa: E402
 from ui.appearance import load_appearance  # noqa: E402
@@ -120,6 +126,13 @@ def test_configuration_schema_and_native_password_controls(workspace):
     assert "positive" in workspace.GetStatusBar().GetStatusText()
 
 
+def test_workspace_uses_packaged_android_launcher_artwork(workspace):
+    assert application_icon_path().is_file()
+    assert workspace._application_icon.IsOk()
+    if wx.Platform == "__WXMAC__":
+        assert workspace.GetIcon().IsOk()
+
+
 def test_tools_and_configuration_share_readiness_state(workspace):
     workspace.load_form({})
     workspace.select_operation("backup")
@@ -136,10 +149,342 @@ def test_native_theme_has_visual_hierarchy(workspace):
     else:
         assert workspace.output.GetFont().GetPointSize() == 10
     assert workspace.readiness_panel.GetBackgroundColour() != workspace.GetBackgroundColour()
+    assert all(isinstance(splitter, PaletteSplitter) for splitter in workspace._splitters)
+    assert all(splitter._sash_colour == workspace.colours["separator"] for splitter in workspace._splitters)
+    assert workspace.history_table.GetWindowStyle() & wx.LC_NO_HEADER
+    assert workspace.history_header.GetBackgroundColour() == workspace.colours["accent_soft"]
+    assert workspace.history_table.GetBackgroundColour() == workspace.colours["control"]
     assert (
         " ".join(workspace.operation_description.GetLabel().split())
         == OPERATION_BY_NAME[workspace.operation].description
     )
+
+
+def test_native_theme_uses_shared_terminal_dark_and_light_palettes(workspace):
+    workspace.apply_theme("dark")
+    assert workspace.colours["background"] == wx.Colour("#050505")
+    assert workspace.colours["accent"] == wx.Colour("#44DD55")
+    assert workspace.output.GetBackgroundColour() == wx.Colour("#0B0D0B")
+    assert workspace.header_title.GetFont().IsFixedWidth()
+    assert all(splitter.GetBackgroundColour() == workspace.colours["separator"] for splitter in workspace._splitters)
+
+    workspace.apply_theme("light")
+    assert workspace.colours["background"] == wx.Colour("#DDE4DA")
+    assert workspace.colours["accent"] == wx.Colour("#146B25")
+    assert workspace.output.GetForegroundColour() == wx.Colour("#182018")
+    assert workspace.labels["SRC_IMAP_HOST"].GetFont().IsFixedWidth()
+    assert all(splitter.GetBackgroundColour() == workspace.colours["separator"] for splitter in workspace._splitters)
+
+    workspace.apply_theme("system")
+
+
+def test_first_run_defaults_to_system_theme(workspace):
+    assert not workspace.settings_path.exists()
+    assert workspace.theme == "system"
+
+
+def test_unknown_native_theme_is_rejected(workspace):
+    with pytest.raises(ValueError, match="theme must be one of"):
+        workspace.apply_theme("sepia")
+
+
+def test_system_light_detection_uses_portable_wx_api(workspace, monkeypatch):
+    class Appearance:
+        @staticmethod
+        def IsDark():
+            return False
+
+    monkeypatch.setattr(wx.SystemSettings, "GetAppearance", lambda: Appearance())
+    monkeypatch.setattr(wx.SystemSettings, "GetColour", lambda role: wx.Colour("#F4F6F2"))
+    assert not workspace._system_is_dark()
+
+
+def test_system_dark_detection_uses_portable_wx_api(workspace, monkeypatch):
+    class Appearance:
+        @staticmethod
+        def IsDark():
+            return True
+
+    monkeypatch.setattr(native_gui, "_windows_dark_preference", lambda: None)
+    monkeypatch.setattr(wx.SystemSettings, "GetAppearance", lambda: Appearance())
+    workspace.apply_theme("system")
+    assert workspace._system_is_dark()
+    assert workspace.theme == "system"
+    assert workspace.colours["background"] == wx.Colour("#050505")
+
+
+def test_windows_theme_preference_takes_precedence_over_stale_native_colours(workspace, monkeypatch):
+    class Appearance:
+        @staticmethod
+        def IsDark():
+            return False
+
+    monkeypatch.setattr(native_gui, "_windows_dark_preference", lambda: True)
+    monkeypatch.setattr(wx.SystemSettings, "GetAppearance", lambda: Appearance())
+    monkeypatch.setattr(wx.SystemSettings, "GetColour", lambda role: wx.Colour("#FFFFFF"))
+
+    workspace.apply_theme("system")
+    assert workspace._system_is_dark()
+    assert workspace.colours["background"] == wx.Colour("#050505")
+
+
+def test_windows_inputs_drop_the_bright_native_client_edge(monkeypatch):
+    monkeypatch.setattr(native_gui.os, "name", "nt")
+    assert native_gui._input_style(wx.TE_PASSWORD) == wx.TE_PASSWORD | wx.BORDER_NONE
+    assert native_gui._choice_type() is PaletteChoice
+
+
+def test_windows_theme_preference_reads_registry_and_handles_failures(monkeypatch):
+    class RegistryKey:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    values = iter((0, 1))
+    registry = SimpleNamespace(
+        HKEY_CURRENT_USER=object(),
+        OpenKey=lambda *args: RegistryKey(),
+        QueryValueEx=lambda *args: (next(values), None),
+    )
+    monkeypatch.setattr(native_gui.os, "name", "nt")
+    monkeypatch.setitem(sys.modules, "winreg", registry)
+
+    assert native_gui._windows_dark_preference()
+    assert not native_gui._windows_dark_preference()
+    registry.OpenKey = lambda *args: (_ for _ in ()).throw(OSError("unavailable"))
+    assert native_gui._windows_dark_preference() is None
+
+
+def test_windows_native_theme_helpers_cover_supported_and_failure_paths(monkeypatch):
+    class NativeSetter:
+        def __init__(self):
+            self.calls = []
+            self.result = 0
+
+        def __call__(self, *args):
+            self.calls.append(args)
+            return self.result
+
+    frame_setter = NativeSetter()
+    control_setter = NativeSetter()
+    messages = NativeSetter()
+    monkeypatch.setattr(native_gui.os, "name", "nt")
+    monkeypatch.setattr(sys, "getwindowsversion", lambda: SimpleNamespace(build=22631), raising=False)
+    monkeypatch.setattr(
+        ctypes,
+        "windll",
+        SimpleNamespace(
+            dwmapi=SimpleNamespace(DwmSetWindowAttribute=frame_setter),
+            uxtheme=SimpleNamespace(SetWindowTheme=control_setter),
+            user32=SimpleNamespace(SendMessageW=messages),
+        ),
+        raising=False,
+    )
+
+    colours = {
+        "frame_border": wx.Colour("#010203"),
+        "header": wx.Colour("#040506"),
+        "header_text": wx.Colour("#070809"),
+    }
+    assert native_gui._colourref(wx.Colour("#010203")) == 0x030201
+    assert native_gui._set_windows_frame_theme(42, True, colours)
+    assert len(frame_setter.calls) == 4
+    assert native_gui._set_windows_control_theme(42, True)
+    assert control_setter.calls[-1][1] == "DarkMode_Explorer"
+    assert messages.calls
+
+    control_setter.result = 1
+    assert not native_gui._set_windows_control_theme(42, False)
+    assert control_setter.calls[-1][1] == "Explorer"
+    frame_setter.result = 1
+    assert not native_gui._set_windows_frame_theme(42, False, colours)
+
+    monkeypatch.delattr(ctypes, "windll")
+    assert not native_gui._set_windows_frame_theme(42, True, colours)
+    assert not native_gui._set_windows_control_theme(42, True)
+
+
+def test_palette_choice_owns_selection_and_theme(workspace):
+    choice = PaletteChoice(workspace, choices=["first", "second"])
+    workspace.apply_theme("dark")
+    choice.apply_palette(workspace.colours)
+
+    assert choice.SetStringSelection("second")
+    assert choice.GetSelection() == 1
+    assert choice.GetStringSelection() == "second"
+    assert choice.GetBackgroundColour() == wx.Colour("#101210")
+
+    choice.SetString(1, "updated")
+    assert choice.GetString(1) == "updated"
+    assert choice.GetStringSelection() == "updated"
+
+    selected = []
+    choice.Bind(native_gui.EVT_PALETTE_CHOICE, lambda event: selected.append(choice.GetSelection()))
+    choice._on_key_down(SimpleNamespace(GetKeyCode=lambda: wx.WXK_DOWN, Skip=lambda: None))
+    assert selected == [0]
+
+    choice._show_popup()
+    assert choice._popup.IsShown()
+    assert choice._popup.GetChildren()[0].GetSizer().GetItemCount() == 2
+    choice._show_popup()
+    second_row = choice._popup.GetChildren()[0].GetChildren()[1]
+    second_row.GetEventHandler().ProcessEvent(wx.MouseEvent(wx.EVT_LEFT_DOWN.typeId))
+    assert selected == [0, 1]
+    choice._popup.Dismiss()
+    choice._popup.Destroy()
+    choice._popup = None
+    choice._on_key_down(SimpleNamespace(GetKeyCode=lambda: wx.WXK_SPACE, Skip=lambda: None))
+    assert choice._popup.IsShown()
+    choice._popup.Dismiss()
+    choice._popup.Destroy()
+    choice._popup = None
+    assert not choice.SetStringSelection("missing")
+    choice._on_key_down(SimpleNamespace(GetKeyCode=lambda: ord("A"), Skip=lambda: selected.append("skipped")))
+    assert selected[-1] == "skipped"
+    choice.Enable(False)
+    choice._show_popup()
+    assert choice._popup is None
+    choice.Destroy()
+
+
+def test_all_platforms_use_palette_owned_choices(workspace):
+    assert native_gui._choice_type() is PaletteChoice
+    assert isinstance(workspace.tools, PaletteChoice)
+    assert isinstance(workspace.count_mode, PaletteChoice)
+
+
+def test_palette_menu_renderer_scopes_terminal_font_and_colours(native_app, monkeypatch):
+    renderer = PaletteMenuRenderer()
+    font = wx.Font(wx.FontInfo(11).Family(wx.FONTFAMILY_TELETYPE))
+    text_colour = wx.Colour("#E8EEE8")
+    highlight_colour = wx.Colour("#44DD55")
+    separator_colour = wx.Colour("#202520")
+    renderer.apply_text_palette(font, text_colour, highlight_colour, separator_colour)
+    original_get_font = wx.SystemSettings.GetFont
+    original_best_label_colour = native_gui.FM.colourutils.BestLabelColour
+    observed = {}
+
+    def inspect_palette(base_renderer, menubar, dc):
+        observed["font"] = wx.SystemSettings.GetFont(wx.SYS_DEFAULT_GUI_FONT)
+        observed["fallback_font"] = wx.SystemSettings.GetFont(wx.SYS_ANSI_FIXED_FONT)
+        observed["text"] = native_gui.FM.colourutils.BestLabelColour(base_renderer.menuBarFaceColour)
+        observed["highlight"] = native_gui.FM.colourutils.BestLabelColour(base_renderer.menuBarFocusFaceColour)
+
+    monkeypatch.setattr(native_gui.FM.FMRenderer, "DrawMenuBar", inspect_palette)
+    renderer.DrawMenuBar(None, None)
+
+    assert observed["font"].GetNativeFontInfoDesc() == font.GetNativeFontInfoDesc()
+    assert observed["font"].GetPointSize() == 11
+    assert observed["fallback_font"].IsOk()
+    assert observed["text"] == text_colour
+    assert observed["highlight"] == highlight_colour
+    assert renderer.separator_colour == separator_colour
+    restored_font = wx.SystemSettings.GetFont(wx.SYS_DEFAULT_GUI_FONT)
+    expected_font = original_get_font(wx.SYS_DEFAULT_GUI_FONT)
+    assert restored_font.GetNativeFontInfoDesc() == expected_font.GetNativeFontInfoDesc()
+    assert native_gui.FM.colourutils.BestLabelColour is original_best_label_colour
+
+
+def test_palette_menu_renderer_draws_themed_separator(monkeypatch):
+    renderer = PaletteMenuRenderer()
+    renderer.separator_colour = wx.Colour("#202520")
+    operations = []
+
+    class DrawingContext:
+        def SetPen(self, pen):
+            operations.append(("pen", pen.GetColour()))
+
+        def DrawLine(self, *coordinates):
+            operations.append(("line", coordinates))
+
+    monkeypatch.setattr(native_gui.FM, "DCSaver", lambda dc: object())
+    renderer.DrawSeparator(DrawingContext(), 4, 10, 6, 100)
+
+    assert operations[0] == ("pen", renderer.separator_colour)
+    assert operations[1][0] == "line"
+
+
+def test_app_menu_applies_palette_to_top_level_and_nested_items(workspace):
+    class MenuItem:
+        def __init__(self, submenu=None):
+            self.submenu = submenu
+            self.font = None
+            self.colour = None
+
+        def SetFont(self, font):
+            self.font = font
+
+        def SetTextColour(self, colour):
+            self.colour = colour
+
+        def GetSubMenu(self):
+            return self.submenu
+
+    class Menu:
+        def __init__(self, items):
+            self.items = items
+
+        def GetMenuItems(self):
+            return self.items
+
+    nested_item = MenuItem()
+    top_item = MenuItem(Menu([nested_item]))
+    menu = Menu([top_item])
+
+    class MenuBar:
+        def __init__(self):
+            self.background = None
+            self.refreshed = False
+
+        def GetFont(self):
+            return workspace.GetFont()
+
+        def GetMenuCount(self):
+            return 1
+
+        def GetMenu(self, index):
+            assert index == 0
+            return menu
+
+        def SetBackgroundColour(self, colour):
+            self.background = colour
+
+        def Refresh(self):
+            self.refreshed = True
+
+    original_bar = workspace.app_menu_bar
+    original_renderer = getattr(workspace, "_flat_menu_renderer", None)
+    try:
+        workspace.app_menu_bar = MenuBar()
+        workspace._flat_menu_renderer = PaletteMenuRenderer()
+        workspace._style_app_menu()
+        assert top_item.colour == workspace.colours["text"]
+        assert nested_item.colour == workspace.colours["text"]
+        assert workspace.app_menu_bar.background == workspace.colours["header"]
+        assert workspace.app_menu_bar.refreshed
+    finally:
+        workspace.app_menu_bar = original_bar
+        if original_renderer is None:
+            del workspace._flat_menu_renderer
+        else:
+            workspace._flat_menu_renderer = original_renderer
+
+
+def test_windows_frame_theme_is_applied_with_current_palette(workspace, monkeypatch):
+    applied = []
+    monkeypatch.setattr(
+        native_gui,
+        "_set_windows_frame_theme",
+        lambda handle, dark, colours: applied.append((handle, dark, colours["border"])) or True,
+    )
+
+    workspace.apply_theme("dark")
+    workspace.apply_theme("light")
+
+    assert applied[-2][1:] == (True, wx.Colour("#5E655E"))
+    assert applied[-1][1:] == (False, wx.Colour("#4D7154"))
 
 
 def test_output_status_reflows_when_label_changes(workspace):
@@ -171,12 +516,25 @@ def test_native_theme_refreshes_custom_surfaces(workspace, monkeypatch):
     assert workspace.operation_panel.GetBackgroundColour() == palette["surface_soft"]
 
 
+def test_light_theme_restyles_existing_output_text_background(workspace):
+    workspace.lines.extend(["Command: count", "TOTAL 42"])
+    workspace.current_run_id = workspace.selected_run_id = "active"
+    workspace.apply_theme("dark")
+    workspace.apply_theme("light")
+
+    style = wx.TextAttr()
+    assert workspace.output.GetStyle(0, style)
+    assert style.GetTextColour() == workspace.colours["text"]
+    assert style.GetBackgroundColour() == workspace.colours["surface"]
+
+
 def test_header_omits_configuration_filename_and_view_uses_submenus(workspace):
     header_labels = [child.GetLabel() for child in workspace.header.GetChildren() if isinstance(child, wx.StaticText)]
     assert workspace.env_path.name not in header_labels
-    assert "Count, compare, backup, restore, and migrate mailboxes with confidence." in header_labels
+    assert "$ count | compare | backup | restore | migrate" in header_labels
 
-    view = workspace.GetMenuBar().GetMenu(2)
+    menu_bar = workspace.app_menu_bar or workspace.GetMenuBar()
+    view = menu_bar.GetMenu(2)
     labels = [item.GetItemLabelText() for item in view.GetMenuItems() if not item.IsSeparator()]
     assert labels == ["Reset layout", "Zoom", "Transparency", "Appearance…"]
     zoom = next(item.GetSubMenu() for item in view.GetMenuItems() if item.GetItemLabelText() == "Zoom")
@@ -190,7 +548,8 @@ def test_header_omits_configuration_filename_and_view_uses_submenus(workspace):
 
 
 def test_help_menu_uses_structured_information_dialogs(workspace):
-    help_menu = workspace.GetMenuBar().GetMenu(3)
+    menu_bar = workspace.app_menu_bar or workspace.GetMenuBar()
+    help_menu = menu_bar.GetMenu(3)
     labels = [item.GetItemLabelText() for item in help_menu.GetMenuItems() if not item.IsSeparator()]
     assert labels == ["Help", "Keyboard Reference", "About"]
 
@@ -212,6 +571,24 @@ def test_help_menu_uses_structured_information_dialogs(workspace):
             dialog.Destroy()
 
 
+def test_confirmation_dialogs_follow_the_selected_theme(workspace):
+    workspace.apply_theme("light")
+    dialogs = [
+        ConfirmationDialog(workspace, "Continue with this operation?"),
+        ConfirmationDialog(workspace, "Delete the selected item?", True),
+    ]
+    try:
+        for dialog in dialogs:
+            assert dialog.GetBackgroundColour() == workspace.colours["surface_soft"]
+            assert dialog.heading.GetForegroundColour() == workspace.colours["accent_label"]
+            assert dialog.message.GetForegroundColour() == workspace.colours["text"]
+        assert dialogs[1].entry.GetBackgroundColour() == workspace.colours["control"]
+        assert dialogs[1].GetValue() == ""
+    finally:
+        for dialog in dialogs:
+            dialog.Destroy()
+
+
 def test_window_opacity_is_configurable_and_persistent(workspace, monkeypatch):
     applied = []
     monkeypatch.setattr(workspace, "transparency_supported", lambda: True)
@@ -223,22 +600,40 @@ def test_window_opacity_is_configurable_and_persistent(workspace, monkeypatch):
     from ui.appearance import save_appearance
 
     save_appearance(workspace.settings_path, workspace.opacity, workspace.zoom)
-    assert load_appearance(workspace.settings_path) == {"opacity": 84, "zoom": 100}
+    assert load_appearance(workspace.settings_path) == {"opacity": 84, "zoom": 100, "theme": "system"}
 
 
-def test_appearance_settings_screen_exposes_opacity_and_zoom(workspace):
-    dialog = AppearanceDialog(workspace, 88, 120, True)
+def test_fully_opaque_window_avoids_native_transparency_until_needed(workspace, monkeypatch):
+    applied = []
+    monkeypatch.setattr(workspace, "transparency_supported", lambda: True)
+    monkeypatch.setattr(workspace, "SetTransparent", lambda alpha: applied.append(alpha) or True)
+
+    assert workspace.apply_opacity(100)
+    assert applied == []
+
+    workspace.apply_opacity(80)
+    workspace.apply_opacity(100)
+    assert applied == [204, 255]
+
+
+def test_appearance_settings_screen_exposes_theme_opacity_and_zoom(workspace):
+    dialog = AppearanceDialog(workspace, 88, 120, True, "dark")
     try:
+        assert dialog.selected_theme() == "dark"
         assert (dialog.opacity.GetMin(), dialog.opacity.GetMax()) == (70, 100)
         assert (dialog.zoom.GetMin(), dialog.zoom.GetMax()) == (80, 150)
         assert dialog.selected_opacity() == 88
         assert dialog.selected_zoom() == 120
         assert dialog.zoom.GetName() == "Zoom"
+        assert dialog.theme.GetName() == "Theme"
+        dialog.theme.SetStringSelection("Light")
+        dialog.preview_theme(workspace)
+        assert workspace.theme == "light"
         click(dialog.reset_opacity_button)
         click(dialog.reset_zoom_button)
-        assert dialog.selected_opacity() == 96
+        assert dialog.selected_opacity() == 100
         assert dialog.selected_zoom() == 100
-        assert workspace.opacity == 96
+        assert workspace.opacity == 100
         assert workspace.zoom == 100
         assert dialog.GetTitle() == "Appearance"
     finally:
@@ -265,8 +660,8 @@ def test_transparency_menu_commands_adjust_and_reset_opacity(workspace, monkeypa
     workspace.decrease_transparency()
     assert workspace.opacity == 90
     workspace.reset_transparency()
-    assert workspace.opacity == 96
-    assert load_appearance(workspace.settings_path)["opacity"] == 96
+    assert workspace.opacity == 100
+    assert load_appearance(workspace.settings_path)["opacity"] == 100
 
 
 def test_destructive_run_requires_confirmation(workspace, monkeypatch):
@@ -338,6 +733,15 @@ def test_external_history_preserves_selection_and_deletion(workspace, monkeypatc
     with_writer.close()
     workspace.refresh_history()
     assert workspace.selected_run_id == first.run_id
+    assert all(
+        label.GetForegroundColour() == workspace.colours["accent_label"]
+        for label in workspace.history_header.GetChildren()
+    )
+    assert workspace.history_table.GetItemTextColour(0) == workspace.colours["text"]
+    assert workspace.history_table.GetItemBackgroundColour(0) == workspace.colours["surface"]
+    assert not workspace.history_table.GetItemState(0, wx.LIST_STATE_SELECTED)
+    workspace.apply_theme("dark")
+    assert workspace.history_table.GetItemBackgroundColour(0) == workspace.colours["surface"]
     second = history.new_record("backup")
     writer = history.HistoryWriter(second, history.Redactor([]))
     writer.write("unfinished")
@@ -363,7 +767,7 @@ def test_native_layout_and_focus_actions(workspace, native_app):
     assert workspace.upper.GetSashPosition() == 350
     workspace.reset_layout()
     assert workspace.upper.GetSashPosition() == 430
-    assert abs(workspace.sidebar.GetSashPosition() - DEFAULT_OPERATION_HEIGHT) <= 16
+    assert abs(workspace.sidebar.GetSashPosition() - DEFAULT_OPERATION_HEIGHT) <= 32
     workspace.select_operation("compare")
     wx.Yield()
     run_bottom = workspace.run_button.GetPosition().y + workspace.run_button.GetSize().height
@@ -503,15 +907,18 @@ def test_appearance_commands_and_dialog_outcomes(workspace, monkeypatch):
         def selected_zoom(self):
             return 120
 
+        def selected_theme(self):
+            return "dark"
+
     monkeypatch.setattr(native_gui, "AppearanceDialog", AppearanceResult)
-    original = (workspace.opacity, workspace.zoom)
+    original = (workspace.opacity, workspace.zoom, workspace.theme)
     workspace.show_appearance_settings()
-    assert (workspace.opacity, workspace.zoom) == original
+    assert (workspace.opacity, workspace.zoom, workspace.theme) == original
 
     AppearanceResult.result = wx.ID_OK
     monkeypatch.setattr(workspace, "save_appearance_settings", lambda: False)
     workspace.show_appearance_settings()
-    assert (workspace.opacity, workspace.zoom) == original
+    assert (workspace.opacity, workspace.zoom, workspace.theme) == original
 
 
 def test_dialog_and_configuration_error_paths(workspace, monkeypatch):
@@ -538,12 +945,11 @@ def test_dialog_and_configuration_error_paths(workspace, monkeypatch):
         def GetPath(self):
             return self.path
 
-    monkeypatch.setattr(wx, "TextEntryDialog", Dialog)
+    monkeypatch.setattr(native_gui, "ConfirmationDialog", Dialog)
     assert workspace.confirm("Delete?", True)
     Dialog.value = "wrong"
     assert not workspace.confirm("Delete?", True)
     Dialog.value = "DELETE"
-    monkeypatch.setattr(wx, "MessageDialog", Dialog)
     Dialog.result = wx.ID_YES
     assert workspace.confirm("Continue?")
 
