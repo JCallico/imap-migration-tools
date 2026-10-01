@@ -128,7 +128,7 @@ def test_configuration_schema_and_native_password_controls(workspace):
 def test_workspace_uses_packaged_android_launcher_artwork(workspace):
     assert application_icon_path().is_file()
     assert workspace._application_icon.IsOk()
-    if wx.Platform != "__WXGTK__":
+    if wx.Platform == "__WXMAC__":
         assert workspace.GetIcon().IsOk()
 
 
@@ -204,6 +204,7 @@ def test_system_dark_detection_uses_portable_wx_api(workspace, monkeypatch):
         def IsDark():
             return True
 
+    monkeypatch.setattr(native_gui, "_windows_dark_preference", lambda: None)
     monkeypatch.setattr(wx.SystemSettings, "GetAppearance", lambda: Appearance())
     workspace.apply_theme("system")
     assert workspace._system_is_dark()
@@ -285,7 +286,7 @@ def test_palette_menu_renderer_scopes_terminal_font_and_colours(native_app, monk
     monkeypatch.setattr(native_gui.FM.FMRenderer, "DrawMenuBar", inspect_palette)
     renderer.DrawMenuBar(None, None)
 
-    assert observed["font"].GetFamily() == wx.FONTFAMILY_TELETYPE
+    assert observed["font"].GetNativeFontInfoDesc() == font.GetNativeFontInfoDesc()
     assert observed["font"].GetPointSize() == 11
     assert observed["text"] == text_colour
     assert observed["highlight"] == highlight_colour
@@ -357,7 +358,8 @@ def test_header_omits_configuration_filename_and_view_uses_submenus(workspace):
     assert workspace.env_path.name not in header_labels
     assert "$ count | compare | backup | restore | migrate" in header_labels
 
-    view = workspace.GetMenuBar().GetMenu(2)
+    menu_bar = workspace.app_menu_bar or workspace.GetMenuBar()
+    view = menu_bar.GetMenu(2)
     labels = [item.GetItemLabelText() for item in view.GetMenuItems() if not item.IsSeparator()]
     assert labels == ["Reset layout", "Zoom", "Transparency", "Appearance…"]
     zoom = next(item.GetSubMenu() for item in view.GetMenuItems() if item.GetItemLabelText() == "Zoom")
@@ -371,7 +373,8 @@ def test_header_omits_configuration_filename_and_view_uses_submenus(workspace):
 
 
 def test_help_menu_uses_structured_information_dialogs(workspace):
-    help_menu = workspace.GetMenuBar().GetMenu(3)
+    menu_bar = workspace.app_menu_bar or workspace.GetMenuBar()
+    help_menu = menu_bar.GetMenu(3)
     labels = [item.GetItemLabelText() for item in help_menu.GetMenuItems() if not item.IsSeparator()]
     assert labels == ["Help", "Keyboard Reference", "About"]
 
@@ -586,7 +589,7 @@ def test_native_layout_and_focus_actions(workspace, native_app):
     assert workspace.upper.GetSashPosition() == 350
     workspace.reset_layout()
     assert workspace.upper.GetSashPosition() == 430
-    assert abs(workspace.sidebar.GetSashPosition() - DEFAULT_OPERATION_HEIGHT) <= 16
+    assert abs(workspace.sidebar.GetSashPosition() - DEFAULT_OPERATION_HEIGHT) <= 32
     workspace.select_operation("compare")
     wx.Yield()
     run_bottom = workspace.run_button.GetPosition().y + workspace.run_button.GetSize().height

@@ -1395,7 +1395,9 @@ class Workspace(wx.Frame):
         self.output, output_box = self._input_box(
             output_panel,
             wx.TextCtrl,
-            style=_input_style(wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP),
+            style=_input_style(
+                wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_DONTWRAP | (wx.TE_RICH2 if os.name == "nt" else 0)
+            ),
         )
         self.output.SetName("Operation output")
         output_font_size = self.output.GetFont().GetPointSize() if wx.Platform == "__WXMAC__" else 10
