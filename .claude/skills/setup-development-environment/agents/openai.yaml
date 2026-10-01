@@ -1,0 +1,4 @@
+interface:
+  display_name: "Set up development environment"
+  short_description: "Prepare this repository on Linux, Windows, or macOS"
+  default_prompt: "Set up and verify the development environment for this repository."

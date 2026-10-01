@@ -61,6 +61,7 @@ imap-tools-gui = "gui:main"
 [tool.setuptools.package-data]
 tui = ["*.tcss"]
 imap_services = ["py.typed"]
+gui = ["assets/*.png"]
 
 [tool.setuptools.package-dir]
 "" = "src"

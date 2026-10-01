@@ -9,14 +9,16 @@ import tempfile
 from pathlib import Path
 
 APPEARANCE_VERSION = 1
-DEFAULT_OPACITY = 96
+DEFAULT_THEME = "system"
+THEMES = ("system", "light", "dark")
+DEFAULT_OPACITY = 100
 MINIMUM_OPACITY = 70
 DEFAULT_ZOOM = 100
 MINIMUM_ZOOM = 80
 MAXIMUM_ZOOM = 150
 
 
-def load_appearance(path: Path) -> dict[str, int]:
+def load_appearance(path: Path) -> dict[str, int | str]:
     """Load validated desktop appearance settings."""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -26,26 +28,31 @@ def load_appearance(path: Path) -> dict[str, int]:
         return {}
     opacity = payload.get("opacity")
     zoom = payload.get("zoom", DEFAULT_ZOOM)
+    theme = payload.get("theme", DEFAULT_THEME)
     if not isinstance(opacity, int) or isinstance(opacity, bool) or not MINIMUM_OPACITY <= opacity <= 100:
         return {}
     if not isinstance(zoom, int) or isinstance(zoom, bool) or not MINIMUM_ZOOM <= zoom <= MAXIMUM_ZOOM:
         return {}
-    return {"opacity": opacity, "zoom": zoom}
+    if theme not in THEMES:
+        return {}
+    return {"opacity": opacity, "zoom": zoom, "theme": theme}
 
 
-def save_appearance(path: Path, opacity: int, zoom: int = DEFAULT_ZOOM) -> None:
-    """Atomically save desktop opacity and zoom settings."""
+def save_appearance(path: Path, opacity: int, zoom: int = DEFAULT_ZOOM, theme: str = DEFAULT_THEME) -> None:
+    """Atomically save desktop theme, opacity, and zoom settings."""
     if not isinstance(opacity, int) or isinstance(opacity, bool) or not MINIMUM_OPACITY <= opacity <= 100:
         raise ValueError(f"opacity must be between {MINIMUM_OPACITY} and 100")
     if not isinstance(zoom, int) or isinstance(zoom, bool) or not MINIMUM_ZOOM <= zoom <= MAXIMUM_ZOOM:
         raise ValueError(f"zoom must be between {MINIMUM_ZOOM} and {MAXIMUM_ZOOM}")
+    if theme not in THEMES:
+        raise ValueError(f"theme must be one of: {', '.join(THEMES)}")
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent, text=True)
     temp = Path(temp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(
-                {"version": APPEARANCE_VERSION, "opacity": opacity, "zoom": zoom},
+                {"version": APPEARANCE_VERSION, "opacity": opacity, "theme": theme, "zoom": zoom},
                 stream,
                 indent=2,
                 sort_keys=True,
