@@ -263,3 +263,12 @@ def test_move_reports_link_races_and_unexpected_errors(tmp_path, monkeypatch):
     with pytest.raises(OSError, match="io"):
         _move_without_replacing(source, tmp_path / "new.env", case_only=False, windows=False)
     assert source.is_file()
+
+
+def test_remembered_project_ignores_a_windows_byte_order_mark(tmp_path):
+    store = ProjectStore(tmp_path)
+    store.create("Acme Corp")
+    (tmp_path / ".active-project").write_bytes("\ufeffAcme Corp\r\n".encode("utf-8"))
+
+    assert store.remembered() == "Acme Corp"
+    assert store.initial().name == "Acme Corp"

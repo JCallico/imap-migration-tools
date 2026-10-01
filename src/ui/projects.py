@@ -170,7 +170,8 @@ class ProjectStore:
 
     def remembered(self) -> str:
         try:
-            return (self.root / ACTIVE_PROJECT_FILE).read_text(encoding="utf-8").strip()
+            # utf-8-sig tolerates the byte-order mark that Windows PowerShell and Notepad may write.
+            return (self.root / ACTIVE_PROJECT_FILE).read_text(encoding="utf-8-sig").strip()
         except OSError:
             return ""
 
