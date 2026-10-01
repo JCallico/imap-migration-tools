@@ -232,8 +232,8 @@ zoom and transparency controls; transparency depends on compositor support.
 
 | Theme | Linux | Windows | macOS |
 | --- | --- | --- | --- |
-| Light | ![IMAP Migration Tools light theme on Linux](docs/images/gui-overview-linux-light.png) | ![IMAP Migration Tools light theme on Windows](docs/images/gui-overview-windows-light.png) | _Preview pending the native macOS theme update._ |
-| Dark | ![IMAP Migration Tools dark theme on Linux](docs/images/gui-overview-linux-dark.png) | ![IMAP Migration Tools dark theme on Windows](docs/images/gui-overview-windows-dark.png) | _Preview pending the native macOS theme update._ |
+| Light | <img src="docs/images/gui-overview-linux-light.png" alt="IMAP Migration Tools light theme on Linux" width="420"> | <img src="docs/images/gui-overview-windows-light.png" alt="IMAP Migration Tools light theme on Windows" width="420"> | _Preview pending the native macOS theme update._ |
+| Dark | <img src="docs/images/gui-overview-linux-dark.png" alt="IMAP Migration Tools dark theme on Linux" width="420"> | <img src="docs/images/gui-overview-windows-dark.png" alt="IMAP Migration Tools dark theme on Windows" width="420"> | _Preview pending the native macOS theme update._ |
 
 The macOS application remains supported; its screenshots will be added after its native controls receive the same
 terminal-inspired theme treatment.
