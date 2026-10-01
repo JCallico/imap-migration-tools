@@ -1461,3 +1461,16 @@ def test_project_name_dialog_uses_the_application_theme(project_workspace):
         assert dialog.GetBackgroundColour() == frame.colours["surface_soft"]
     finally:
         dialog.Destroy()
+
+
+def test_confirmation_dialog_fits_long_messages_after_theming(workspace):
+    message = "Permanently delete project Acme Corp?\nFile: " + "/very/long/path/" * 8 + "Acme Corp.env"
+    dialog = native_gui.ConfirmationDialog(workspace, message, require_delete=True)
+    try:
+        shown, needed = dialog.message.GetSize(), dialog.message.GetBestSize()
+        assert shown.width >= needed.width
+        assert shown.height >= needed.height
+        assert dialog.message.GetScreenRect().GetBottom() <= dialog.GetScreenRect().GetBottom()
+        assert dialog.GetSize().width >= 480
+    finally:
+        dialog.Destroy()

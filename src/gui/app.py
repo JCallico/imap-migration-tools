@@ -576,9 +576,12 @@ class ConfirmationDialog(wx.Dialog):
         content.Add(buttons, 0, wx.EXPAND)
         wrapper = wx.BoxSizer(wx.VERTICAL)
         wrapper.Add(content, 1, wx.EXPAND | wx.ALL, 20)
-        self.SetSizerAndFit(wrapper)
-        self.SetMinSize((480, self.GetSize().height))
+        self.SetSizer(wrapper)
         parent.style_dialog(self)
+        # The themed monospace font changes line breaks, so wrap and size only after styling.
+        self.message.Wrap(440)
+        self.SetMinSize((480, -1))
+        self.Fit()
         self.heading.SetForegroundColour(parent.colours["accent_label"])
         if self.entry:
             self.entry.SetFocus()
@@ -1763,7 +1766,7 @@ class Workspace(wx.Frame):
         if not self.project.managed or not self.leave_project():
             return
         project = self.project
-        message = f"Type DELETE to permanently delete project {project.name} ({project.path})."
+        message = f"Permanently delete project {project.name}?\nFile: {display_path(project.path)}"
         if not self.confirm(message, True):
             return
         try:
