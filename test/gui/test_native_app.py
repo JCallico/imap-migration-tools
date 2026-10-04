@@ -73,7 +73,8 @@ def workspace(native_app, tmp_path, monkeypatch):
     root.mkdir()
     monkeypatch.setattr(history, "history_dir", lambda: root)
     frame = Workspace(tmp_path / ".env", tmp_path / "layout.json")
-    frame.Show()
+    if wx.Platform != "__WXMAC__":
+        frame.Show()
     wx.Yield()
     yield frame
     if frame.controller.active:
@@ -99,6 +100,11 @@ def click(button):
     event = wx.CommandEvent(wx.EVT_BUTTON.typeId, button.GetId())
     event.SetEventObject(button)
     button.GetEventHandler().ProcessEvent(event)
+
+
+@pytest.mark.skipif(wx.Platform != "__WXMAC__", reason="Cocoa-only test presentation behavior")
+def test_macos_workspace_remains_hidden_during_tests(workspace):
+    assert not workspace.IsShown()
 
 
 def test_form_autosaves_and_external_edit_wins(workspace):
@@ -205,7 +211,6 @@ def test_macos_open_dialog_follows_system_theme_after_explicit_theme(workspace):
     system_theme = "dark" if workspace._system_is_dark() else "light"
     explicit_theme = "light" if system_theme == "dark" else "dark"
     dialog = AppearanceDialog(workspace, 100, 100, True, explicit_theme)
-    dialog.Show()
     try:
         workspace.apply_theme(explicit_theme)
         dialog.theme.SetStringSelection("System")
@@ -351,6 +356,78 @@ def test_windows_native_theme_helpers_cover_supported_and_failure_paths(monkeypa
     monkeypatch.delattr(ctypes, "windll")
     assert not native_gui._set_windows_frame_theme(42, True, colours)
     assert not native_gui._set_windows_control_theme(42, True)
+
+
+def test_macos_native_theme_helper_covers_supported_and_failure_paths(monkeypatch):
+    calls = []
+
+    class Appearance:
+        System = "system"
+        Light = "light"
+        Dark = "dark"
+
+    class AppearanceResult:
+        Ok = "ok"
+
+    app = SimpleNamespace(SetAppearance=lambda appearance: calls.append(appearance) or AppearanceResult.Ok)
+
+    class App:
+        @staticmethod
+        def Get():
+            return app
+
+    App.Appearance = Appearance
+    App.AppearanceResult = AppearanceResult
+    monkeypatch.setattr(native_gui.wx, "Platform", "__WXMAC__")
+    monkeypatch.setattr(native_gui.wx, "App", App)
+
+    assert all(native_gui._set_macos_app_appearance(theme) for theme in ("system", "light", "dark"))
+    assert calls == [Appearance.System, Appearance.Light, Appearance.Dark]
+
+    app.SetAppearance = lambda appearance: (_ for _ in ()).throw(RuntimeError("unavailable"))
+    assert not native_gui._set_macos_app_appearance("dark")
+    monkeypatch.setattr(App, "Get", staticmethod(lambda: SimpleNamespace()))
+    assert not native_gui._set_macos_app_appearance("dark")
+    monkeypatch.setattr(native_gui.wx, "Platform", "__WXGTK__")
+    assert not native_gui._set_macos_app_appearance("dark")
+
+
+def test_macos_workspace_style_paths_are_platform_selectable(workspace, monkeypatch):
+    applied = []
+    styled = []
+    owned_dialog = wx.Dialog(workspace)
+    unrelated_dialog = wx.Dialog(None)
+    splitters = []
+    try:
+        monkeypatch.setattr(native_gui.wx, "Platform", "__WXMAC__")
+        monkeypatch.setattr(
+            native_gui,
+            "_set_macos_app_appearance",
+            lambda theme: applied.append(theme) or True,
+        )
+        monkeypatch.setattr(native_gui.wx, "GetTopLevelWindows", lambda: [owned_dialog, unrelated_dialog])
+        monkeypatch.setattr(workspace, "style_dialog", lambda dialog: styled.append(dialog))
+
+        assert workspace._apply_native_frame_theme()
+        workspace._style_open_macos_dialogs()
+        macos_splitter = workspace._splitter(workspace.shell)
+        splitters.append(macos_splitter)
+
+        assert applied == [workspace.theme]
+        assert styled == [owned_dialog]
+        assert macos_splitter.GetWindowStyleFlag() & wx.SP_3DSASH
+
+        monkeypatch.setattr(native_gui.wx, "Platform", "__WXMSW__")
+        monkeypatch.setattr(native_gui.os, "name", "nt")
+        windows_splitter = workspace._splitter(workspace.shell)
+        splitters.append(windows_splitter)
+        assert windows_splitter.GetWindowStyleFlag() & wx.SP_NO_XP_THEME
+    finally:
+        for splitter in splitters:
+            workspace._splitters.remove(splitter)
+            splitter.Destroy()
+        owned_dialog.Destroy()
+        unrelated_dialog.Destroy()
 
 
 def test_palette_choice_owns_selection_and_theme(workspace):
@@ -1160,7 +1237,8 @@ def test_window_size_is_saved_and_restored(native_app, tmp_path):
     frame = Workspace(tmp_path / ".env", layout_path)
     assert tuple(frame.GetSize()) == (800, 600)
 
-    frame.Show()
+    if wx.Platform != "__WXMAC__":
+        frame.Show()
     frame.SetSize((840, 640))
     wx.Yield()
     frame.Close()
