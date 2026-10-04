@@ -30,7 +30,8 @@ dependencies = [
 [project.optional-dependencies]
 gui = [
     "platformdirs>=3.6,<5",
-    "wxPython>=4.2.1,<5",
+    "wxPython>=4.3,<5; sys_platform == 'darwin'",
+    "wxPython>=4.2.1,<5; sys_platform != 'darwin'",
 ]
 
 # Backward-compatible alias; dotenv support is included in the base package.

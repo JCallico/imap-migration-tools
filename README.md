@@ -232,11 +232,11 @@ zoom and transparency controls; transparency depends on compositor support.
 
 | Theme | Linux | Windows | macOS |
 | --- | --- | --- | --- |
-| Light | <img src="docs/images/gui-overview-linux-light.png" alt="IMAP Migration Tools light theme on Linux" width="420"> | <img src="docs/images/gui-overview-windows-light.png" alt="IMAP Migration Tools light theme on Windows" width="420"> | _Preview pending the native macOS theme update._ |
-| Dark | <img src="docs/images/gui-overview-linux-dark.png" alt="IMAP Migration Tools dark theme on Linux" width="420"> | <img src="docs/images/gui-overview-windows-dark.png" alt="IMAP Migration Tools dark theme on Windows" width="420"> | _Preview pending the native macOS theme update._ |
+| Light | <img src="docs/images/gui-overview-linux-light.png" alt="IMAP Migration Tools light theme on Linux" width="420"> | <img src="docs/images/gui-overview-windows-light.png" alt="IMAP Migration Tools light theme on Windows" width="420"> | <img src="docs/images/gui-overview-macos-light.png" alt="IMAP Migration Tools light theme on macOS" width="420"> |
+| Dark | <img src="docs/images/gui-overview-linux-dark.png" alt="IMAP Migration Tools dark theme on Linux" width="420"> | <img src="docs/images/gui-overview-windows-dark.png" alt="IMAP Migration Tools dark theme on Windows" width="420"> | <img src="docs/images/gui-overview-macos-dark.png" alt="IMAP Migration Tools dark theme on macOS" width="420"> |
 
-The macOS application remains supported; its screenshots will be added after its native controls receive the same
-terminal-inspired theme treatment.
+On macOS, the selected Light or Dark palette also updates native Cocoa controls, dialogs, menus, and window chrome.
+System mode follows the operating-system appearance.
 
 The desktop application discovers `.env` from the current directory and its parents. Desktop launchers may start in a
 different directory, so select a configuration explicitly when needed:

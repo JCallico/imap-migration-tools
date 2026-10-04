@@ -36,9 +36,10 @@ The `.venv/bin/python` path is specific to macOS and Linux. Windows stores the i
 `.venv\Scripts\python.exe`; it can be used directly if shell activation is unavailable. The installed desktop launcher
 is `imap-tools-gui` (`imap-tools-gui.exe` on Windows).
 
-wxPython uses native Windows, Cocoa, and GTK controls. Windows and macOS normally use published wheels. On Linux,
-install your distribution's wxPython package or the GTK development dependencies needed to build wxPython. For
-Ubuntu 24.04, a development environment can reuse the distribution package:
+wxPython uses native Windows, Cocoa, and GTK controls. Windows and macOS normally use published wheels. macOS uses
+wxPython 4.3 or newer so explicit Light and Dark choices also update Cocoa controls, dialogs, menus, and window chrome.
+On Linux, install your distribution's wxPython package or the GTK development dependencies needed to build wxPython.
+For Ubuntu 24.04, a development environment can reuse the distribution package:
 
 ```bash
 sudo apt-get install python3-venv python3-wxgtk4.0 xvfb
@@ -94,7 +95,9 @@ Theme, opacity, and zoom are independent and saved in
 compositor does not expose native window opacity leave that control disabled. High-contrast text and semantic status
 colours remain in use at every supported opacity, and the settings screen provides separate reset controls for opacity
 and zoom.
-On macOS, the fixed-width Output text follows the native body-text size for consistency with the other controls.
+On macOS, explicit Light and Dark choices are applied to the native Cocoa appearance as well as the application's
+terminal palette. System mode returns Cocoa to the system appearance and continues to follow automatic appearance
+changes. The fixed-width Output text follows the native body-text size for consistency with the other controls.
 The same dialog adjusts zoom from 80% to 150%. **View → Zoom → Zoom in**, **Zoom out**, and **Reset zoom** use `Ctrl+=`,
 `Ctrl+-`, and `Ctrl+0` on Windows/Linux and `Cmd` equivalents on macOS. Fonts, native control sizes, wrapped text, and
 scrolling reflow with the selected zoom.
