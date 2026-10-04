@@ -160,6 +160,12 @@ def test_native_theme_has_visual_hierarchy(workspace):
     )
 
 
+@pytest.mark.skipif(wx.Platform != "__WXMAC__", reason="Cocoa-only splitter metrics")
+def test_macos_splitters_have_visible_draggable_sashes(workspace):
+    assert all(splitter.GetWindowStyleFlag() & wx.SP_3DSASH for splitter in workspace._splitters)
+    assert all(splitter.GetSashSize() > 1 for splitter in workspace._splitters)
+
+
 def test_native_theme_uses_shared_terminal_dark_and_light_palettes(workspace):
     workspace.apply_theme("dark")
     assert workspace.colours["background"] == wx.Colour("#050505")
@@ -176,6 +182,47 @@ def test_native_theme_uses_shared_terminal_dark_and_light_palettes(workspace):
     assert all(splitter.GetBackgroundColour() == workspace.colours["separator"] for splitter in workspace._splitters)
 
     workspace.apply_theme("system")
+
+
+@pytest.mark.skipif(wx.Platform != "__WXMAC__", reason="Cocoa-only native appearance integration")
+def test_macos_native_controls_follow_selected_theme(workspace):
+    try:
+        workspace.apply_theme("dark")
+        assert workspace._apply_native_frame_theme()
+        assert wx.SystemSettings.GetAppearance().IsDark()
+
+        workspace.apply_theme("light")
+        assert workspace._apply_native_frame_theme()
+        assert not wx.SystemSettings.GetAppearance().IsDark()
+    finally:
+        workspace.apply_theme("system")
+
+
+@pytest.mark.skipif(wx.Platform != "__WXMAC__", reason="Cocoa-only native appearance integration")
+def test_macos_open_dialog_follows_system_theme_after_explicit_theme(workspace):
+    workspace.apply_theme("system")
+    wx.Yield()
+    system_theme = "dark" if workspace._system_is_dark() else "light"
+    explicit_theme = "light" if system_theme == "dark" else "dark"
+    dialog = AppearanceDialog(workspace, 100, 100, True, explicit_theme)
+    dialog.Show()
+    try:
+        workspace.apply_theme(explicit_theme)
+        dialog.theme.SetStringSelection("System")
+        dialog.preview_theme(workspace)
+        for _ in range(4):
+            wx.Yield()
+
+        assert workspace.theme == "system"
+        assert dialog.GetBackgroundColour() == workspace.colours["surface_soft"]
+        assert all(
+            child.GetForegroundColour() == workspace.colours["text"]
+            for child in dialog.GetChildren()
+            if isinstance(child, wx.StaticText)
+        )
+    finally:
+        dialog.Destroy()
+        workspace.apply_theme("system")
 
 
 def test_first_run_defaults_to_system_theme(workspace):
@@ -474,6 +521,7 @@ def test_app_menu_applies_palette_to_top_level_and_nested_items(workspace):
 
 def test_windows_frame_theme_is_applied_with_current_palette(workspace, monkeypatch):
     applied = []
+    monkeypatch.setattr(native_gui.wx, "Platform", "__WXMSW__")
     monkeypatch.setattr(
         native_gui,
         "_set_windows_frame_theme",

@@ -67,6 +67,27 @@ def _windows_dark_preference():
         return None
 
 
+def _set_macos_app_appearance(theme):
+    """Synchronize native Cocoa controls with the selected application theme."""
+    if wx.Platform != "__WXMAC__":
+        return False
+    app = wx.App.Get()
+    appearance_type = getattr(wx.App, "Appearance", None)
+    result_type = getattr(wx.App, "AppearanceResult", None)
+    setter = getattr(app, "SetAppearance", None) if app else None
+    if appearance_type is None or result_type is None or setter is None:
+        return False
+    appearance = {
+        "system": appearance_type.System,
+        "light": appearance_type.Light,
+        "dark": appearance_type.Dark,
+    }[theme]
+    try:
+        return setter(appearance) == result_type.Ok
+    except RuntimeError:
+        return False
+
+
 def _input_style(style=0):
     """Remove the bright native client edge from Windows input controls."""
     return style | wx.BORDER_NONE if os.name == "nt" else style
@@ -1068,7 +1089,9 @@ class Workspace(wx.Frame):
         dialog.Refresh()
 
     def _apply_native_frame_theme(self):
-        """Keep the native Windows frame aligned with the selected palette."""
+        """Keep the native frame and controls aligned with the selected palette."""
+        if wx.Platform == "__WXMAC__":
+            return _set_macos_app_appearance(self.theme)
         return _set_windows_frame_theme(
             self.GetHandle(),
             self.colours["background"] == wx.Colour("#050505"),
@@ -1116,6 +1139,14 @@ class Workspace(wx.Frame):
         dark = self.colours["background"] == wx.Colour("#050505")
         for widget in (self.config_panel, self.operation_panel, self.history_table, self.output):
             _set_windows_control_theme(widget.GetHandle(), dark)
+
+    def _style_open_macos_dialogs(self):
+        """Keep owned Cocoa dialogs coherent after an app appearance change."""
+        if wx.Platform != "__WXMAC__":
+            return
+        for window in wx.GetTopLevelWindows():
+            if isinstance(window, wx.Dialog) and window.GetParent() is self:
+                self.style_dialog(window)
 
     def apply_system_theme(self):
         """Apply the active terminal palette to application-owned surfaces."""
@@ -1175,6 +1206,7 @@ class Workspace(wx.Frame):
                 self.history_table.SetItemTextColour(index, status_colour)
         self._paint_history_selection()
         self.render_output()
+        self._style_open_macos_dialogs()
         self.Refresh()
 
     def _heading(self, parent, title, subtitle=""):
@@ -1194,7 +1226,11 @@ class Workspace(wx.Frame):
 
     def _splitter(self, parent):
         style = wx.SP_LIVE_UPDATE | wx.SP_THIN_SASH
-        if os.name == "nt":
+        if wx.Platform == "__WXMAC__":
+            # SP_THIN_SASH is zero-valued on Cocoa and produces a one-pixel
+            # divider. Use the native sash so it remains visible and draggable.
+            style |= wx.SP_3DSASH
+        elif os.name == "nt":
             style |= wx.SP_NO_XP_THEME
         splitter = PaletteSplitter(parent, style=style)
         self._splitters.append(splitter)
