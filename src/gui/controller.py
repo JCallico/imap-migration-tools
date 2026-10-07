@@ -23,18 +23,18 @@ class RunController:
         self.active = False
         self.cancelled = False
 
-    def start(self, operation, values, request):
+    def start(self, operation, values, request, scope):
         if self.active:
             raise RuntimeError("An operation is already running")
         self.active = True
         self.cancelled = False
-        asyncio.run_coroutine_threadsafe(self._run(operation, values, request), self.loop)
+        asyncio.run_coroutine_threadsafe(self._run(operation, values, request, scope), self.loop)
 
-    async def _run(self, operation, values, request):
+    async def _run(self, operation, values, request, scope):
         session = None
         code = -1
         try:
-            session = RunSession(operation, values)
+            session = RunSession(operation, values, scope)
             self.events.put(("started", session.record))
             if session.warning:
                 self.events.put(("warning", session.warning))

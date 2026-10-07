@@ -9,13 +9,14 @@ import pytest
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, OptionList, RichLog, Select, Static
 
 import tui.app as app_module
-from tui.app import OPERATION_PANEL_HEIGHTS, ConfirmationModal, ImapToolsApp, InformationModal
+from tui.app import OPERATION_PANEL_HEIGHTS, ConfirmationModal, ImapToolsApp, InformationModal, ProjectNameModal
 from tui.config import FIELDS, read_env
 from tui.display import resolve_display_profile
 from tui.history import RunRecord
 from tui.layout import load_layout
 from tui.operations import RunOptions
 from tui.splitter import ResizeHandle
+from ui.projects import ProjectStore
 
 
 @pytest.mark.parametrize(
@@ -148,7 +149,7 @@ def test_reset_layout_keeps_full_history_started_column_visible(tmp_path, monkey
     monkeypatch.setattr(
         app_module,
         "load_records",
-        lambda: [RunRecord("run-1", "migrate", "2026-08-23T12:34:56+00:00", status="completed")],
+        lambda scope: [RunRecord("run-1", "migrate", "2026-08-23T12:34:56+00:00", status="completed")],
     )
 
     async def run_test():
@@ -388,7 +389,8 @@ def test_configuration_is_one_form_populated_with_defaults(tmp_path):
         app = ImapToolsApp(tmp_path / ".env")
         async with app.run_test(size=(160, 40)) as pilot:
             await pilot.pause()
-            assert app.query_one("#config-panel").border_title == "Configuration"
+            separator = " - " if app.display_profile.mode == "ascii" else " · "
+            assert app.query_one("#config-panel").border_title == f"Configuration{separator}local"
             section_titles = list(app.query(".group-title"))
             assert len(section_titles) == 9
             assert all(title.region.height == 1 for title in section_titles)
@@ -538,7 +540,7 @@ def test_run_request_does_not_flatten_configuration_into_os_environment(tmp_path
     )
     app = ImapToolsApp(env_path)
     request = app._make_run_request("backup", RunOptions(environment={"SRC_LOCAL_PATH": ""}))
-    assert request.environment == {"SRC_LOCAL_PATH": ""}
+    assert request.environment == {"IMAP_TOOLS_ENV_FILE": str(env_path.resolve()), "SRC_LOCAL_PATH": ""}
     assert "SRC_IMAP_HOST" not in request.environment
     assert "SRC_IMAP_PASSWORD" not in request.environment
 
@@ -549,9 +551,10 @@ def test_operation_lifecycle_streams_output_and_finalizes_history(tmp_path, monk
     records = []
 
     class FakeWriter:
-        def __init__(self, record, redactor):
+        def __init__(self, record, redactor, scope):
             self.record = record
             self.redactor = redactor
+            self.scope = scope
             self.closed = False
             records.append(self)
 
@@ -598,7 +601,7 @@ def test_cancelled_operation_is_not_recorded_as_completed(tmp_path, monkeypatch)
     records = []
 
     class FakeWriter:
-        def __init__(self, record, _redactor):
+        def __init__(self, record, _redactor, _scope):
             self.record = record
             records.append(record)
 
@@ -1054,8 +1057,8 @@ def test_autosave_enables_selected_operation_without_restart(tmp_path):
 
 
 def test_history_uses_single_output_panel(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "load_records", lambda: [])
-    monkeypatch.setattr(app_module, "read_log", lambda run_id: f"history for {run_id}\nsecond line\n")
+    monkeypatch.setattr(app_module, "load_records", lambda scope: [])
+    monkeypatch.setattr(app_module, "read_log", lambda run_id, scope: f"history for {run_id}\nsecond line\n")
 
     async def run_test():
         app = ImapToolsApp(tmp_path / ".env")
@@ -1074,23 +1077,23 @@ def test_history_uses_single_output_panel(tmp_path, monkeypatch):
 def test_history_reloads_external_instance_changes_without_stealing_selection(tmp_path, monkeypatch):
     history_root = tmp_path / "history"
     history_root.mkdir()
-    monkeypatch.setattr(app_module, "history_dir", lambda: history_root)
     monkeypatch.setattr("tui.history.history_dir", lambda: history_root)
+    app = ImapToolsApp(tmp_path / ".env")
     existing = app_module.HistoryWriter(
         RunRecord("run-existing", "count", "2026-08-23T12:00:00+00:00", status="completed"),
         app_module.Redactor([]),
+        app.history_scope,
     )
     existing.close()
 
     async def run_test():
-        app = ImapToolsApp(tmp_path / ".env")
         async with app.run_test(size=(160, 40)) as pilot:
             app.refresh_history("run-existing")
             app.view_history("run-existing")
             await pilot.pause()
 
             external_record = RunRecord("run-external", "backup", "2026-08-23T13:00:00+00:00")
-            external = app_module.HistoryWriter(external_record, app_module.Redactor([]))
+            external = app_module.HistoryWriter(external_record, app_module.Redactor([]), app.history_scope)
             external.write("external instance output")
             await pilot.pause(1.1)
 
@@ -1116,7 +1119,7 @@ def test_history_reloads_external_instance_changes_without_stealing_selection(tm
             table.move_cursor(row=table.get_row_index("run-existing"))
             app.view_history("run-existing")
             assert app.selected_output_id == "run-existing"
-            app_module.delete_record("run-existing")
+            app_module.delete_record("run-existing", app.history_scope)
             await pilot.pause(1.1)
             assert app.selected_output_id == "run-external"
             assert app.selected_history_id() == "run-external"
@@ -1232,7 +1235,7 @@ def test_confirmation_dispatches_force_delete_and_quit(tmp_path, monkeypatch):
             app.pending_action = "delete-history"
             app.pending_payload = "run-1"
             app.confirmation_dismissed(True)
-            app_module.delete_record.assert_called_once_with("run-1")
+            app_module.delete_record.assert_called_once_with("run-1", app.history_scope)
             app.refresh_history.assert_called_once()
 
             app.pending_action = "quit"
@@ -1266,7 +1269,7 @@ def test_save_prepare_cancel_history_export_and_focus_error_paths(tmp_path, monk
     asyncio.run(run_test())
 
     async def run_more():
-        monkeypatch.setattr(app_module, "load_records", lambda: [])
+        monkeypatch.setattr(app_module, "load_records", lambda scope: [])
         app = ImapToolsApp(tmp_path / ".env", tmp_path / "layout.json")
         app.working_directory = tmp_path
         async with app.run_test(size=(160, 40)) as pilot:
@@ -1298,7 +1301,7 @@ def test_save_prepare_cancel_history_export_and_focus_error_paths(tmp_path, monk
             table.move_cursor(row=0)
             await pilot.pause()
             assert app.selected_history_id() == "run-1"
-            monkeypatch.setattr(app_module, "read_log", lambda _run_id: "saved log\n")
+            monkeypatch.setattr(app_module, "read_log", lambda _run_id, _scope: "saved log\n")
             app.export_history()
             assert (tmp_path / "imap-tools-run-1.log").read_text(encoding="utf-8") == "saved log\n"
 
@@ -1349,10 +1352,10 @@ def test_remaining_layout_reload_history_and_quit_branches(tmp_path, monkeypatch
             assert count_mode.value == "source"
 
             records = [RunRecord("run-1", "count", "2026-08-23T12:00:00", status="completed")]
-            monkeypatch.setattr(app_module, "load_records", lambda: records)
+            monkeypatch.setattr(app_module, "load_records", lambda scope: records)
             app.refresh_history("run-1")
             assert app.selected_history_id() == "run-1"
-            monkeypatch.setattr(app_module, "read_log", lambda _run_id: "first\nmatching line\n")
+            monkeypatch.setattr(app_module, "read_log", lambda _run_id, _scope: "first\nmatching line\n")
             app.query_one("#output-filter", Input).value = "matching"
             app.filter_output()
             await pilot.pause()
@@ -1435,11 +1438,379 @@ def test_unmounted_and_entrypoint_guard_branches(tmp_path, monkeypatch):
     app = ImapToolsApp(tmp_path / ".env")
     monkeypatch.setattr(app, "query_one_optional", lambda _selector: None)
     app.apply_responsive_layout(narrow=True)
+    app.show_neutral_configuration_status()
     monkeypatch.setattr(app, "query", lambda _selector: Mock(nodes=[]))
     assert not app.save_configuration()
 
     launched = Mock()
     fake_app = Mock(run=launched)
-    monkeypatch.setattr(app_module, "ImapToolsApp", lambda **_kwargs: fake_app)
+    monkeypatch.setattr(app_module, "ImapToolsApp", lambda *_args, **_kwargs: fake_app)
     app_module.main([])
     launched.assert_called_once()
+
+
+def test_switching_projects_reloads_the_complete_form_without_merging(tmp_path):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        store.ensure_root()
+        store.default_path.write_text(
+            'SRC_IMAP_HOST="default.example.com"\nSRC_IMAP_PASSWORD="default-secret"\nGMAIL_MODE="true"\n',
+            encoding="utf-8",
+        )
+        acme = store.create("acme")
+        acme.path.write_text('SRC_IMAP_HOST="acme.example.com"\n', encoding="utf-8")
+        app = ImapToolsApp(projects=store)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            assert app.project.name == "default"
+            assert app.query_one("#env-src-imap-password", Input).password
+            assert app.query_one("#rename-project", Button).disabled
+
+            app.query_one("#project-select", Select).value = "acme"
+            await pilot.pause()
+
+            assert app.project == acme
+            assert app.env_path == acme.path
+            assert app.query_one("#env-src-imap-host", Input).value == "acme.example.com"
+            assert app.query_one("#env-src-imap-password", Input).value == ""
+            assert app.query_one("#env-gmail-mode", Checkbox).value is False
+            separator = " - " if app.display_profile.mode == "ascii" else " · "
+            assert app.query_one("#config-panel").border_title == f"Configuration{separator}acme"
+            assert not app.query_one("#delete-project", Button).disabled
+            assert store.remembered() == "acme"
+            assert app._make_run_request("count", RunOptions()).environment == {
+                "IMAP_TOOLS_ENV_FILE": str(acme.path.resolve())
+            }
+            assert "default-secret" not in acme.path.read_text(encoding="utf-8")
+
+    asyncio.run(run_test())
+
+
+def test_pending_edit_is_saved_to_the_previous_project_before_switching(tmp_path):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        app = ImapToolsApp(projects=store)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#env-src-imap-host", Input).value = "pending.example.com"
+            await pilot.pause()
+            assert app.configuration_save_timer is not None
+
+            assert app.switch_project(acme)
+
+            assert read_env(store.default_path)["SRC_IMAP_HOST"] == "pending.example.com"
+            assert read_env(acme.path)["SRC_IMAP_HOST"] == ""
+            await pilot.pause(0.8)
+            assert read_env(acme.path)["SRC_IMAP_HOST"] == ""
+
+    asyncio.run(run_test())
+
+
+def test_invalid_pending_edit_blocks_project_switch(tmp_path, monkeypatch):
+    notices = []
+
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        app = ImapToolsApp(projects=store)
+        monkeypatch.setattr(app, "notify", lambda message, **kwargs: notices.append(message))
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#env-max-workers", Input).value = "0"
+            await pilot.pause()
+
+            assert not app.switch_project(acme)
+
+            assert app.project.name == "default"
+            assert app.query_one("#project-select", Select).value == "default"
+            assert "Fix or discard the pending configuration edit before changing projects" in notices
+
+    asyncio.run(run_test())
+
+
+def test_create_rename_and_delete_projects_from_the_workspace(tmp_path, monkeypatch):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        app = ImapToolsApp(projects=store)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#new-project", Button).press()
+            await pilot.pause()
+            assert isinstance(app.screen, ProjectNameModal)
+            app.screen.query_one("#project-name", Input).value = "acme"
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.project.name == "acme"
+            assert (store.root / "acme.env").is_file()
+            app.query_one("#env-src-imap-host", Input).value = "acme.example.com"
+            await pilot.pause(0.8)
+
+            app.query_one("#rename-project", Button).press()
+            await pilot.pause()
+            app.screen.query_one("#project-name", Input).value = "Acme Corp"
+            app.screen.query_one("#project-ok", Button).press()
+            await pilot.pause()
+
+            assert app.project.name == "Acme Corp"
+            assert not (store.root / "acme.env").exists()
+            assert read_env(app.env_path)["SRC_IMAP_HOST"] == "acme.example.com"
+            assert app.query_one("#env-src-imap-host", Input).value == "acme.example.com"
+            assert store.remembered() == "Acme Corp"
+
+            app.query_one("#delete-project", Button).press()
+            await pilot.pause()
+            assert isinstance(app.screen, ConfirmationModal)
+            assert "Acme Corp" in app.screen.message
+            app.screen.query_one("#confirm-input", Input).value = "DELETE"
+            app.screen.query_one("#yes-action", Button).press()
+            await pilot.pause()
+
+            assert app.project.name == "default"
+            assert store.named_projects() == []
+            assert store.remembered() == "default"
+
+    asyncio.run(run_test())
+
+
+def test_invalid_project_name_is_reported_without_changing_projects(tmp_path, monkeypatch):
+    notices = []
+
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        app = ImapToolsApp(projects=store)
+        monkeypatch.setattr(app, "notify", lambda message, **kwargs: notices.append(message))
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            notices.clear()
+            app.project_name_entered("new", "default")
+            app.project_name_entered("new", None)
+
+            assert app.project.name == "default"
+            assert notices == ['"default" is reserved']
+
+    asyncio.run(run_test())
+
+
+def test_other_instance_changes_refresh_projects_and_protect_a_deleted_active_project(tmp_path, monkeypatch):
+    notices = []
+
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        app = ImapToolsApp(projects=store, project_name="acme")
+        monkeypatch.setattr(app, "notify", lambda message, **kwargs: notices.append(message))
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            ProjectStore(store.root).create("beta")
+            await pilot.pause(1.1)
+            assert "beta" in [value for _label, value in app.project_options()]
+
+            acme.path.unlink()
+            await pilot.pause(1.1)
+
+            assert ("acme (missing)", "acme") in app.project_options()
+            assert (
+                app.query_one("#config-panel").border_subtitle == f"{app.display_profile.error} external .env invalid"
+            )
+            app.query_one("#env-src-imap-host", Input).value = "after-delete.example.com"
+            await pilot.pause(0.8)
+            assert not acme.path.exists()
+            assert any("missing" in notice for notice in notices)
+
+    asyncio.run(run_test())
+
+
+def test_local_env_is_listed_and_launch_arguments_select_projects(tmp_path, monkeypatch):
+    launched = []
+
+    class FakeApp:
+        def __init__(self, env_path=None, *, display_profile, projects, project_name):
+            launched.append((env_path, projects.initial(env_path, project_name).name))
+
+        def run(self):
+            pass
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").touch()
+    ProjectStore().create("acme")
+    monkeypatch.setattr(app_module, "ImapToolsApp", FakeApp)
+
+    app_module.main([])
+    app_module.main(["--project", "acme"])
+    app_module.main(["--env", str(tmp_path / "chosen.env")])
+    monkeypatch.setenv("IMAP_TOOLS_ENV_FILE", str(tmp_path / "variable.env"))
+    app_module.main([])
+
+    assert launched == [
+        (None, "local"),
+        (None, "acme"),
+        (tmp_path / "chosen.env", "local"),
+        (tmp_path / "variable.env", "local"),
+    ]
+    monkeypatch.delenv("IMAP_TOOLS_ENV_FILE")
+    with pytest.raises(SystemExit, match="2"):
+        app_module.main(["--project", "missing"])
+    with pytest.raises(SystemExit):
+        app_module.main(["--project", "acme", "--env", "x.env"])
+
+
+def test_project_guards_protect_default_projects_running_operations_and_failures(tmp_path, monkeypatch):
+    notices = []
+
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        app = ImapToolsApp(projects=store)
+        monkeypatch.setattr(app, "notify", lambda message, **kwargs: notices.append(message))
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.request_project_name("rename")
+            app.request_project_deletion()
+            assert not isinstance(app.screen, (ProjectNameModal, ConfirmationModal))
+
+            app.query_one("#project-select", Select).value = "acme"
+            await pilot.pause()
+            acme.path.unlink()
+            app.project_selected(Select.Changed(app.query_one("#project-select", Select), "acme"))
+            assert app.project == acme
+            app.project_selected(Select.Changed(app.query_one("#project-select", Select), "vanished"))
+            assert "Project not found: vanished" in notices
+
+            app.operation_in_progress = True
+            assert not app.switch_project(store.default_project())
+            app.delete_project(acme)
+            app.operation_in_progress = False
+            assert "Wait for the current operation to finish before changing projects" in notices
+            assert "Wait for the current operation to finish before deleting a project" in notices
+
+            monkeypatch.setattr(store, "delete", lambda project: (_ for _ in ()).throw(OSError("busy")))
+            app.delete_project(acme)
+            assert "Unable to delete project: busy" in notices
+            assert app.project == acme
+
+            app.query_one("#env-src-imap-host", Input).value = "pending.example.com"
+            await pilot.pause()
+            assert app.configuration_save_timer is not None
+            app.activate_project(store.default_project())
+            assert app.configuration_save_timer is None
+            assert not acme.path.exists()
+
+            app.action_focus_project()
+            assert app.focused is app.query_one("#project-select", Select)
+
+    asyncio.run(run_test())
+
+
+def test_project_name_dialog_supports_buttons_and_cancel(tmp_path):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        app = ImapToolsApp(projects=store)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            app.request_project_name("new")
+            await pilot.pause()
+            app.screen.query_one("#project-cancel", Button).press()
+            await pilot.pause()
+            assert not isinstance(app.screen, ProjectNameModal)
+
+            app.request_project_name("new")
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            assert not isinstance(app.screen, ProjectNameModal)
+            assert store.named_projects() == []
+
+    asyncio.run(run_test())
+
+
+def record_project_run(project, operation, log):
+    record = RunRecord(f"run-{project.name}-{operation}", operation, "2026-08-23T12:00:00+00:00", status="completed")
+    writer = app_module.HistoryWriter(record, app_module.Redactor([]), project.history_key)
+    writer.write(log)
+    writer.close()
+    return record
+
+
+def test_each_project_shows_only_its_own_history_and_output(tmp_path):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        default_run = record_project_run(store.default_project(), "backup", "default project log")
+        acme_run = record_project_run(acme, "count", "acme project log")
+        app = ImapToolsApp(projects=store)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            table = app.query_one("#history-table", DataTable)
+            log = app.query_one("#output-log", RichLog)
+            assert {str(key.value) for key in table.rows} == {default_run.run_id}
+            assert any("default project log" in line.text for line in log.lines)
+
+            assert app.switch_project(acme)
+            await pilot.pause()
+            assert {str(key.value) for key in table.rows} == {acme_run.run_id}
+            texts = [line.text for line in log.lines]
+            assert any("acme project log" in text for text in texts)
+            assert not any("default project log" in text for text in texts)
+
+            empty = store.create("empty")
+            assert app.switch_project(empty)
+            await pilot.pause()
+            assert table.row_count == 0
+            assert not log.lines
+            assert app.selected_output_id is None
+
+            app.delete_project(empty)
+            await pilot.pause()
+            assert app.project.name == "default"
+            assert {str(key.value) for key in table.rows} == {default_run.run_id}
+
+    asyncio.run(run_test())
+
+
+def test_runs_are_recorded_under_the_active_project_and_travel_with_a_rename(tmp_path, monkeypatch):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        app = ImapToolsApp(projects=store, project_name="acme")
+        scopes = []
+        original = app_module.RunSession
+
+        def session(operation, values, scope, writer_factory=None):
+            scopes.append(scope)
+            return original(operation, values, scope, writer_factory)
+
+        monkeypatch.setattr(app_module, "RunSession", session)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            run = record_project_run(acme, "count", "acme run")
+            app.refresh_history(run.run_id)
+            assert app.history_scope == acme.history_key
+
+            app.project_name_entered("rename", "Acme Holdings")
+            await pilot.pause()
+            renamed = app.project
+            assert renamed.name == "Acme Holdings"
+            assert app.history_scope == renamed.history_key
+            assert app.history_scope != acme.history_key
+            assert [record.run_id for record in app_module.load_records(renamed.history_key)] == [run.run_id]
+            assert app_module.load_records(acme.history_key) == []
+            assert app.selected_output_id == run.run_id
+
+            options = RunOptions()
+            app.selected_operation = "count"
+            monkeypatch.setattr(app, "values", lambda: {})
+            monkeypatch.setattr(app.runner, "run", AsyncMock(return_value=0))
+            await app.start_operation(options).wait()
+            assert scopes == [renamed.history_key]
+
+            app.request_project_deletion()
+            await pilot.pause()
+            assert "run history" in app.screen.message
+            app.screen.query_one("#confirm-input", Input).value = "DELETE"
+            app.screen.query_one("#yes-action", Button).press()
+            await pilot.pause()
+            assert app_module.load_records(renamed.history_key) == []
+
+    asyncio.run(run_test())

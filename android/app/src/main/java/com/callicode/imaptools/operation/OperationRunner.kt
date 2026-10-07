@@ -115,7 +115,7 @@ internal class OperationRunner(
                 EngineResult.Cancelled -> state.copy(status = RunStatus.CANCELLED)
             }
         }
-        return OperationBus.state.value.also { HistoryStore(context).append(it) }
+        return OperationBus.state.value.also { HistoryStore(context, pending.historyScope).append(it) }
     }
 
     private fun formatBytes(bytes: Long): String = "${bytes / (1024L * 1024L)} MB"

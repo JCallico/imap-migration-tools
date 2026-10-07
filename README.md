@@ -165,13 +165,15 @@ The interface provides a guided autosaving `.env` form, operation readiness guid
 local run history.
 
 <p align="left">
-  <img src="https://raw.githubusercontent.com/JCallico/imap-migration-tools/main/docs/images/tui-overview.jpg" width="800" alt="IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels">
+  <img src="docs/images/tui-overview.jpg" width="800" alt="IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels">
 </p>
 
 Review the generated command in the Output panel and verify backups and counts before enabling destructive options.
 
-The interface discovers `.env` from the current directory and its parents, using the same precedence as the scripts:
-per-run choices, existing OS environment variables, `.env`, then defaults. Passwords and OAuth client secrets are
+The interface organizes configurations as [projects](docs/configuration.md#projects): `default` and named projects
+are stored as `.env` files in `~/.imap-migration-tools`, and a `.env` discovered from the current directory or its
+parents appears as the `local` project. Values use the same precedence as the scripts: per-run choices, existing OS
+environment variables, the project's `.env`, then defaults. Passwords and OAuth client secrets are
 masked in the form; new `.env` files and saved history use owner-only permissions where the platform supports them.
 Destructive options require typing `DELETE` before a run starts. Press `F1` for help or `F2` for the keyboard reference.
 
@@ -238,10 +240,11 @@ zoom and transparency controls; transparency depends on compositor support.
 On macOS, the selected Light or Dark palette also updates native Cocoa controls, dialogs, menus, and window chrome.
 System mode follows the operating-system appearance.
 
-The desktop application discovers `.env` from the current directory and its parents. Desktop launchers may start in a
-different directory, so select a configuration explicitly when needed:
+The desktop application shares the TUI's [projects](docs/configuration.md#projects), so the `default` and named
+projects are available however it is launched. Select a project or a specific file at launch when needed:
 
 ```bash
+imap-tools-gui --project "Acme Corp"
 imap-tools-gui --env /path/to/project/.env
 ```
 

@@ -24,6 +24,7 @@ object OperationDispatcher {
         context: Context,
         operation: Operation,
         request: String,
+        historyScope: String,
         estimateInProgress: Boolean = false,
         allowMeteredNetwork: Boolean = false,
         estimatedBytes: Long? = null,
@@ -31,6 +32,7 @@ object OperationDispatcher {
         val pending = PendingOperation(
             operation = operation,
             request = request,
+            historyScope = historyScope,
             estimateInProgress = estimateInProgress,
             allowMeteredNetwork = allowMeteredNetwork,
             estimatedBytes = estimatedBytes?.takeIf { it > 0 },

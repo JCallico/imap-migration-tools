@@ -32,8 +32,11 @@ def test_controller_run_streams_events_and_session_warning(monkeypatch):
     class Progress:
         copied: int = 0
 
+    scopes = []
+
     class Session:
-        def __init__(self, operation, values):
+        def __init__(self, operation, values, scope):
+            scopes.append(scope)
             self.record = SimpleNamespace(run_id="run")
             self.warning = "history warning"
             self.progress = Progress()
@@ -54,10 +57,11 @@ def test_controller_run_streams_events_and_session_warning(monkeypatch):
 
     monkeypatch.setattr(controller_module, "RunSession", Session)
     controller = bare_controller(Runner())
-    asyncio.run(controller._run("count", {}, object()))
+    asyncio.run(controller._run("count", {}, object(), "project-acme"))
     events = drain(controller)
     assert [kind for kind, _ in events] == ["started", "warning", "line", "progress", "warning", "finished"]
     assert events[2] == ("line", "LINE")
+    assert scopes == ["project-acme"]
 
 
 def test_controller_reports_initialization_and_runner_failures(monkeypatch):
@@ -67,7 +71,7 @@ def test_controller_reports_initialization_and_runner_failures(monkeypatch):
 
     monkeypatch.setattr(controller_module, "RunSession", BrokenSession)
     controller = bare_controller(None)
-    asyncio.run(controller._run("count", {}, object()))
+    asyncio.run(controller._run("count", {}, object(), "project-acme"))
     assert drain(controller) == [("warning", "Unable to initialize operation"), ("finished", None)]
 
     class Session:
@@ -87,7 +91,7 @@ def test_controller_reports_initialization_and_runner_failures(monkeypatch):
 
     monkeypatch.setattr(controller_module, "RunSession", Session)
     controller = bare_controller(BrokenRunner())
-    asyncio.run(controller._run("count", {}, object()))
+    asyncio.run(controller._run("count", {}, object(), "project-acme"))
     assert drain(controller)[1] == ("warning", "[REDACTED] runner failure")
 
 
@@ -95,7 +99,7 @@ def test_controller_start_cancel_and_close_branches(monkeypatch):
     controller = bare_controller(SimpleNamespace())
     controller.active = True
     with pytest.raises(RuntimeError, match="already running"):
-        controller.start("count", {}, object())
+        controller.start("count", {}, object(), "project-acme")
 
     submitted = []
 
@@ -106,7 +110,7 @@ def test_controller_start_cancel_and_close_branches(monkeypatch):
     controller.active = False
     controller.loop = object()
     monkeypatch.setattr(asyncio, "run_coroutine_threadsafe", submit)
-    controller.start("count", {}, object())
+    controller.start("count", {}, object(), "project-acme")
     assert controller.active and submitted == [controller.loop]
     controller.cancel(force=True)
     assert controller.cancelled and submitted == [controller.loop, controller.loop]

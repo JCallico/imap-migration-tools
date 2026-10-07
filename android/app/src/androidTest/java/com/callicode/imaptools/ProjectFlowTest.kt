@@ -14,12 +14,14 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.rule.GrantPermissionRule
 import com.callicode.imaptools.model.BackupEstimateState
 import com.callicode.imaptools.model.Operation
 import com.callicode.imaptools.model.OperationState
+import com.callicode.imaptools.model.ProjectProfile
 import com.callicode.imaptools.model.RunStatus
 import com.callicode.imaptools.operation.HistoryStore
 import com.callicode.imaptools.ui.about.AboutPrivacyScreen
@@ -50,17 +52,27 @@ class ProjectFlowTest {
     val compose = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun projectCanBeCreatedSelectedAndDeleted() {
+    fun projectCanBeCreatedRenamedSelectedAndDeleted() {
+        val originalName = "UI Test Draft"
         val projectName = "UI Test Project"
+        val projects = File(compose.activity.filesDir, "projects")
 
         compose.onNodeWithText("NEW PROJECT").performClick()
-        compose.onNodeWithText("Project name").performTextInput(projectName)
+        compose.onNodeWithText("Project name").performTextInput(originalName)
         compose.onNodeWithText("Create").performClick()
+        assertTrue(File(projects, "$originalName.env").isFile)
+
+        compose.onNodeWithText("RENAME").performClick()
+        compose.onNodeWithText("Project name").performTextClearance()
+        compose.onNodeWithText("Project name").performTextInput(projectName)
+        compose.onNodeWithText("Rename").performClick()
 
         compose.onNodeWithText(projectName).assertIsDisplayed()
+        assertFalse(File(projects, "$originalName.env").exists())
+        assertTrue(File(projects, "$projectName.env").isFile)
         compose.onNodeWithText("DELETE").performClick()
         compose.onNodeWithText("DELETE $projectName?").assertIsDisplayed()
-        compose.onNodeWithText("This permanently deletes the project configuration.").assertIsDisplayed()
+        compose.onNodeWithText("This permanently deletes the project configuration and its run history.").assertIsDisplayed()
         compose.onNodeWithText("DELETE PROJECT").performClick()
 
         compose.onNodeWithText(projectName).assertDoesNotExist()
@@ -89,10 +101,8 @@ class ProjectFlowTest {
         compose.onNodeWithText("Project name").performTextInput(projectName)
         compose.onNodeWithText("Create").performClick()
 
-        val projectDirectory = File(compose.activity.filesDir, "projects").listFiles().orEmpty().first { directory ->
-            File(directory, ".env").readText().contains(projectName)
-        }
-        val workspace = File(compose.activity.filesDir, "backups/${projectDirectory.name}/$workspaceName")
+        assertTrue(File(compose.activity.filesDir, "projects/$projectName.env").isFile)
+        val workspace = File(compose.activity.filesDir, "backups/projects/$projectName/$workspaceName")
         assertTrue(workspace.mkdirs())
         File(workspace, "message.eml").writeText("message")
 
@@ -112,8 +122,61 @@ class ProjectFlowTest {
     }
 
     @Test
+    fun historyIsIsolatedPerProjectTravelsWithRenameAndIsDeletedWithTheProject() {
+        val files = compose.activity.filesDir
+        val original = ProjectProfile("History Iso")
+        val renamed = ProjectProfile("History Iso Two")
+        compose.onNodeWithText("default").performClick()
+        val defaultStore = HistoryStore(compose.activity, ProjectProfile.DEFAULT.historyKey)
+        defaultStore.entries().forEach { assertTrue(defaultStore.delete(it.id)) }
+        defaultStore.append(OperationState(status = RunStatus.SUCCEEDED, operation = Operation.COUNT, result = "{}"))
+        try {
+            compose.onNodeWithText("NEW PROJECT").performClick()
+            compose.onNodeWithText("Project name").performTextInput(original.name)
+            compose.onNodeWithText("Create").performClick()
+            compose.onNodeWithText("History").performClick()
+            compose.onNodeWithText("─ NO RUNS RECORDED ").assertIsDisplayed()
+            HistoryStore(compose.activity, original.historyKey)
+                .append(OperationState(status = RunStatus.SUCCEEDED, operation = Operation.BACKUP, result = "{}"))
+            compose.onNodeWithText("Configure").performClick()
+            compose.onNodeWithText("History").performClick()
+            compose.onNodeWithText("─ BACKUP ").assertIsDisplayed()
+            compose.onNodeWithText("─ COUNT ").assertDoesNotExist()
+
+            compose.onNodeWithText("Configure").performClick()
+            compose.onNodeWithText("default").performClick()
+            compose.onNodeWithText("History").performClick()
+            compose.onNodeWithText("─ COUNT ").assertIsDisplayed()
+            compose.onNodeWithText("─ BACKUP ").assertDoesNotExist()
+
+            compose.onNodeWithText("Configure").performClick()
+            compose.onNodeWithText(original.name).performClick()
+            compose.onNodeWithText("RENAME").performClick()
+            compose.onNodeWithText("Project name").performTextClearance()
+            compose.onNodeWithText("Project name").performTextInput(renamed.name)
+            compose.onNodeWithText("Rename").performClick()
+            assertFalse(File(files, "history/${original.historyKey}.json").exists())
+            assertTrue(File(files, "history/${renamed.historyKey}.json").isFile)
+            compose.onNodeWithText("History").performClick()
+            compose.onNodeWithText("─ BACKUP ").assertIsDisplayed()
+
+            compose.onNodeWithText("Configure").performClick()
+            compose.onNodeWithText("DELETE").performClick()
+            compose.onNodeWithText("DELETE PROJECT").performClick()
+            assertFalse(File(files, "history/${renamed.historyKey}.json").exists())
+            compose.onNodeWithText("History").performClick()
+            compose.onNodeWithText("─ COUNT ").assertIsDisplayed()
+        } finally {
+            HistoryStore.deleteScope(files, original.historyKey)
+            HistoryStore.deleteScope(files, renamed.historyKey)
+            defaultStore.entries().forEach { defaultStore.delete(it.id) }
+        }
+    }
+
+    @Test
     fun savedHistoryOutputRequiresConfirmationAndCanBeDeleted() {
-        val historyStore = HistoryStore(compose.activity)
+        compose.onNodeWithText("default").performClick()
+        val historyStore = HistoryStore(compose.activity, ProjectProfile.DEFAULT.historyKey)
         historyStore.entries().forEach { entry ->
             assertTrue(historyStore.delete(entry.id))
         }
