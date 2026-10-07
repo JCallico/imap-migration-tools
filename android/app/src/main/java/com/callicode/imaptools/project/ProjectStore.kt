@@ -9,40 +9,73 @@ import com.callicode.imaptools.model.OperationOptions
 import com.callicode.imaptools.model.ProjectProfile
 import com.callicode.imaptools.model.TargetType
 import java.io.File
-import java.util.UUID
 
+/**
+ * Projects are `.env` files: `default` is `.env` and every other project is `<name>.env` in [root].
+ * The same layout is used by the desktop terminal and GUI applications.
+ */
 class ProjectStore(
     private val root: File,
     private val preferences: SharedPreferences,
 ) {
+    /** Legacy `<uuid>/.env` directories converted during [initialize], keyed by their former identifier. */
+    var migratedProjects: Map<String, ProjectProfile> = emptyMap()
+        private set
+
+    @Synchronized
     fun initialize(legacyConfiguration: AppConfiguration): Pair<ProjectProfile, AppConfiguration> {
         root.mkdirs()
-        val projects = projects()
-        if (projects.isEmpty()) {
-            return create("Default", legacyConfiguration)
+        migratedProjects = migrateLegacyDirectories()
+        val default = ProjectProfile.DEFAULT
+        if (!envFile(default).isFile && migratedProjects.isEmpty() && named().isEmpty()) {
+            save(default, legacyConfiguration)
         }
-        val activeId = preferences.getString(ACTIVE_PROJECT, null)
-        val active = projects.firstOrNull { it.id == activeId } ?: projects.first()
-        preferences.edit().putString(ACTIVE_PROJECT, active.id).apply()
+        val legacyActive = preferences.getString(LEGACY_ACTIVE_PROJECT, null)?.let { migratedProjects[it]?.name }
+        val remembered = preferences.getString(ACTIVE_PROJECT, null) ?: legacyActive
+        val active = projects().firstOrNull { it.name == remembered } ?: default
+        select(active)
         return active to load(active)
     }
 
-    fun projects(): List<ProjectProfile> = root.listFiles()
+    fun projects(): List<ProjectProfile> = listOf(ProjectProfile.DEFAULT) + named()
+
+    private fun named(): List<ProjectProfile> = root.listFiles()
         .orEmpty()
-        .filter { it.isDirectory && File(it, ENV_FILE).isFile }
-        .mapNotNull { directory ->
-            runCatching {
-                val values = DotenvCodec.read(File(directory, ENV_FILE))
-                ProjectProfile(directory.name, values[PROJECT_NAME]?.ifBlank { "Unnamed" } ?: "Unnamed")
-            }.getOrNull()
-        }
+        .filter { it.isFile && it.name.endsWith(ENV_SUFFIX) && it.name != ENV_FILE && !it.name.startsWith(".") }
+        .map { ProjectProfile(it.name.removeSuffix(ENV_SUFFIX)) }
         .sortedBy { it.name.lowercase() }
 
+    @Synchronized
     fun create(name: String, configuration: AppConfiguration = AppConfiguration()): Pair<ProjectProfile, AppConfiguration> {
-        val project = ProjectProfile(UUID.randomUUID().toString(), name.trim())
+        val project = ProjectProfile(available(ProjectNames.validate(name)))
+        check(envFile(project).createNewFile()) { "A project named ${project.name} already exists" }
         save(project, configuration)
         select(project)
         return project to configuration
+    }
+
+    @Synchronized
+    fun rename(project: ProjectProfile, name: String): ProjectProfile {
+        require(!project.isDefault) { "The default project cannot be renamed" }
+        val normalized = ProjectNames.validate(name)
+        if (normalized == project.name) return project
+        val renamed = ProjectProfile(available(normalized, ignore = project))
+        val source = envFile(project)
+        val target = envFile(renamed)
+        check(source.isFile) { "The ${project.name} project file no longer exists" }
+        check(!target.exists() || target.canonicalPath == source.canonicalPath) {
+            "A project named ${renamed.name} already exists"
+        }
+        check(source.renameTo(target)) { "Unable to rename the project" }
+        if (preferences.getString(ACTIVE_PROJECT, null) == project.name) select(renamed)
+        return renamed
+    }
+
+    /** Undo a [rename] whose dependent storage could not follow the new name. */
+    @Synchronized
+    fun revertRename(renamed: ProjectProfile, original: ProjectProfile) {
+        check(envFile(renamed).renameTo(envFile(original))) { "Unable to restore the project name" }
+        if (preferences.getString(ACTIVE_PROJECT, null) == renamed.name) select(original)
     }
 
     fun load(project: ProjectProfile): AppConfiguration =
@@ -50,33 +83,116 @@ class ProjectStore(
 
     @Synchronized
     fun save(project: ProjectProfile, configuration: AppConfiguration) {
-        val directory = File(root, project.id).apply { mkdirs() }
-        DotenvCodec.write(File(directory, ENV_FILE), ProjectConfigurationCodec.encode(project.name, configuration))
+        DotenvCodec.write(envFile(project), ProjectConfigurationCodec.encode(configuration))
+    }
+
+    /** Save only while [current] still holds, so a queued save cannot recreate a renamed or deleted project. */
+    @Synchronized
+    fun saveIf(current: () -> Boolean, project: ProjectProfile, configuration: AppConfiguration) {
+        if (current()) save(project, configuration)
     }
 
     fun select(project: ProjectProfile) {
-        preferences.edit().putString(ACTIVE_PROJECT, project.id).apply()
+        preferences.edit().putString(ACTIVE_PROJECT, project.name).remove(LEGACY_ACTIVE_PROJECT).apply()
     }
 
     @Synchronized
     fun delete(project: ProjectProfile) {
-        val directory = File(root, project.id)
-        File(directory, ENV_FILE).delete()
-        directory.delete()
+        require(!project.isDefault) { "The default project cannot be deleted" }
+        envFile(project).delete()
     }
 
-    private fun envFile(project: ProjectProfile) = File(File(root, project.id), ENV_FILE)
+    private fun available(name: String, ignore: ProjectProfile? = null): String {
+        val existing = named().firstOrNull { it.name.equals(name, ignoreCase = true) && it != ignore }
+        require(existing == null) { "A project named ${existing?.name} already exists" }
+        return name
+    }
+
+    private fun envFile(project: ProjectProfile) =
+        File(root, if (project.isDefault) ENV_FILE else "${project.name}$ENV_SUFFIX")
+
+    private fun migrateLegacyDirectories(): Map<String, ProjectProfile> {
+        val legacy = root.listFiles().orEmpty()
+            .filter { it.isDirectory && File(it, ENV_FILE).isFile }
+            .sortedBy { it.name }
+        val migrated = linkedMapOf<String, ProjectProfile>()
+        val preferDefault = legacy.firstOrNull { directory ->
+            DotenvCodec.read(File(directory, ENV_FILE))[LEGACY_PROJECT_NAME].orEmpty().trim()
+                .equals(ProjectProfile.DEFAULT_NAME, ignoreCase = true)
+        }
+        for (directory in legacy) {
+            val values = DotenvCodec.read(File(directory, ENV_FILE))
+            val project = if (directory == preferDefault && !envFile(ProjectProfile.DEFAULT).exists()) {
+                ProjectProfile.DEFAULT
+            } else {
+                ProjectProfile(uniqueMigratedName(values[LEGACY_PROJECT_NAME].orEmpty()))
+            }
+            DotenvCodec.write(envFile(project), values - LEGACY_PROJECT_NAME)
+            File(directory, ENV_FILE).delete()
+            directory.listFiles().orEmpty().forEach(File::delete)
+            directory.delete()
+            migrated[directory.name] = project
+        }
+        return migrated
+    }
+
+    private fun uniqueMigratedName(original: String): String {
+        val base = ProjectNames.sanitize(original)
+        var candidate = base
+        var suffix = 2
+        while (runCatching { ProjectNames.validate(candidate); available(candidate) }.isFailure) {
+            val tail = " ($suffix)"
+            candidate = base.take(ProjectNames.MAX_LENGTH - tail.length).trimEnd() + tail
+            suffix += 1
+        }
+        return candidate
+    }
 
     companion object {
-        private const val ACTIVE_PROJECT = "active_project_id"
+        private const val ACTIVE_PROJECT = "active_project_name"
+        private const val LEGACY_ACTIVE_PROJECT = "active_project_id"
         private const val ENV_FILE = ".env"
-        private const val PROJECT_NAME = "ANDROID_PROJECT_NAME"
+        private const val ENV_SUFFIX = ".env"
+        private const val LEGACY_PROJECT_NAME = "ANDROID_PROJECT_NAME"
+    }
+}
+
+/** Project-name rules shared with the desktop applications: names must be portable file names. */
+object ProjectNames {
+    const val MAX_LENGTH = 60
+    private val invalidCharacters = Regex("[<>:\"/\\\\|?*\\x00-\\x1f]")
+    private val windowsReserved =
+        setOf("con", "prn", "aux", "nul") + (1..9).flatMap { listOf("com$it", "lpt$it") }
+
+    fun validate(name: String): String {
+        val normalized = name.trim()
+        require(normalized.isNotEmpty()) { "Project name is required" }
+        require(normalized.length <= MAX_LENGTH) { "Project name must be $MAX_LENGTH characters or fewer" }
+        require(!invalidCharacters.containsMatchIn(normalized)) {
+            "Project name cannot contain control characters or any of < > : \" / \\ | ? *"
+        }
+        require(!normalized.startsWith(".") && !normalized.endsWith(".")) {
+            "Project name cannot start or end with a period"
+        }
+        val folded = normalized.lowercase()
+        require(folded != ProjectProfile.DEFAULT_NAME && folded != "local") { "\"$normalized\" is reserved" }
+        require(folded.substringBefore('.') !in windowsReserved) { "\"$normalized\" is reserved by Windows" }
+        return normalized
+    }
+
+    /** Convert a legacy free-form name into the closest valid project name. */
+    fun sanitize(name: String): String {
+        val cleaned = name.replace(invalidCharacters, "_").trim().trim('.').take(MAX_LENGTH).trim()
+        return when {
+            cleaned.isEmpty() -> "Project"
+            runCatching { validate(cleaned) }.isFailure -> "$cleaned project".take(MAX_LENGTH)
+            else -> cleaned
+        }
     }
 }
 
 internal object ProjectConfigurationCodec {
-    fun encode(name: String, value: AppConfiguration): LinkedHashMap<String, String> = linkedMapOf(
-        "ANDROID_PROJECT_NAME" to name,
+    fun encode(value: AppConfiguration): LinkedHashMap<String, String> = linkedMapOf(
         "ANDROID_OPERATION" to value.operation.name,
         "ANDROID_COUNT_TARGET" to value.countTarget.name,
         "ANDROID_COMPARE_SOURCE" to value.compareSource.name,

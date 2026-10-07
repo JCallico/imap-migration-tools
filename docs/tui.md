@@ -51,9 +51,18 @@ ASCII mode uses portable borders and status markers, with bold or reverse-video 
 The default `auto` mode selects ASCII for `TERM=dumb` or a non-UTF-8 locale. Use an explicit mode when a terminal
 reports inaccurate capabilities. `NO_COLOR` is honored in every mode.
 
+## Projects
+
+The Project selector at the top of Configuration switches among the `default` project, the `local` project found from
+the launch directory, and named projects stored as `~/.imap-migration-tools/<name>.env`. Use `new`, `rename`, and
+`delete` beside the selector to manage named projects; deletion requires typing `DELETE`. `Alt+P` focuses the selector.
+History and Output show only the selected project's runs; switching projects clears them, and deleting a project also
+deletes its history. Choose a project at launch with `imap-tools --project NAME` or open a specific file with `imap-tools --env PATH`. See
+[Projects](configuration.md#projects) for the storage layout, migration of existing `.env` files, and recovery.
+
 ## Configuration changes
 
-The interface autosaves valid form changes to `.env`. It also notices edits made outside the application and reloads
+The interface autosaves valid form changes to the selected project's `.env` file. It also notices edits made outside the application and reloads
 valid configuration automatically. An invalid external file leaves the current form unchanged and displays an error.
 If an external edit arrives while an autosave is pending, the external file takes precedence and is not overwritten.
 
@@ -69,7 +78,7 @@ both. Provider-specific requirements, such as a Google OAuth client secret, are 
 
 ## History and multiple instances
 
-History is shared by TUI instances using the same user data directory. A completed run created by another instance is
+History is shared by TUI and GUI instances using the same project and user data directory. A completed run created by another instance is
 added automatically. Another instance's active run remains hidden until its summary and log are finalized, preventing
 an incomplete log from appearing as a completed result.
 

@@ -49,10 +49,19 @@ python3 -m venv --system-site-packages .venv
 
 ## Configuration and workspace
 
-The application discovers `.env` from the working directory and its parents. Desktop launchers do not always start
-in a project directory. Choose a specific configuration with:
+Configuration is organized as projects shared with the terminal interface. The Project selector at the top of
+Configuration, and the Project menu, switch among the `default` project (`~/.imap-migration-tools/.env`), named
+projects (`~/.imap-migration-tools/<name>.env`), and a `local` project found from the working directory and its
+parents. Because `default` and named projects live in your home directory, they are available however the application
+is launched. Press `Alt+P` to focus the selector, then use the arrow keys to choose a project. New…, Rename…, and
+Delete… manage named projects; deletion requires typing `DELETE` and also deletes the project's run history. History
+and Output show only the active project's runs. See
+[Projects](configuration.md#projects) for the storage layout, migration of existing `.env` files, and recovery.
+
+Choose a project, or open a specific file as the `local` project, at launch:
 
 ```bash
+imap-tools-gui --project "Acme Corp"
 imap-tools-gui --env /path/to/project/.env
 ```
 
@@ -62,7 +71,7 @@ On Windows PowerShell or Command Prompt, use a Windows path:
 imap-tools-gui --env "C:\Users\your-name\project\.env"
 ```
 
-The selected configuration directory is also the operation working directory. Form changes autosave after validation.
+The selected project file's directory is also the operation working directory. Form changes autosave after validation.
 Existing OS environment values override `.env`; the status bar reports when such overrides are present. Passwords
 and client secrets are masked. External valid edits replace pending local edits; invalid external files leave the
 form intact and prevent accidental overwrite.
@@ -72,7 +81,7 @@ folder/cache options, Gmail flags/labels, full restore/migrate, and deletion opt
 Run opens a confirmation; destructive runs require typing `DELETE` after reviewing the affected accounts or path.
 Cancel requests cleanup. If the worker does not exit promptly, Force stop becomes available.
 
-History is shared with the TUI in the existing user data directory. Other instances' unfinished runs remain hidden.
+History is shared with the TUI for the same project in the existing user data directory. Other instances' unfinished runs remain hidden.
 Select a completed run to filter, export, or delete its log. Active runs cannot be deleted. Logs and history use the
 same secret redaction as the terminal interface.
 

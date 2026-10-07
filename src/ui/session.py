@@ -12,14 +12,14 @@ from ui.operations import ProgressState, parse_output
 class RunSession:
     """Own persistence independently of widget lifetime and toolkit threads."""
 
-    def __init__(self, operation, values, writer_factory=None):
+    def __init__(self, operation, values, scope, writer_factory=None):
         self.record = history.new_record(operation)
         self.progress = ProgressState()
         self.redactor = history.Redactor([values.get(name, "") for name in SECRET_NAMES])
         self.writer = None
         self.warning = ""
         try:
-            self.writer = (writer_factory or history.HistoryWriter)(self.record, self.redactor)
+            self.writer = (writer_factory or history.HistoryWriter)(self.record, self.redactor, scope)
         except OSError as exc:
             self.warning = self.redactor(f"History unavailable: {exc}")
 

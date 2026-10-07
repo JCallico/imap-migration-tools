@@ -46,6 +46,7 @@ from ui.appearance import load_appearance  # noqa: E402
 from ui.config import FIELDS, read_env, save_form  # noqa: E402
 from ui.layout import load_window_size, save_layout  # noqa: E402
 from ui.operations import OPERATION_BY_NAME  # noqa: E402
+from ui.projects import ProjectStore  # noqa: E402
 
 
 def test_linux_native_widgets_use_only_the_xvfb_display():
@@ -659,7 +660,7 @@ def test_header_omits_configuration_filename_and_view_uses_submenus(workspace):
     assert "$ count | compare | backup | restore | migrate" in header_labels
 
     menu_bar = workspace.app_menu_bar or workspace.GetMenuBar()
-    view = menu_bar.GetMenu(2)
+    view = menu_bar.GetMenu(menu_bar.FindMenu("View"))
     labels = [item.GetItemLabelText() for item in view.GetMenuItems() if not item.IsSeparator()]
     assert labels == ["Reset layout", "Zoom", "Transparency", "Appearance…"]
     zoom = next(item.GetSubMenu() for item in view.GetMenuItems() if item.GetItemLabelText() == "Zoom")
@@ -672,21 +673,43 @@ def test_header_omits_configuration_filename_and_view_uses_submenus(workspace):
     ]
 
 
+@pytest.mark.skipif(wx.Platform != "__WXMAC__", reason="Cocoa-only native menu integration")
+def test_macos_project_menu_uses_the_native_menu_bar(workspace):
+    assert workspace.app_menu_bar is None
+    menu_bar = workspace.GetMenuBar()
+    assert [menu_bar.GetMenuLabel(index).replace("&", "") for index in range(menu_bar.GetMenuCount())] == [
+        "File",
+        "Project",
+        "Operations",
+        "View",
+        "Help",
+    ]
+    project_menu = menu_bar.GetMenu(menu_bar.FindMenu("Project"))
+    assert [item.GetItemLabelText() for item in project_menu.GetMenuItems() if not item.IsSeparator()] == [
+        "Choose project",
+        "New project…",
+        "Rename project…",
+        "Delete project…",
+    ]
+
+
 def test_help_menu_uses_structured_information_dialogs(workspace):
     menu_bar = workspace.app_menu_bar or workspace.GetMenuBar()
-    help_menu = menu_bar.GetMenu(3)
+    help_menu = menu_bar.GetMenu(menu_bar.FindMenu("Help"))
     labels = [item.GetItemLabelText() for item in help_menu.GetMenuItems() if not item.IsSeparator()]
     assert labels == ["Help", "Keyboard Reference", "About"]
 
     dialogs = [HelpDialog(workspace), KeyboardReferenceDialog(workspace), AboutDialog(workspace)]
     try:
         assert dialogs[0].section_titles == [
+            "Choose a project",
             "Configure accounts",
             "Choose and run an operation",
             "Monitor and stop work",
             "Review history",
             "Adjust the workspace",
         ]
+        assert ("Alt+P", "Focus the project selector") in dialogs[1].shortcut_rows
         assert ("Ctrl/Cmd+=", "Zoom in") in dialogs[1].shortcut_rows
         assert "Version" in dialogs[2].section_titles
         assert "License" in dialogs[2].section_titles
@@ -837,7 +860,7 @@ def test_all_operations_through_native_widgets(workspace, mock_server_factory, m
     click(workspace.run_button)
     assert workspace.controller.active
     wait_for(workspace, lambda: not workspace.controller.active)
-    record = history.load_records()[0]
+    record = history.load_records(workspace.history_scope)[0]
     assert record.status == "completed"
     assert record.operation == operation
     assert "INBOX" in workspace.output.GetValue()
@@ -853,7 +876,7 @@ def test_all_operations_through_native_widgets(workspace, mock_server_factory, m
 def test_external_history_preserves_selection_and_deletion(workspace, monkeypatch):
     first = history.new_record("count")
     first.status = "completed"
-    with_writer = history.HistoryWriter(first, history.Redactor([]))
+    with_writer = history.HistoryWriter(first, history.Redactor([]), workspace.history_scope)
     with_writer.write("first output")
     with_writer.close()
     workspace.refresh_history()
@@ -868,7 +891,7 @@ def test_external_history_preserves_selection_and_deletion(workspace, monkeypatc
     workspace.apply_theme("dark")
     assert workspace.history_table.GetItemBackgroundColour(0) == workspace.colours["surface"]
     second = history.new_record("backup")
-    writer = history.HistoryWriter(second, history.Redactor([]))
+    writer = history.HistoryWriter(second, history.Redactor([]), workspace.history_scope)
     writer.write("unfinished")
     workspace.refresh_history()
     assert len(workspace.records) == 1
@@ -902,7 +925,7 @@ def test_native_layout_and_focus_actions(workspace, native_app):
 def test_export_writes_complete_log_even_when_filtered(workspace, monkeypatch, tmp_path):
     record = history.new_record("count")
     record.status = "completed"
-    writer = history.HistoryWriter(record, history.Redactor(["test-secret"]))
+    writer = history.HistoryWriter(record, history.Redactor(["test-secret"]), workspace.history_scope)
     writer.write("INBOX test-secret")
     writer.write("Archive")
     writer.close()
@@ -1121,7 +1144,7 @@ def test_prepare_poll_and_history_error_paths(workspace, monkeypatch):
     workspace.poll()
     assert "history disk" in workspace.GetStatusBar().GetStatusText()
 
-    monkeypatch.setattr(history, "load_records", lambda: (_ for _ in ()).throw(OSError("unreadable")))
+    monkeypatch.setattr(history, "load_records", lambda scope: (_ for _ in ()).throw(OSError("unreadable")))
     workspace.records = []
     workspace.refresh_history()
     assert "unreadable" in workspace.GetStatusBar().GetStatusText()
@@ -1219,7 +1242,7 @@ def test_window_events_and_main_launch(workspace, monkeypatch, tmp_path):
             launched.append("loop")
 
     class Frame:
-        def __init__(self, path):
+        def __init__(self, path, **_kwargs):
             launched.append(path)
 
         def Show(self):
@@ -1245,3 +1268,368 @@ def test_window_size_is_saved_and_restored(native_app, tmp_path):
     wx.Yield()
 
     assert load_window_size(layout_path) == (840, 640)
+
+
+@pytest.fixture
+def project_workspace(native_app, tmp_path, monkeypatch):
+    for field in FIELDS:
+        monkeypatch.delenv(field.name, raising=False)
+    root = tmp_path / "history"
+    root.mkdir()
+    monkeypatch.setattr(history, "history_dir", lambda: root)
+    store = ProjectStore(tmp_path / "projects")
+    store.ensure_root()
+    store.default_path.write_text(
+        'SRC_IMAP_HOST="default.example.com"\nSRC_IMAP_PASSWORD="default-secret"\nGMAIL_MODE="true"\n',
+        encoding="utf-8",
+    )
+    acme = store.create("acme")
+    acme.path.write_text('SRC_IMAP_HOST="acme.example.com"\n', encoding="utf-8")
+    frame = Workspace(layout_path=tmp_path / "layout.json", projects=store)
+    frame.Show()
+    wx.Yield()
+    yield frame, store, acme
+    frame.autosave.Stop()
+    frame.Close()
+    wx.Yield()
+
+
+def test_switching_projects_reloads_the_complete_form_without_merging(project_workspace, monkeypatch):
+    frame, store, acme = project_workspace
+    assert frame.project.name == "default"
+    assert frame.project_choice.GetItems() == ["default", "acme"]
+    assert frame.controls["SRC_IMAP_PASSWORD"].HasFlag(wx.TE_PASSWORD)
+    assert not frame.project_buttons["rename"].IsEnabled()
+    assert frame.project_buttons["rename"].GetForegroundColour() == frame.colours["muted"]
+    assert not frame.delete_project_item.IsEnabled()
+
+    frame.project_choice.SetStringSelection("acme")
+    frame.on_project_choice()
+
+    assert frame.env_path == acme.path.resolve()
+    assert frame.controls["SRC_IMAP_HOST"].GetValue() == "acme.example.com"
+    assert frame.controls["SRC_IMAP_PASSWORD"].GetValue() == ""
+    assert frame.controls["GMAIL_MODE"].GetValue() is False
+    assert frame.GetTitle() == "IMAP Migration Tools — acme"
+    assert frame.project_buttons["delete"].IsEnabled()
+    assert frame.project_buttons["delete"].GetForegroundColour() == frame.colours["text"]
+    assert store.remembered() == "acme"
+
+    started = []
+    scopes = []
+    monkeypatch.setattr(
+        frame.controller,
+        "start",
+        lambda operation, values, request, scope: (started.append(request), scopes.append(scope)),
+    )
+    monkeypatch.setattr(frame, "confirm", lambda *args: True)
+    frame.controls["SRC_IMAP_USERNAME"].ChangeValue("user")
+    frame.controls["SRC_IMAP_PASSWORD"].ChangeValue("acme-secret")
+    frame.prepare_run()
+    assert started[0].environment["IMAP_TOOLS_ENV_FILE"] == str(acme.path.resolve())
+    assert scopes == [acme.history_key]
+    assert "default-secret" not in acme.path.read_text(encoding="utf-8")
+
+
+def test_project_menu_shortcut_focuses_the_selector(project_workspace, monkeypatch):
+    frame, _store, _acme = project_workspace
+    focused = []
+    revealed = []
+    monkeypatch.setattr(frame.project_choice, "SetFocus", lambda: focused.append(True))
+    monkeypatch.setattr(frame.config_panel, "ScrollChildIntoView", lambda control: revealed.append(control))
+
+    event = wx.CommandEvent(wx.EVT_MENU.typeId, frame.choose_project_item.GetId())
+    assert frame.GetEventHandler().ProcessEvent(event)
+
+    assert focused == [True]
+    assert revealed == [frame.project_choice]
+
+
+def test_pending_edit_is_saved_to_the_previous_project_and_invalid_edits_block_switching(project_workspace):
+    frame, store, acme = project_workspace
+    frame.controls["SRC_IMAP_HOST"].SetValue("pending.example.com")
+    assert frame.autosave.IsRunning()
+
+    assert frame.switch_project(acme)
+    assert read_env(store.default_path)["SRC_IMAP_HOST"] == "pending.example.com"
+    assert read_env(acme.path)["SRC_IMAP_HOST"] == "acme.example.com"
+
+    frame.controls["MAX_WORKERS"].SetValue("0")
+    assert not frame.switch_project(store.default_project())
+    assert frame.project == acme
+    assert frame.project_choice.GetStringSelection() == "acme"
+    assert "before changing projects" in frame.GetStatusBar().GetStatusText()
+
+
+def test_create_rename_and_delete_projects(project_workspace, monkeypatch):
+    frame, store, _acme = project_workspace
+    names = iter(["default", "Client", "Client Renamed"])
+    monkeypatch.setattr(frame, "ask_project_name", lambda *args: next(names))
+
+    frame.request_project_name("new")
+    assert frame.project.name == "default"
+    assert frame.GetStatusBar().GetStatusText() == '"default" is reserved'
+
+    frame.request_project_name("new")
+    assert frame.project.name == "Client"
+    assert (store.root / "Client.env").is_file()
+    frame.controls["SRC_IMAP_HOST"].ChangeValue("client.example.com")
+    assert frame.save_configuration()
+
+    frame.request_project_name("rename")
+    assert frame.project.name == "Client Renamed"
+    assert not (store.root / "Client.env").exists()
+    assert frame.controls["SRC_IMAP_HOST"].GetValue() == "client.example.com"
+
+    prompts = []
+    monkeypatch.setattr(frame, "confirm", lambda message, require_delete=False: prompts.append(message) or False)
+    frame.request_project_deletion()
+    assert frame.project.name == "Client Renamed"
+    monkeypatch.setattr(frame, "confirm", lambda message, require_delete=False: prompts.append(message) or True)
+    frame.request_project_deletion()
+
+    assert "Client Renamed.env" in prompts[0]
+    assert frame.project.name == "default"
+    assert [project.name for project in store.named_projects()] == ["acme"]
+
+
+def test_other_instance_changes_refresh_projects_and_protect_a_deleted_active_project(project_workspace):
+    frame, store, acme = project_workspace
+    frame.switch_project(acme)
+    ProjectStore(store.root).create("beta")
+    frame.poll()
+    assert frame.project_choice.GetItems() == ["default", "acme", "beta"]
+
+    acme.path.unlink()
+    frame.poll()
+    assert frame.project_choice.GetItems() == ["default", "beta", "acme"]
+    assert frame.project_location.GetLabel().endswith("(missing)")
+    frame.controls["SRC_IMAP_HOST"].ChangeValue("after-delete.example.com")
+    assert not frame.save_configuration()
+    assert not acme.path.exists()
+
+
+def test_main_opens_named_projects_and_rejects_unknown_ones(monkeypatch, tmp_path):
+    launched = []
+
+    class App:
+        def __init__(self, redirect):
+            pass
+
+        def MainLoop(self):
+            pass
+
+    class Frame:
+        def __init__(self, path, *, projects, project_name):
+            launched.append(projects.initial(path, project_name).name)
+
+        def Show(self):
+            pass
+
+    ProjectStore().create("acme")
+    monkeypatch.setattr(native_gui.wx, "App", App)
+    monkeypatch.setattr(native_gui, "Workspace", Frame)
+    native_gui.main(["--project", "acme"])
+    assert launched == ["acme"]
+    with pytest.raises(SystemExit):
+        native_gui.main(["--project", "missing"])
+    with pytest.raises(SystemExit):
+        native_gui.main(["--project", "acme", "--env", str(tmp_path / "other.env")])
+
+    monkeypatch.setenv("IMAP_TOOLS_ENV_FILE", str(tmp_path / "not-created-yet.env"))
+    native_gui.main([])
+    assert launched == ["acme", "local"]
+
+
+def test_project_guards_and_name_prompt(project_workspace, monkeypatch):
+    frame, store, acme = project_workspace
+    frame.request_project_name("rename")
+    frame.request_project_deletion()
+    assert frame.project.name == "default"
+
+    frame.on_project_choice()
+    assert frame.project.name == "default"
+    monkeypatch.setattr(frame.project_choice, "GetStringSelection", lambda: "vanished")
+    frame.on_project_choice()
+    assert frame.GetStatusBar().GetStatusText() == "Project not found: vanished"
+    monkeypatch.undo()
+
+    frame.controller.active = True
+    assert not frame.switch_project(acme)
+    assert "Wait for the current operation" in frame.GetStatusBar().GetStatusText()
+    frame.controller.active = False
+
+    assert frame.project_name_entered("new", None) is None
+    frame.switch_project(acme)
+    monkeypatch.setattr(frame, "confirm", lambda *args: True)
+    monkeypatch.setattr(store, "delete", lambda project: (_ for _ in ()).throw(OSError("busy")))
+    frame.request_project_deletion()
+    assert frame.GetStatusBar().GetStatusText() == "Unable to delete project: busy"
+    assert frame.project == acme
+
+    prompts = []
+
+    class Dialog:
+        def __init__(self, parent, title, value=""):
+            prompts.append((title, value))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def ShowModal(self):
+            return wx.ID_CANCEL if len(prompts) > 1 else wx.ID_OK
+
+        def GetValue(self):
+            return "typed"
+
+    monkeypatch.setattr(native_gui, "ProjectNameDialog", Dialog)
+    assert frame.ask_project_name("New project") == "typed"
+    assert frame.ask_project_name("Rename acme", "acme") is None
+    assert prompts == [("New project", ""), ("Rename acme", "acme")]
+
+
+def test_project_name_dialog_uses_the_application_theme(project_workspace):
+    frame, _store, _acme = project_workspace
+    dialog = native_gui.ProjectNameDialog(frame, "Rename acme", "acme")
+    try:
+        assert dialog.GetTitle() == "Rename acme"
+        assert dialog.GetValue() == "acme"
+        assert dialog.entry.GetName() == "Project name"
+        assert dialog.heading.GetForegroundColour() == frame.colours["accent_label"]
+        assert dialog.GetBackgroundColour() == frame.colours["surface_soft"]
+    finally:
+        dialog.Destroy()
+
+
+def test_confirmation_dialog_fits_long_messages_after_theming(workspace):
+    message = "Permanently delete project Acme Corp?\nFile: " + "/very/long/path/" * 8 + "Acme Corp.env"
+    dialog = native_gui.ConfirmationDialog(workspace, message, require_delete=True)
+    try:
+        shown, needed = dialog.message.GetSize(), dialog.message.GetBestSize()
+        assert shown.width >= needed.width
+        assert shown.height >= needed.height
+        assert dialog.message.GetScreenRect().GetBottom() <= dialog.GetScreenRect().GetBottom()
+        assert dialog.GetSize().width >= 480
+    finally:
+        dialog.Destroy()
+
+
+def test_long_project_names_and_paths_do_not_widen_the_configuration_form(project_workspace):
+    frame, store, _acme = project_workspace
+    long_name = ("Long project name " * 4)[:60].strip()
+    frame.switch_project(store.create(long_name))
+    frame.Layout()
+    for _ in range(10):
+        wx.Yield()
+
+    panel = frame.config_panel
+    assert panel.GetVirtualSize().width <= panel.GetClientSize().width
+    assert frame.project_choice.GetSize().width <= panel.GetClientSize().width
+    assert frame.controls["SRC_IMAP_HOST"].GetSize().width <= panel.GetClientSize().width
+    location = frame.project_location
+    assert location.GetToolTipText().endswith(f"{long_name}.env")
+    assert location.GetTextExtent(location.GetLabel()).width <= location.GetSize().width
+    head, separator, tail = location.GetLabel().partition("...")
+    assert separator and head and tail.endswith(".env")
+    assert frame.project_location_text.startswith(head)
+    assert frame.project_location_text.endswith(tail)
+    assert frame.project_choice.GetStringSelection() == long_name
+
+
+def record_run(project, operation="count", log="finished"):
+    record = history.new_record(operation)
+    record.status = "completed"
+    record.exit_code = 0
+    writer = history.HistoryWriter(record, history.Redactor([]), project.history_key)
+    writer.write(log)
+    writer.close()
+    return record
+
+
+def test_each_project_shows_only_its_own_history_and_output(project_workspace):
+    frame, store, acme = project_workspace
+    default_run = record_run(store.default_project(), "backup", "default project log")
+    acme_run = record_run(acme, "count", "acme project log")
+
+    frame.refresh_history()
+    assert [record.run_id for record in frame.records] == [default_run.run_id]
+    assert "default project log" in frame.output.GetValue()
+
+    frame.switch_project(acme)
+    assert [record.run_id for record in frame.records] == [acme_run.run_id]
+    assert frame.history_table.GetItemCount() == 1
+    assert "acme project log" in frame.output.GetValue()
+    assert "default project log" not in frame.output.GetValue()
+
+    empty = store.create("empty")
+    frame.switch_project(empty)
+    assert frame.records == []
+    assert frame.history_table.GetItemCount() == 0
+    assert frame.output.GetValue() == ""
+    assert frame.selected_run_id is None
+    assert frame.progress.GetLabel() == "Idle"
+
+    frame.switch_project(store.default_project())
+    assert [record.run_id for record in frame.records] == [default_run.run_id]
+
+
+def test_history_actions_never_reach_another_projects_runs(project_workspace, monkeypatch, tmp_path):
+    frame, store, acme = project_workspace
+    default_run = record_run(store.default_project())
+    frame.switch_project(acme)
+    acme_run = record_run(acme)
+    frame.refresh_history()
+    monkeypatch.setattr(frame, "confirm", lambda *args: True)
+
+    frame.selected_run_id = default_run.run_id
+    frame.delete_history()
+    assert history.load_records(store.default_project().history_key)[0].run_id == default_run.run_id
+    assert history.read_log(default_run.run_id, acme.history_key) == ""
+
+    frame.selected_run_id = acme_run.run_id
+    frame.delete_history()
+    assert history.load_records(acme.history_key) == []
+    assert history.load_records(store.default_project().history_key)[0].run_id == default_run.run_id
+
+
+def test_renaming_a_project_keeps_its_history_and_deleting_it_removes_it(project_workspace, monkeypatch):
+    frame, store, acme = project_workspace
+    frame.switch_project(acme)
+    run = record_run(acme)
+    frame.refresh_history()
+
+    renamed = frame.project_name_entered("rename", "Acme Holdings")
+    assert [record.run_id for record in frame.records] == [run.run_id]
+    assert [record.run_id for record in history.load_records(renamed.history_key)] == [run.run_id]
+    assert history.load_records(acme.history_key) == []
+
+    prompts = []
+    monkeypatch.setattr(frame, "confirm", lambda message, require_delete=False: prompts.append(message) or True)
+    frame.request_project_deletion()
+    assert "run history" in prompts[0]
+    assert history.load_records(renamed.history_key) == []
+    assert store.create("Acme Holdings") and history.load_records(store.find("Acme Holdings").history_key) == []
+    assert frame.records == []
+
+
+def test_readiness_banner_wraps_to_the_room_it_has_after_every_project_switch(project_workspace):
+    frame, store, acme = project_workspace
+    long_name = ("Long project name " * 4)[:60].strip()
+    for project in (acme, store.create(long_name), store.default_project(), acme, store.find(long_name)):
+        frame.switch_project(project)
+        frame.Layout()
+        for _ in range(10):
+            wx.Yield()
+
+        panel, label = frame.operation_panel, frame.readiness_label
+        available = panel.GetClientSize().width - 36
+        lines = label.GetLabel().split("\n")
+        assert "".join(lines).replace(" ", "") == frame.readiness_text.replace(" ", "")
+        assert all(label.GetTextExtent(line).width <= available for line in lines)
+        if wx.Platform != "__WXMAC__":
+            # Cocoa controls elsewhere in this panel can have a larger minimum width, which widens the whole column.
+            assert label.GetSize().width <= available
+            assert panel.GetVirtualSize().width <= panel.GetClientSize().width

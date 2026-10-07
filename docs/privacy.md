@@ -77,7 +77,8 @@ owns private backup workspaces, the app lists them and asks the user to choose o
   backups**, where each workspace can be exported or permanently deleted.
 - **Delete project + backups** also permanently deletes every private backup workspace owned by the project.
 
-Neither choice deletes operation history, provider accounts, provider-side authorization, mail, or ZIP files exported
+Either choice also permanently deletes that project's own operation history, so a later project with the same name starts
+empty. Neither choice deletes provider accounts, provider-side authorization, mail, or ZIP files exported
 outside the app. A retained workspace’s **Delete backup** action deletes only that app-private workspace; exported ZIP
 copies remain and must be deleted separately. If the project has no private backup workspaces, the app states that fact
 and presents a single **Delete project** action.
@@ -90,8 +91,8 @@ remove individual local message files which no longer exist on the source mailbo
 Each History card provides **Delete saved output** with a confirmation. This permanently removes only that run's local
 timestamp, status, progress events, result, and error from the app's private history file. It does not cancel or undo
 the completed operation, alter either mailbox, delete a project or backup, remove an exported archive, or disconnect a
-provider. History is capped at the 100 most recent completed runs; adding a later run automatically removes the oldest
-entry beyond that limit.
+provider. Each project keeps its own history, which is capped at the 100 most recent completed runs; adding a later
+run automatically removes that project's oldest entry beyond the limit.
 
 ### Clear storage or uninstall
 

@@ -13,6 +13,7 @@ import wx
 import wx.lib.agw.flatmenu as FM
 import wx.lib.scrolledpanel
 from platformdirs import user_config_path
+from wx.lib.wordwrap import wordwrap
 
 from gui.controller import RunController
 from ui import history
@@ -27,9 +28,10 @@ from ui.appearance import (
     load_appearance,
     save_appearance,
 )
-from ui.config import FIELDS, discover_env, effective_values, read_env, save_form, validate
+from ui.config import FIELDS, effective_values, read_env, save_form, validate
 from ui.layout import load_layout, load_window_size, save_layout
 from ui.operations import OPERATION_BY_NAME, OPERATIONS, account_ready, build_command, readiness
+from ui.projects import ProjectStore, display_path, explicit_env, local_env, run_environment
 from ui.runner import RunRequest
 from ui.workspace import make_options, run_confirmation, validated_form
 from utils.dotenv import load_dotenv
@@ -106,7 +108,7 @@ class PaletteChoice(wx.Panel):
         self._selection = wx.NOT_FOUND
         self._palette = None
         self._popup = None
-        self._value = wx.StaticText(self, label="")
+        self._value = wx.StaticText(self, label="", style=wx.ST_ELLIPSIZE_END)
         self._arrow = wx.StaticText(self, label="⌄")
         row = wx.BoxSizer(wx.HORIZONTAL)
         row.Add(self._value, 1, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 6)
@@ -211,6 +213,17 @@ class PaletteChoice(wx.Panel):
 
     def GetString(self, index):
         return self._choices[index]
+
+    def GetItems(self):  # noqa: N802 - mirrors wx.Choice
+        return list(self._choices)
+
+    def Set(self, choices):  # noqa: N802 - mirrors wx.Choice
+        """Replace every entry, clearing a selection that no longer exists."""
+        selected = self.GetStringSelection()
+        self._choices = list(choices)
+        self._selection = wx.NOT_FOUND
+        if not self.SetStringSelection(selected):
+            self.SetSelection(wx.NOT_FOUND)
 
     def SetString(self, index, value):
         self._choices[index] = value
@@ -344,9 +357,17 @@ def _set_windows_control_theme(window_handle, dark):
 
 HELP_SECTIONS = (
     (
+        "Choose a project",
+        "Each project is one .env file. The default project is ~/.imap-migration-tools/.env, each named project is "
+        "<name>.env in the same directory, and local is a .env found from the launch directory. Use the Project "
+        "menu or the buttons below the selector to create, rename, or delete named projects. The last selected "
+        "project reopens at the next launch.",
+    ),
+    (
         "Configure accounts",
         "Enter source and destination connection details, authentication, local paths, and operation options. Valid "
-        "changes save automatically to the selected .env file; existing operating-system values take precedence.",
+        "changes save automatically to the selected project's .env file; existing operating-system values take "
+        "precedence.",
     ),
     (
         "Choose and run an operation",
@@ -360,8 +381,8 @@ HELP_SECTIONS = (
     ),
     (
         "Review history",
-        "History is shared with the terminal interface. Select a completed run to view, filter, export, or delete its "
-        "redacted log.",
+        "History is kept per project and shared with the terminal interface for the same project. Select a completed "
+        "run to view, filter, export, or delete its redacted log.",
     ),
     (
         "Adjust the workspace",
@@ -375,6 +396,7 @@ KEYBOARD_SECTIONS = (
     (
         "Workspace",
         (
+            ("Alt+P", "Focus the project selector"),
             ("Tab / Shift+Tab", "Move focus forward or backward"),
             ("Enter / Space", "Activate the focused control"),
             ("Alt+0", "Reset the panel layout"),
@@ -556,9 +578,12 @@ class ConfirmationDialog(wx.Dialog):
         content.Add(buttons, 0, wx.EXPAND)
         wrapper = wx.BoxSizer(wx.VERTICAL)
         wrapper.Add(content, 1, wx.EXPAND | wx.ALL, 20)
-        self.SetSizerAndFit(wrapper)
-        self.SetMinSize((480, self.GetSize().height))
+        self.SetSizer(wrapper)
         parent.style_dialog(self)
+        # The themed monospace font changes line breaks, so wrap and size only after styling.
+        self.message.Wrap(440)
+        self.SetMinSize((480, -1))
+        self.Fit()
         self.heading.SetForegroundColour(parent.colours["accent_label"])
         if self.entry:
             self.entry.SetFocus()
@@ -566,6 +591,48 @@ class ConfirmationDialog(wx.Dialog):
 
     def GetValue(self):  # noqa: N802 - mirrors wx.TextEntryDialog
         return self.entry.GetValue() if self.entry else ""
+
+
+class ProjectNameDialog(wx.Dialog):
+    """Themed prompt for a new or renamed project name."""
+
+    def __init__(self, parent, title, value=""):
+        super().__init__(parent, title=title, style=wx.DEFAULT_DIALOG_STYLE)
+        content = wx.BoxSizer(wx.VERTICAL)
+        self.heading = wx.StaticText(self, label=title)
+        self.heading.SetFont(wx.Font(wx.FontInfo(14).Family(wx.FONTFAMILY_TELETYPE).Bold()))
+        content.Add(self.heading, 0, wx.BOTTOM, 10)
+        content.Add(wx.StaticText(self, label="Project name"), 0, wx.BOTTOM, 6)
+        self.entry, entry_box = parent._input_box(
+            self, wx.TextCtrl, value=value, style=_input_style(), track_border=False
+        )
+        self.entry.SetName("Project name")
+        self.entry.SetMaxLength(60)
+        if entry_box is not self.entry:
+            entry_box.SetBackgroundColour(parent.colours["input_border"])
+        content.Add(entry_box, 0, wx.EXPAND | wx.BOTTOM, 14)
+        buttons = wx.BoxSizer(wx.HORIZONTAL)
+        buttons.AddStretchSpacer()
+        cancel = wx.Button(self, wx.ID_CANCEL, "Cancel")
+        accept = wx.Button(self, wx.ID_OK, "OK")
+        accept.SetDefault()
+        cancel.Bind(wx.EVT_BUTTON, lambda event: self.EndModal(wx.ID_CANCEL))
+        accept.Bind(wx.EVT_BUTTON, lambda event: self.EndModal(wx.ID_OK))
+        buttons.Add(cancel)
+        buttons.Add(accept, 0, wx.LEFT, 8)
+        content.Add(buttons, 0, wx.EXPAND)
+        wrapper = wx.BoxSizer(wx.VERTICAL)
+        wrapper.Add(content, 1, wx.EXPAND | wx.ALL, 20)
+        self.SetSizerAndFit(wrapper)
+        self.SetMinSize((420, self.GetSize().height))
+        parent.style_dialog(self)
+        self.heading.SetForegroundColour(parent.colours["accent_label"])
+        self.entry.SetFocus()
+        self.entry.SelectAll()
+        self.CentreOnParent()
+
+    def GetValue(self):  # noqa: N802 - mirrors wx.TextEntryDialog
+        return self.entry.GetValue()
 
 
 class AppearanceDialog(wx.Dialog):
@@ -689,7 +756,9 @@ class AppearanceDialog(wx.Dialog):
 class Workspace(wx.Frame):
     """Native widgets bound to shared configuration and operation behavior."""
 
-    def __init__(self, env_path=None, layout_path=None, controller=None, settings_path=None):
+    def __init__(
+        self, env_path=None, layout_path=None, controller=None, settings_path=None, projects=None, project_name=None
+    ):
         layout_path = Path(layout_path or user_config_path("imap-migration-tools", "CallicoCode") / "gui-layout.json")
         saved_size = load_window_size(layout_path)
         window_size = (
@@ -705,7 +774,11 @@ class Workspace(wx.Frame):
             if icon.IsOk():
                 self._application_icon = icon
                 self.SetIcon(icon)
-        self.env_path = Path(env_path or discover_env()).resolve()
+        explicit = Path(env_path) if env_path else None
+        self.projects = projects or ProjectStore(local_env=local_env(explicit))
+        self.project = self.projects.initial(explicit, project_name)
+        self.env_path = self.project.path.resolve()
+        self.history_scope = self.project.history_key
         self.working_directory = self.env_path.parent
         self.layout_path = layout_path
         self.settings_path = Path(settings_path or Path(self.layout_path).with_name("gui-settings.json"))
@@ -738,6 +811,7 @@ class Workspace(wx.Frame):
         self.digest = file_content_fingerprint(self.env_path)
         self.rejected_digest = None
         self.history_digest = None
+        self.projects_digest = directory_fingerprint(self.projects.root, "*.env")
         self.colours = self._system_colours()
         self.SetBackgroundColour(self.colours["background"])
         self.CreateStatusBar()
@@ -762,7 +836,8 @@ class Workspace(wx.Frame):
         self.select_operation("count")
         self.refresh_history()
         self.SetMinSize(MINIMUM_WINDOW_SIZE)
-        self.SetStatusText(f"Configuration: {self.env_path}")
+        self.refresh_project_controls()
+        self.SetStatusText(f"Project: {self.project.name} ({self.env_path})")
 
     def _build_menu(self):
         self._menu_accelerators = []
@@ -774,6 +849,15 @@ class Workspace(wx.Frame):
         file_menu.AppendSeparator()
         self._menu_action(file_menu, "Quit\tCtrl+Q", self.Close, wx.ID_EXIT)
         bar.Append(file_menu, "&File")
+        project_menu = menu_type()
+        self.choose_project_item = self._menu_action(project_menu, "Choose project\tAlt+P", self.focus_project_selector)
+        project_menu.AppendSeparator()
+        self._menu_action(project_menu, "New project…", lambda: self.request_project_name("new"))
+        self.rename_project_item = self._menu_action(
+            project_menu, "Rename project…", lambda: self.request_project_name("rename")
+        )
+        self.delete_project_item = self._menu_action(project_menu, "Delete project…", self.request_project_deletion)
+        bar.Append(project_menu, "&Project")
         tools = menu_type()
         for index, operation in enumerate(OPERATIONS, 1):
             self._menu_action(
@@ -841,6 +925,11 @@ class Workspace(wx.Frame):
 
     def show_about(self):
         self._show_information(AboutDialog)
+
+    def focus_project_selector(self):
+        """Reveal and focus the project selector for keyboard selection."""
+        self.config_panel.ScrollChildIntoView(self.project_choice)
+        self.project_choice.SetFocus()
 
     def transparency_supported(self):
         """Return whether the current window manager supports native opacity."""
@@ -1059,8 +1148,12 @@ class Workspace(wx.Frame):
                 widget.SetForegroundColour(self.colours["text"])
                 widget.SetBackgroundColour(self.colours["control"])
             elif isinstance(widget, wx.Button):
-                widget.SetForegroundColour(self.colours["text"])
+                self._style_button_state(widget)
                 widget.SetBackgroundColour(self.colours["surface"])
+
+    def _style_button_state(self, button):
+        """Keep disabled buttons visibly muted, since a themed foreground hides native dimming."""
+        button.SetForegroundColour(self.colours["text"] if button.IsEnabled() else self.colours["muted"])
 
     def _input_box(self, parent, control_type, *args, track_border=True, **kwargs):
         """Create an input and its uniform Windows palette border."""
@@ -1268,11 +1361,50 @@ class Workspace(wx.Frame):
         config.SetBackgroundColour(self.colours["surface_soft"])
         form = wx.BoxSizer(wx.VERTICAL)
         form.Add(
-            self._heading(config, "Configuration", "Autosaves to the selected .env file"),
+            self._heading(config, "Configuration", "Autosaves to the project .env file"),
             0,
             wx.BOTTOM,
             10,
         )
+        project_heading = wx.StaticText(config, label=":: Project")
+        project_heading.SetFont(
+            wx.Font(wx.FontInfo(project_heading.GetFont().GetPointSize()).Family(wx.FONTFAMILY_TELETYPE).Bold())
+        )
+        project_heading.SetForegroundColour(self.colours["accent_label"])
+        self._theme_accent_labels.append(project_heading)
+        form.Add(project_heading, 0, wx.TOP | wx.BOTTOM, 8)
+        project_rule = wx.Panel(config, style=wx.BORDER_NONE)
+        project_rule.SetBackgroundColour(self.colours["separator"])
+        project_rule.SetMinSize((-1, 1))
+        self._theme_rules.append(project_rule)
+        form.Add(project_rule, 0, wx.EXPAND | wx.BOTTOM, 5)
+        self.project_choice, project_box = self._input_box(config, _choice_type(), style=_input_style())
+        self.project_choice.SetName("Project")
+        # A long project name must shrink and ellipsize instead of widening the whole form.
+        self.project_choice.SetMinSize((60, -1))
+        _bind_choice(self.project_choice, self.on_project_choice)
+        form.Add(project_box, 0, wx.EXPAND | wx.BOTTOM, 6)
+        project_row = wx.BoxSizer(wx.HORIZONTAL)
+        self.project_buttons = {}
+        for action, label in (("new", "New…"), ("rename", "Rename…"), ("delete", "Delete…")):
+            button = wx.Button(config, label=label)
+            button.SetName(f"{label.rstrip('…')} project")
+            handler = (
+                self.request_project_deletion
+                if action == "delete"
+                else (lambda action=action: self.request_project_name(action))
+            )
+            button.Bind(wx.EVT_BUTTON, lambda event, handler=handler: handler())
+            self.project_buttons[action] = button
+            project_row.Add(button, 0, wx.RIGHT, 8)
+        form.Add(project_row, 0, wx.BOTTOM, 4)
+        self.project_location = wx.StaticText(config, label="", style=wx.ST_NO_AUTORESIZE)
+        self.project_location_text = ""
+        self.project_location.SetMinSize((60, -1))
+        self.project_location.Bind(wx.EVT_SIZE, self.fit_project_location)
+        self.project_location.SetForegroundColour(self.colours["muted"])
+        self._theme_muted.append(self.project_location)
+        form.Add(self.project_location, 0, wx.EXPAND | wx.BOTTOM, 6)
         group = None
         for field in FIELDS:
             if field.group != group:
@@ -1358,6 +1490,7 @@ class Workspace(wx.Frame):
         actions.Add(folder_box, 0, wx.EXPAND | wx.BOTTOM, 12)
         self.readiness_panel = wx.Panel(operation_panel)
         readiness_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.readiness_text = ""
         self.readiness_label = wx.StaticText(self.readiness_panel, label="")
         self.readiness_label.SetFont(self.readiness_label.GetFont().Bold())
         readiness_sizer.Add(self.readiness_label, 0, wx.EXPAND | wx.ALL, 10)
@@ -1557,6 +1690,138 @@ class Workspace(wx.Frame):
         self.SetStatusText("Saved; OS environment overrides are active" if override else "Configuration saved")
         return True
 
+    def project_names(self):
+        """Return selector entries, keeping a missing active project visible for recovery."""
+        names = [project.name for project in self.projects.projects()]
+        return names if self.project.name in names else [*names, self.project.name]
+
+    def refresh_project_controls(self):
+        """Synchronize the selector, buttons, menu, and location with the projects directory."""
+        names = self.project_names()
+        if self.project_choice.GetItems() != names:
+            self.project_choice.Set(names)
+        self.project_choice.SetStringSelection(self.project.name)
+        managed = self.project.managed
+        for action in ("rename", "delete"):
+            self.project_buttons[action].Enable(managed)
+            self._style_button_state(self.project_buttons[action])
+        self.rename_project_item.Enable(managed)
+        self.delete_project_item.Enable(managed)
+        missing = "" if self.env_path.exists() else " (missing)"
+        self.project_location_text = f"{display_path(self.env_path)}{missing}"
+        self.project_location.SetToolTip(f"{self.env_path}{missing}")
+        self.fit_project_location()
+        self.SetTitle(f"IMAP Migration Tools — {self.project.name}")
+
+    def fit_project_location(self, event=None):
+        """Shorten the middle of the file path to the label's width so it never widens the form."""
+        if event:
+            event.Skip()
+        label = self.project_location
+        width = label.GetSize().width
+        text = self.project_location_text
+        if width > 0 and text:
+            dc = wx.ClientDC(label)
+            dc.SetFont(label.GetFont())
+            text = wx.Control.Ellipsize(text, dc, wx.ELLIPSIZE_MIDDLE, width)
+        if label.GetLabel() != text:
+            label.SetLabel(text)
+
+    def on_project_choice(self, event=None):
+        name = self.project_choice.GetStringSelection()
+        if not name or name == self.project.name:
+            return
+        project = self.projects.find(name)
+        if project is None:
+            self.SetStatusText(f"Project not found: {name}")
+            self.refresh_project_controls()
+            return
+        self.switch_project(project)
+
+    def leave_project(self):
+        """Flush pending edits of the current project before another one becomes active."""
+        if self.controller.active:
+            self.SetStatusText("Wait for the current operation to finish before changing projects")
+            return False
+        if self.autosave.IsRunning() and not self.save_configuration():
+            self.SetStatusText("Fix or discard the pending configuration edit before changing projects")
+            return False
+        return True
+
+    def switch_project(self, project):
+        """Make ``project`` active after saving the current one, reloading the complete form."""
+        if not self.leave_project():
+            self.refresh_project_controls()
+            return False
+        self.activate_project(project)
+        return True
+
+    def activate_project(self, project, reload_form=True, keep_history_view=False):
+        """Point configuration, history, and runs at exactly one project.
+
+        History and Output show only the active project's runs, so both are cleared on every project change except a
+        rename, which keeps the same runs under the new name.
+        """
+        self.autosave.Stop()
+        self.project = project
+        self.env_path = project.path.resolve()
+        self.working_directory = self.env_path.parent
+        self.digest = file_content_fingerprint(self.env_path)
+        self.rejected_digest = None
+        self.projects.remember(project)
+        self.history_scope = project.history_key
+        if not keep_history_view:
+            self.lines.clear()
+            self.current_run_id = self.selected_run_id = None
+            self.set_progress_label("Idle")
+            self.progress.SetForegroundColour(self.colours["muted"])
+        self.records = None
+        self.history_digest = None
+        self.refresh_history()
+        if reload_form:
+            self.load_form(read_env(self.env_path))
+        self.refresh_readiness()
+        self.refresh_project_controls()
+        self.SetStatusText(f"Project: {project.name} ({self.env_path})")
+
+    def ask_project_name(self, title, value=""):
+        with ProjectNameDialog(self, title, value) as dialog:
+            return dialog.GetValue() if dialog.ShowModal() == wx.ID_OK else None
+
+    def request_project_name(self, action):
+        if action == "rename" and not self.project.managed:
+            return
+        title, value = ("New project", "") if action == "new" else (f"Rename {self.project.name}", self.project.name)
+        self.project_name_entered(action, self.ask_project_name(title, value))
+
+    def project_name_entered(self, action, name):
+        if name is None or not self.leave_project():
+            return None
+        try:
+            project = self.projects.create(name) if action == "new" else self.projects.rename(self.project, name)
+        except (OSError, ValueError) as exc:
+            self.SetStatusText(str(exc))
+            wx.Bell()
+            return None
+        self.activate_project(project, reload_form=action == "new", keep_history_view=action == "rename")
+        self.SetStatusText(f"Project {project.name} {'created' if action == 'new' else 'renamed'}")
+        return project
+
+    def request_project_deletion(self):
+        if not self.project.managed or not self.leave_project():
+            return
+        project = self.project
+        message = f"Permanently delete project {project.name} and its run history?\nFile: {display_path(project.path)}"
+        if not self.confirm(message, True):
+            return
+        try:
+            self.projects.delete(project)
+        except (OSError, ValueError) as exc:
+            self.SetStatusText(f"Unable to delete project: {exc}")
+            return
+        self.activate_project(self.projects.default_project())
+        self.SetStatusText(f"Project {project.name} deleted")
+
     def select_operation(self, operation):
         self.operation = operation
         spec = OPERATION_BY_NAME[operation]
@@ -1584,6 +1849,20 @@ class Workspace(wx.Frame):
             compare_destination_mode=self.destination_mode.GetStringSelection(),
         )
 
+    def fit_readiness_label(self):
+        """Wrap the readiness banner to the width it really has, so it can never push the panel wider.
+
+        The room is the panel's client width minus the panel padding (16) and the banner's own border (20). The text is
+        measured and broken here instead of with ``StaticText.Wrap``, which on Windows sometimes leaves text unwrapped.
+        """
+        label = self.readiness_label
+        width = max(160, self.operation_panel.GetClientSize().width - 40)
+        dc = wx.ClientDC(label)
+        dc.SetFont(label.GetFont())
+        wrapped = wordwrap(self.readiness_text, width, dc)
+        if label.GetLabel() != wrapped:
+            label.SetLabel(wrapped)
+
     def refresh_readiness(self):
         values = self.values()
         if not account_ready(values, "DEST") and self.count_mode.GetStringSelection() == "destination":
@@ -1606,8 +1885,8 @@ class Workspace(wx.Frame):
         self.tools.SetSelection(selected)
         state = states[self.operation]
         readiness_status = "WARNING" if state.warning else "READY" if state.ready else "MISSING"
-        self.readiness_label.SetLabel(f"{readiness_status} :: {state.detail}")
-        self.readiness_label.Wrap(max(160, self.run_button.GetParent().GetClientSize().width - 20))
+        self.readiness_text = f"{readiness_status} :: {state.detail}"
+        self.fit_readiness_label()
         self.run_button.Enable(state.ready and not self.controller.active)
         semantic = (
             self.colours["warning"]
@@ -1666,11 +1945,12 @@ class Workspace(wx.Frame):
         message, destructive = run_confirmation(self.operation, options, values)
         if not self.confirm(message, destructive):
             return
+        environment = {**run_environment(self.project), **options.environment}
         request = RunRequest(
             build_command(OPERATION_BY_NAME[self.operation], options),
             self.working_directory,
-            options.environment,
-            options.environment,
+            environment,
+            environment,
             desktop_worker=True,
         )
         self.lines.clear()
@@ -1678,7 +1958,7 @@ class Workspace(wx.Frame):
         self.set_progress_label("Starting…")
         self.progress.SetForegroundColour(self.colours["muted"])
         self.current_run_id = self.selected_run_id = None
-        self.controller.start(self.operation, values, request)
+        self.controller.start(self.operation, values, request, self.history_scope)
         self.cancel_button.Enable()
         self.refresh_readiness()
 
@@ -1742,18 +2022,27 @@ class Workspace(wx.Frame):
         if dirty and self.selected_run_id == self.current_run_id:
             self.render_output()
         try:
-            fingerprint = directory_fingerprint(history.history_dir(), "*.json")
+            fingerprint = directory_fingerprint(history.scope_dir(self.history_scope), "*.json")
             if fingerprint != self.history_digest:
                 self.refresh_history()
                 self.history_digest = fingerprint
         except OSError as exc:
             self.SetStatusText(f"History unavailable: {exc}")
+        try:
+            projects = directory_fingerprint(self.projects.root, "*.env")
+        except OSError:
+            projects = self.projects_digest
+        if projects != self.projects_digest:
+            self.projects_digest = projects
+            self.refresh_project_controls()
 
     def refresh_history(self):
         try:
-            records = [r for r in history.load_records() if r.status != "running" or r.run_id == self.current_run_id][
-                :20
-            ]
+            records = [
+                r
+                for r in history.load_records(self.history_scope)
+                if r.status != "running" or r.run_id == self.current_run_id
+            ][:20]
         except OSError as exc:
             self.SetStatusText(f"History unavailable: {exc}")
             return
@@ -1802,7 +2091,7 @@ class Workspace(wx.Frame):
             lines = (
                 self.lines
                 if self.selected_run_id == self.current_run_id
-                else history.read_log(self.selected_run_id).splitlines()
+                else history.read_log(self.selected_run_id, self.history_scope).splitlines()
                 if self.selected_run_id
                 else []
             )
@@ -1825,7 +2114,9 @@ class Workspace(wx.Frame):
             if dialog.ShowModal() != wx.ID_OK:
                 return
             try:
-                Path(dialog.GetPath()).write_text(history.read_log(self.selected_run_id), encoding="utf-8")
+                Path(dialog.GetPath()).write_text(
+                    history.read_log(self.selected_run_id, self.history_scope), encoding="utf-8"
+                )
                 self.SetStatusText("Log exported")
             except OSError as exc:
                 self.SetStatusText(f"Unable to export: {exc}")
@@ -1838,7 +2129,7 @@ class Workspace(wx.Frame):
             return
         if self.confirm("Delete the selected run and its log?"):
             try:
-                history.delete_record(self.selected_run_id)
+                history.delete_record(self.selected_run_id, self.history_scope)
                 self.refresh_history()
             except OSError as exc:
                 self.SetStatusText(f"Unable to delete: {exc}")
@@ -1858,7 +2149,7 @@ class Workspace(wx.Frame):
         if hasattr(self, "operation_description"):
             available = max(180, self.run_button.GetParent().GetClientSize().width - 32)
             self.operation_description.Wrap(available)
-            self.readiness_label.Wrap(available)
+            self.fit_readiness_label()
         compact = width < 1050
         self.operation_subtitle.Show(not compact)
         if compact == self.compact:
@@ -1922,14 +2213,26 @@ class Workspace(wx.Frame):
 
 def main(argv=None):
     """Discover configuration without pinning dotenv values as OS overrides."""
-    loaded = load_dotenv()
-    for name in loaded.dotenv_keys:
+    try:
+        loaded = load_dotenv()
+    except SystemExit:
+        loaded = None
+    for name in loaded.dotenv_keys if loaded else ():
         os.environ.pop(name, None)
     parser = argparse.ArgumentParser(description="Native IMAP Migration Tools workspace")
-    parser.add_argument("--env", type=Path, help="Configuration .env file (default: discover from working directory)")
+    parser.add_argument("--env", type=Path, help="Open this .env file as the local project (or IMAP_TOOLS_ENV_FILE)")
+    parser.add_argument("--project", help="Open this project by name: default, local, or a named project")
     args = parser.parse_args(argv)
+    env_path = explicit_env(args.env)
+    if env_path is not None and args.project:
+        parser.error("--env and --project cannot be combined")
+    projects = ProjectStore(local_env=local_env(env_path))
+    try:
+        projects.initial(env_path, args.project)
+    except ValueError as exc:
+        parser.error(str(exc))
     app = wx.App(False)
-    frame = Workspace(args.env)
+    frame = Workspace(env_path, projects=projects, project_name=args.project)
     frame.Show()
     app.MainLoop()
 

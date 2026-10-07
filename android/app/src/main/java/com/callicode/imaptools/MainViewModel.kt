@@ -18,6 +18,7 @@ import com.callicode.imaptools.model.BackupEstimateState
 import com.callicode.imaptools.model.Operation
 import com.callicode.imaptools.model.OperationEvent
 import com.callicode.imaptools.model.OperationOptions
+import com.callicode.imaptools.model.OperationState
 import com.callicode.imaptools.model.ProjectProfile
 import com.callicode.imaptools.model.TargetType
 import com.callicode.imaptools.operation.HistoryEntry
@@ -38,14 +39,14 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.Locale
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("configuration", 0)
     private val projectStore = ProjectStore(File(application.filesDir, "projects"), preferences)
     private val initialProject = projectStore.initialize(loadLegacy())
-    private val projectMemory = mutableMapOf(initialProject.first.id to initialProject.second)
+    private val projectMemory = mutableMapOf(initialProject.first.name to initialProject.second)
     private val mutableProjects = MutableStateFlow(projectStore.projects())
     val projects = mutableProjects.asStateFlow()
     private val mutableActiveProject = MutableStateFlow(initialProject.first)
@@ -59,8 +60,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val backupWorkspaceStore = BackupWorkspaceStore(workspaceBaseRoot)
     private val mutableRetainedBackups = MutableStateFlow(backupWorkspaceStore.retainedGroups())
     val retainedBackups = mutableRetainedBackups.asStateFlow()
-    private val pendingSaves = Channel<Pair<ProjectProfile, AppConfiguration>>(Channel.UNLIMITED)
-    private val deletedProjects = Collections.synchronizedSet(mutableSetOf<String>())
+    private val pendingSaves = Channel<PendingSave>(Channel.UNLIMITED)
+
+    /** Incremented by rename and delete so saves queued for the previous project file are discarded. */
+    private val projectGeneration = AtomicInteger()
     private val mutableStorageMessage = MutableStateFlow<String?>(null)
     val storageMessage = mutableStorageMessage.asStateFlow()
     private val mutableAuthenticationBusy = MutableStateFlow(false)
@@ -76,12 +79,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // Best-effort warm-up of the embedded Python runtime. This trades modest
         // background work at launch for lower latency when the first operation starts.
         PythonRuntime.prewarm()
-        migrateLegacyWorkspaces(initialProject.first.id)
+        backupWorkspaceStore.migrateLegacyLayout(projectStore.migratedProjects, initialProject.first)
+        HistoryStore.adoptLegacyHistory(application.filesDir, ProjectProfile.DEFAULT.historyKey)
         viewModelScope.launch(Dispatchers.IO) {
-            for ((project, configuration) in pendingSaves) {
-                if (project.id in deletedProjects) continue
-                runCatching { projectStore.save(project, configuration) }
-                    .onFailure { mutableStorageMessage.value = it.message ?: "Unable to save project configuration" }
+            for (pending in pendingSaves) {
+                runCatching {
+                    projectStore.saveIf(
+                        { pending.generation == projectGeneration.get() },
+                        pending.project,
+                        pending.configuration,
+                    )
+                }.onFailure { mutableStorageMessage.value = it.message ?: "Unable to save project configuration" }
             }
         }
         viewModelScope.launch {
@@ -101,66 +109,102 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun update(transform: (AppConfiguration) -> AppConfiguration) {
         if (operationRunning()) return
         mutableConfiguration.value = transform(mutableConfiguration.value)
-        projectMemory[mutableActiveProject.value.id] = mutableConfiguration.value
-        pendingSaves.trySend(mutableActiveProject.value to mutableConfiguration.value)
+        projectMemory[mutableActiveProject.value.name] = mutableConfiguration.value
+        pendingSaves.trySend(
+            PendingSave(mutableActiveProject.value, mutableConfiguration.value, projectGeneration.get()),
+        )
     }
 
     fun createProject(name: String): String? {
         if (operationRunning()) return "Wait for the current operation to finish"
-        val normalized = name.trim()
-        if (normalized.isEmpty()) return "Project name is required"
-        if (normalized.length > 60) return "Project name must be 60 characters or fewer"
-        if (normalized.any { it == '\n' || it == '\r' }) return "Project name must be a single line"
-        if (mutableProjects.value.any { it.name.equals(normalized, ignoreCase = true) }) {
-            return "A project named $normalized already exists"
-        }
-        val created = projectStore.create(normalized)
-        projectMemory[created.first.id] = created.second
+        val created = runCatching { projectStore.create(name) }
+            .getOrElse { return it.message ?: "Unable to create the project" }
+        projectMemory[created.first.name] = created.second
         mutableProjects.value = projectStore.projects()
         mutableActiveProject.value = created.first
+        resetOutputForProjectChange()
         mutableConfiguration.value = created.second
         return null
     }
 
     fun selectProject(project: ProjectProfile) {
         if (operationRunning()) return
-        if (project.id == mutableActiveProject.value.id) return
+        if (project == mutableActiveProject.value) return
         projectStore.select(project)
-        val configuration = projectMemory[project.id] ?: projectStore.load(project)
-        projectMemory[project.id] = configuration
+        val configuration = projectMemory[project.name] ?: projectStore.load(project)
+        projectMemory[project.name] = configuration
         mutableActiveProject.value = project
+        resetOutputForProjectChange()
         mutableConfiguration.value = configuration
+    }
+
+    fun renameActiveProject(name: String): String? {
+        if (operationRunning()) return "Wait for the current operation to finish"
+        val original = mutableActiveProject.value
+        if (original.isDefault) return "The default project cannot be renamed"
+        val configuration = mutableConfiguration.value
+        projectGeneration.incrementAndGet()
+        val renamed = runCatching {
+            projectStore.save(original, configuration)
+            projectStore.rename(original, name)
+        }.getOrElse { return it.message ?: "Unable to rename the project" }
+        if (renamed == original) return null
+        runCatching { backupWorkspaceStore.renameProject(original, renamed) }.onFailure { error ->
+            runCatching { projectStore.revertRename(renamed, original) }
+            return error.message ?: "Unable to move the project's backup workspaces"
+        }
+        runCatching { HistoryStore.moveScope(getApplication<Application>().filesDir, original.historyKey, renamed.historyKey) }
+            .onFailure { error ->
+                runCatching { backupWorkspaceStore.renameProject(renamed, original) }
+                runCatching { projectStore.revertRename(renamed, original) }
+                return error.message ?: "Unable to move the project's history"
+            }
+        projectMemory.remove(original.name)
+        projectMemory[renamed.name] = configuration
+        mutableProjects.value = projectStore.projects()
+        mutableActiveProject.value = renamed
+        return null
     }
 
     fun deleteActiveProject(deleteBackups: Boolean): String? {
         if (operationRunning()) return "Wait for the current operation to finish"
-        if (mutableProjects.value.size <= 1) return "At least one project is required"
         val deleting = mutableActiveProject.value
+        if (deleting.isDefault) return "The default project cannot be deleted"
         val storageError = runCatching {
             if (deleteBackups) {
-                backupWorkspaceStore.deleteProjectWorkspaces(deleting.id)
+                backupWorkspaceStore.deleteProjectWorkspaces(deleting)
             } else {
                 backupWorkspaceStore.retain(deleting)
             }
         }.exceptionOrNull()
         if (storageError != null) return storageError.message ?: "Unable to update the project's backup workspaces"
-        deletedProjects += deleting.id
+        val historyError = runCatching {
+            HistoryStore.deleteScope(getApplication<Application>().filesDir, deleting.historyKey)
+        }.exceptionOrNull()
+        if (historyError != null) return historyError.message ?: "Unable to delete the project's history"
+        projectGeneration.incrementAndGet()
         projectStore.delete(deleting)
-        projectMemory.remove(deleting.id)
+        projectMemory.remove(deleting.name)
         val remaining = projectStore.projects()
-        val replacement = remaining.first()
+        val replacement = ProjectProfile.DEFAULT
         projectStore.select(replacement)
-        val configuration = projectMemory[replacement.id] ?: projectStore.load(replacement)
-        projectMemory[replacement.id] = configuration
+        val configuration = projectMemory[replacement.name] ?: projectStore.load(replacement)
+        projectMemory[replacement.name] = configuration
         mutableProjects.value = remaining
         mutableActiveProject.value = replacement
+        resetOutputForProjectChange()
         mutableConfiguration.value = configuration
         mutableRetainedBackups.value = backupWorkspaceStore.retainedGroups()
         return null
     }
 
+    /** The Output screen mirrors the last run process-wide, so it must not carry one project's run into another. */
+    private fun resetOutputForProjectChange() {
+        OperationBus.update { OperationState() }
+    }
+
     fun activeProjectBackupNames(): List<String> =
-        backupWorkspaceStore.projectWorkspaceNames(mutableActiveProject.value.id)
+        backupWorkspaceStore.projectWorkspaceNames(mutableActiveProject.value)
 
     fun run(estimateInProgress: Boolean = false, allowMeteredNetwork: Boolean = false): String? {
         val configuration = mutableConfiguration.value
@@ -176,6 +220,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             getApplication(),
             configuration.operation,
             RequestEncoder.encode(configuration, activeWorkspaceRoot()),
+            mutableActiveProject.value.historyKey,
             estimateInProgress,
             allowMeteredNetwork,
             estimatedBytes,
@@ -290,7 +335,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun oauthAccountReferenceCount(account: AccountState): Int = mutableProjects.value.sumOf { project ->
-        val configuration = projectMemory[project.id] ?: projectStore.load(project)
+        val configuration = projectMemory[project.name] ?: projectStore.load(project)
         listOf(configuration.source, configuration.destination).count {
             it.authentication == account.authentication &&
                 it.oauthAccountId.isNotBlank() &&
@@ -300,9 +345,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancel() = OperationDispatcher.cancel(getApplication())
 
-    fun history(): List<HistoryEntry> = HistoryStore(getApplication()).entries()
+    fun history(): List<HistoryEntry> = HistoryStore(getApplication(), mutableActiveProject.value.historyKey).entries()
 
-    fun deleteHistoryEntry(id: String): Boolean = HistoryStore(getApplication()).delete(id)
+    fun deleteHistoryEntry(id: String): Boolean =
+        HistoryStore(getApplication(), mutableActiveProject.value.historyKey).delete(id)
 
     fun exportWorkspace(name: String, destination: Uri) = archive("Backup exported") {
         export(RequestEncoder.safeBackupName(name), destination)
@@ -312,13 +358,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         import(RequestEncoder.safeBackupName(name), source)
     }
 
-    fun exportRetainedWorkspace(projectId: String, name: String, destination: Uri) {
+    fun exportRetainedWorkspace(groupId: String, name: String, destination: Uri) {
         viewModelScope.launch {
             mutableStorageMessage.value = withContext(Dispatchers.IO) {
                 runCatching {
                     WorkspaceArchive(
                         getApplication<Application>().contentResolver,
-                        backupWorkspaceStore.retainedOwnerRoot(projectId),
+                        backupWorkspaceStore.retainedOwnerRoot(groupId),
                     ).export(RequestEncoder.safeBackupName(name), destination)
                     "Backup exported"
                 }.getOrElse { it.message ?: "Storage operation failed" }
@@ -326,10 +372,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun deleteRetainedWorkspace(projectId: String, name: String): String? {
+    fun deleteRetainedWorkspace(groupId: String, name: String): String? {
         if (operationRunning()) return "Wait for the current operation to finish"
         return runCatching {
-            backupWorkspaceStore.deleteRetainedWorkspace(projectId, name)
+            backupWorkspaceStore.deleteRetainedWorkspace(groupId, name)
             mutableRetainedBackups.value = backupWorkspaceStore.retainedGroups()
             null
         }.getOrElse { it.message ?: "Unable to delete the retained backup workspace" }
@@ -439,25 +485,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun activeWorkspaceRoot(): File =
-        File(workspaceBaseRoot, mutableActiveProject.value.id).apply {
-            mkdirs()
-            ownerOnlyDirectory()
-        }
-
-    private fun migrateLegacyWorkspaces(projectId: String) {
-        if (preferences.getBoolean(LEGACY_WORKSPACES_MIGRATED, false)) return
-        val legacyEntries = workspaceBaseRoot.listFiles().orEmpty()
-        val projectRoot = File(workspaceBaseRoot, projectId).apply {
-            mkdirs()
-            ownerOnlyDirectory()
-        }
-        legacyEntries.filter { it != projectRoot }.forEach { entry ->
-            val destination = File(projectRoot, entry.name)
-            if (!destination.exists()) entry.renameTo(destination)
-        }
-        preferences.edit().putBoolean(LEGACY_WORKSPACES_MIGRATED, true).apply()
-    }
+    private fun activeWorkspaceRoot(): File = backupWorkspaceStore.projectRoot(mutableActiveProject.value)
 
     fun operationRunning(): Boolean = OperationDispatcher.hasWork()
 
@@ -524,7 +552,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
-        private const val LEGACY_WORKSPACES_MIGRATED = "legacy_workspaces_migrated"
 
         fun formatBytes(bytes: Long): String {
             if (bytes < 1024L) return "$bytes B"
@@ -543,3 +570,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 }
+
+private data class PendingSave(
+    val project: ProjectProfile,
+    val configuration: AppConfiguration,
+    val generation: Int,
+)

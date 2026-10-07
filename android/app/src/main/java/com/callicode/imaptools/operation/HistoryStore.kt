@@ -19,8 +19,9 @@ data class HistoryEntry(val id: String, val timestamp: String, val state: Operat
     val summary: String = state.error ?: state.result ?: state.events.lastOrNull()?.message.orEmpty()
 }
 
+/** Run history of exactly one project, stored in `history/<scope>.json` (scope is `ProjectProfile.historyKey`). */
 class HistoryStore internal constructor(private val file: File) {
-    constructor(context: Context) : this(File(context.filesDir, "operation-history.json"))
+    constructor(context: Context, scope: String) : this(historyFile(context.filesDir, scope))
 
     @Synchronized
     fun append(state: OperationState) {
@@ -72,6 +73,45 @@ class HistoryStore internal constructor(private val file: File) {
                     ),
                 )
             }
+        }
+    }
+
+    companion object {
+        private const val DIRECTORY = "history"
+        private const val LEGACY_FILE = "operation-history.json"
+
+        internal fun historyFile(filesDir: File, scope: String): File {
+            require(scope.isNotBlank() && scope != "." && scope != ".." && scope.none { it == '/' || it == '\\' || it.code < 32 }) {
+                "Invalid history scope"
+            }
+            return File(File(filesDir, DIRECTORY), "$scope.json")
+        }
+
+        /** Move the single app-wide history written before projects existed into the default project, once. */
+        fun adoptLegacyHistory(filesDir: File, defaultScope: String) {
+            val legacy = File(filesDir, LEGACY_FILE)
+            if (!legacy.isFile) return
+            val target = historyFile(filesDir, defaultScope)
+            if (target.exists()) return
+            target.parentFile?.mkdirs()
+            legacy.renameTo(target)
+        }
+
+        /** Move a renamed project's history, refusing to merge it into leftover history of the same name. */
+        fun moveScope(filesDir: File, from: String, to: String) {
+            if (from == to) return
+            val source = historyFile(filesDir, from)
+            if (!source.exists()) return
+            val target = historyFile(filesDir, to)
+            check(!target.exists()) { "History for $to already exists" }
+            target.parentFile?.mkdirs()
+            check(source.renameTo(target)) { "Unable to move the project's history" }
+        }
+
+        /** Permanently delete one project's history so a later project with the same name starts empty. */
+        fun deleteScope(filesDir: File, scope: String) {
+            val file = historyFile(filesDir, scope)
+            check(!file.exists() || file.delete()) { "Unable to delete the project's history" }
         }
     }
 

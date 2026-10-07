@@ -50,7 +50,7 @@ def test_app_main_resolves_cli_display_mode(monkeypatch):
     launched = []
 
     class FakeApp:
-        def __init__(self, *, display_profile):
+        def __init__(self, env_path=None, *, display_profile, **_kwargs):
             launched.append(display_profile)
 
         def run(self):
@@ -66,7 +66,7 @@ def test_app_main_uses_environment_display_mode(monkeypatch):
     launched = []
 
     class FakeApp:
-        def __init__(self, *, display_profile):
+        def __init__(self, env_path=None, *, display_profile, **_kwargs):
             launched.append(display_profile)
 
         def run(self):

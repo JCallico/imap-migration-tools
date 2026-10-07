@@ -9,6 +9,8 @@ import java.util.concurrent.atomic.AtomicReference
 internal data class PendingOperation(
     val operation: Operation,
     val request: String,
+    /** The project whose history records this run; fixed when the run starts so a background run cannot leak. */
+    val historyScope: String,
     val estimateInProgress: Boolean,
     val allowMeteredNetwork: Boolean,
     val estimatedBytes: Long?,

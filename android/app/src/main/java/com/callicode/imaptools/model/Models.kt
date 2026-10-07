@@ -1,5 +1,7 @@
 package com.callicode.imaptools.model
 
+import java.util.Locale
+
 enum class Operation(val title: String) {
     COUNT("Count"),
     COMPARE("Compare"),
@@ -18,7 +20,18 @@ enum class AccountSlot { SOURCE, DESTINATION }
 
 enum class TargetType { SOURCE_ACCOUNT, DESTINATION_ACCOUNT, LOCAL_BACKUP }
 
-data class ProjectProfile(val id: String, val name: String)
+/** A project is its `.env` file: [DEFAULT_NAME] is `.env`, every other project is `<name>.env`. */
+data class ProjectProfile(val name: String) {
+    val isDefault: Boolean get() = name == DEFAULT_NAME
+
+    /** The key that owns this project's run history and nothing else, stable for the project's name. */
+    val historyKey: String get() = if (isDefault) DEFAULT_NAME else "project-${name.lowercase(Locale.ROOT)}"
+
+    companion object {
+        const val DEFAULT_NAME = "default"
+        val DEFAULT = ProjectProfile(DEFAULT_NAME)
+    }
+}
 
 data class AccountState(
     val host: String = "",
