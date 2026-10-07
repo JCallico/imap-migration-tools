@@ -107,7 +107,7 @@ class PaletteChoice(wx.Panel):
         self._selection = wx.NOT_FOUND
         self._palette = None
         self._popup = None
-        self._value = wx.StaticText(self, label="")
+        self._value = wx.StaticText(self, label="", style=wx.ST_ELLIPSIZE_END)
         self._arrow = wx.StaticText(self, label="⌄")
         row = wx.BoxSizer(wx.HORIZONTAL)
         row.Add(self._value, 1, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 6)
@@ -380,8 +380,8 @@ HELP_SECTIONS = (
     ),
     (
         "Review history",
-        "History is shared with the terminal interface. Select a completed run to view, filter, export, or delete its "
-        "redacted log.",
+        "History is kept per project and shared with the terminal interface for the same project. Select a completed "
+        "run to view, filter, export, or delete its redacted log.",
     ),
     (
         "Adjust the workspace",
@@ -776,6 +776,7 @@ class Workspace(wx.Frame):
         self.projects = projects or ProjectStore(local_env=local_env(explicit))
         self.project = self.projects.initial(explicit, project_name)
         self.env_path = self.project.path.resolve()
+        self.history_scope = self.project.history_key
         self.working_directory = self.env_path.parent
         self.layout_path = layout_path
         self.settings_path = Path(settings_path or Path(self.layout_path).with_name("gui-settings.json"))
@@ -1351,7 +1352,7 @@ class Workspace(wx.Frame):
         config.SetBackgroundColour(self.colours["surface_soft"])
         form = wx.BoxSizer(wx.VERTICAL)
         form.Add(
-            self._heading(config, "Configuration", "Autosaves to the selected project's .env file"),
+            self._heading(config, "Configuration", "Autosaves to the project .env file"),
             0,
             wx.BOTTOM,
             10,
@@ -1370,6 +1371,8 @@ class Workspace(wx.Frame):
         form.Add(project_rule, 0, wx.EXPAND | wx.BOTTOM, 5)
         self.project_choice, project_box = self._input_box(config, _choice_type(), style=_input_style())
         self.project_choice.SetName("Project")
+        # A long project name must shrink and ellipsize instead of widening the whole form.
+        self.project_choice.SetMinSize((60, -1))
         _bind_choice(self.project_choice, self.on_project_choice)
         form.Add(project_box, 0, wx.EXPAND | wx.BOTTOM, 6)
         project_row = wx.BoxSizer(wx.HORIZONTAL)
@@ -1386,10 +1389,13 @@ class Workspace(wx.Frame):
             self.project_buttons[action] = button
             project_row.Add(button, 0, wx.RIGHT, 8)
         form.Add(project_row, 0, wx.BOTTOM, 4)
-        self.project_location = wx.StaticText(config, label="")
+        self.project_location = wx.StaticText(config, label="", style=wx.ST_NO_AUTORESIZE)
+        self.project_location_text = ""
+        self.project_location.SetMinSize((60, -1))
+        self.project_location.Bind(wx.EVT_SIZE, self.fit_project_location)
         self.project_location.SetForegroundColour(self.colours["muted"])
         self._theme_muted.append(self.project_location)
-        form.Add(self.project_location, 0, wx.BOTTOM, 6)
+        form.Add(self.project_location, 0, wx.EXPAND | wx.BOTTOM, 6)
         group = None
         for field in FIELDS:
             if field.group != group:
@@ -1692,8 +1698,24 @@ class Workspace(wx.Frame):
         self.rename_project_item.Enable(managed)
         self.delete_project_item.Enable(managed)
         missing = "" if self.env_path.exists() else " (missing)"
-        self.project_location.SetLabel(f"{display_path(self.env_path)}{missing}")
+        self.project_location_text = f"{display_path(self.env_path)}{missing}"
+        self.project_location.SetToolTip(f"{self.env_path}{missing}")
+        self.fit_project_location()
         self.SetTitle(f"IMAP Migration Tools — {self.project.name}")
+
+    def fit_project_location(self, event=None):
+        """Shorten the middle of the file path to the label's width so it never widens the form."""
+        if event:
+            event.Skip()
+        label = self.project_location
+        width = label.GetSize().width
+        text = self.project_location_text
+        if width > 0 and text:
+            dc = wx.ClientDC(label)
+            dc.SetFont(label.GetFont())
+            text = wx.Control.Ellipsize(text, dc, wx.ELLIPSIZE_MIDDLE, width)
+        if label.GetLabel() != text:
+            label.SetLabel(text)
 
     def on_project_choice(self, event=None):
         name = self.project_choice.GetStringSelection()
@@ -1724,8 +1746,12 @@ class Workspace(wx.Frame):
         self.activate_project(project)
         return True
 
-    def activate_project(self, project, reload_form=True):
-        """Point configuration, watching, and runs at exactly one project file."""
+    def activate_project(self, project, reload_form=True, keep_history_view=False):
+        """Point configuration, history, and runs at exactly one project.
+
+        History and Output show only the active project's runs, so both are cleared on every project change except a
+        rename, which keeps the same runs under the new name.
+        """
         self.autosave.Stop()
         self.project = project
         self.env_path = project.path.resolve()
@@ -1733,6 +1759,15 @@ class Workspace(wx.Frame):
         self.digest = file_content_fingerprint(self.env_path)
         self.rejected_digest = None
         self.projects.remember(project)
+        self.history_scope = project.history_key
+        if not keep_history_view:
+            self.lines.clear()
+            self.current_run_id = self.selected_run_id = None
+            self.set_progress_label("Idle")
+            self.progress.SetForegroundColour(self.colours["muted"])
+        self.records = None
+        self.history_digest = None
+        self.refresh_history()
         if reload_form:
             self.load_form(read_env(self.env_path))
         self.refresh_readiness()
@@ -1758,7 +1793,7 @@ class Workspace(wx.Frame):
             self.SetStatusText(str(exc))
             wx.Bell()
             return None
-        self.activate_project(project, reload_form=action == "new")
+        self.activate_project(project, reload_form=action == "new", keep_history_view=action == "rename")
         self.SetStatusText(f"Project {project.name} {'created' if action == 'new' else 'renamed'}")
         return project
 
@@ -1766,7 +1801,7 @@ class Workspace(wx.Frame):
         if not self.project.managed or not self.leave_project():
             return
         project = self.project
-        message = f"Permanently delete project {project.name}?\nFile: {display_path(project.path)}"
+        message = f"Permanently delete project {project.name} and its run history?\nFile: {display_path(project.path)}"
         if not self.confirm(message, True):
             return
         try:
@@ -1899,7 +1934,7 @@ class Workspace(wx.Frame):
         self.set_progress_label("Starting…")
         self.progress.SetForegroundColour(self.colours["muted"])
         self.current_run_id = self.selected_run_id = None
-        self.controller.start(self.operation, values, request)
+        self.controller.start(self.operation, values, request, self.history_scope)
         self.cancel_button.Enable()
         self.refresh_readiness()
 
@@ -1963,7 +1998,7 @@ class Workspace(wx.Frame):
         if dirty and self.selected_run_id == self.current_run_id:
             self.render_output()
         try:
-            fingerprint = directory_fingerprint(history.history_dir(), "*.json")
+            fingerprint = directory_fingerprint(history.scope_dir(self.history_scope), "*.json")
             if fingerprint != self.history_digest:
                 self.refresh_history()
                 self.history_digest = fingerprint
@@ -1979,9 +2014,11 @@ class Workspace(wx.Frame):
 
     def refresh_history(self):
         try:
-            records = [r for r in history.load_records() if r.status != "running" or r.run_id == self.current_run_id][
-                :20
-            ]
+            records = [
+                r
+                for r in history.load_records(self.history_scope)
+                if r.status != "running" or r.run_id == self.current_run_id
+            ][:20]
         except OSError as exc:
             self.SetStatusText(f"History unavailable: {exc}")
             return
@@ -2030,7 +2067,7 @@ class Workspace(wx.Frame):
             lines = (
                 self.lines
                 if self.selected_run_id == self.current_run_id
-                else history.read_log(self.selected_run_id).splitlines()
+                else history.read_log(self.selected_run_id, self.history_scope).splitlines()
                 if self.selected_run_id
                 else []
             )
@@ -2053,7 +2090,9 @@ class Workspace(wx.Frame):
             if dialog.ShowModal() != wx.ID_OK:
                 return
             try:
-                Path(dialog.GetPath()).write_text(history.read_log(self.selected_run_id), encoding="utf-8")
+                Path(dialog.GetPath()).write_text(
+                    history.read_log(self.selected_run_id, self.history_scope), encoding="utf-8"
+                )
                 self.SetStatusText("Log exported")
             except OSError as exc:
                 self.SetStatusText(f"Unable to export: {exc}")
@@ -2066,7 +2105,7 @@ class Workspace(wx.Frame):
             return
         if self.confirm("Delete the selected run and its log?"):
             try:
-                history.delete_record(self.selected_run_id)
+                history.delete_record(self.selected_run_id, self.history_scope)
                 self.refresh_history()
             except OSError as exc:
                 self.SetStatusText(f"Unable to delete: {exc}")

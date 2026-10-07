@@ -7,6 +7,7 @@ same directory. A ``.env`` discovered from the launch directory, or chosen expli
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
 import re
 import stat
@@ -14,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from ui import history
 from ui.config import discover_env, render_new_env
 from utils.dotenv import ENV_FILE_VARIABLE
 
@@ -43,6 +45,19 @@ class Project:
     def managed(self) -> bool:
         """Return whether the project can be renamed or deleted."""
         return self.kind == "named"
+
+    @property
+    def history_key(self) -> str:
+        """Return the stable key that owns this project's run history and nothing else.
+
+        Named projects are keyed by their case-folded name, because names are unique ignoring case. The local project is
+        keyed by its resolved file path, since its name is shared by every directory.
+        """
+        if self.kind == "default":
+            return history.DEFAULT_SCOPE
+        if self.kind == "local":
+            return "local-" + hashlib.sha256(str(_resolve(self.path)).encode("utf-8")).hexdigest()[:16]
+        return f"project-{self.name.casefold()}"
 
 
 def default_projects_dir() -> Path:
@@ -153,14 +168,20 @@ class ProjectStore:
             raise ValueError(f"The {project.name} project file no longer exists")
         _move_without_replacing(project.path, target, case_only=normalized.casefold() == project.name.casefold())
         renamed = Project(normalized, target, "named")
+        try:
+            history.move_scope(project.history_key, renamed.history_key)
+        except OSError as exc:
+            os.replace(target, project.path)
+            raise ValueError(f"Unable to move the project's history: {exc}") from None
         if self.remembered() == project.name:
             self.remember(renamed)
         return renamed
 
     def delete(self, project: Project) -> None:
-        """Delete a named project's file."""
+        """Delete a named project's file and its run history."""
         if not project.managed:
             raise ValueError(f"The {project.name} project cannot be deleted")
+        history.delete_scope(project.history_key)
         try:
             project.path.unlink()
         except FileNotFoundError:

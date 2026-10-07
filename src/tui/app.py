@@ -35,7 +35,7 @@ from tui.config import (
     validate,
 )
 from tui.display import DISPLAY_MODES, DisplayProfile, has_limited_color, resolve_display_profile
-from tui.history import HistoryWriter, delete_record, history_dir, load_records, read_log
+from tui.history import HistoryWriter, delete_record, load_records, read_log, scope_dir
 from tui.history import Redactor as Redactor
 from tui.layout import default_layout_path, load_layout, save_layout
 from tui.operations import (
@@ -327,7 +327,8 @@ class ImapToolsApp(App[None]):
         self.configuration_reload_in_progress = False
         self.filesystem_watcher = FilesystemWatcher()
         self.filesystem_watcher.watch_file("configuration", self.env_path)
-        self.filesystem_watcher.watch_directory("history", history_dir(), "*.json")
+        self.history_scope = self.project.history_key
+        self.filesystem_watcher.watch_directory("history", scope_dir(self.history_scope), "*.json")
         self.filesystem_watcher.watch_directory("projects", self.projects.root, "*.env")
         self.configuration_file_digest = self.env_digest()
         self.configuration_rejected_digest: str | None = None
@@ -728,8 +729,12 @@ class ImapToolsApp(App[None]):
         self.activate_project(project)
         return True
 
-    def activate_project(self, project: Project, reload_form: bool = True) -> None:
-        """Point configuration, watching, and runs at exactly one project file."""
+    def activate_project(self, project: Project, reload_form: bool = True, keep_history_view: bool = False) -> None:
+        """Point configuration, history, watching, and runs at exactly one project.
+
+        The History table and Output show only the active project's runs, so both are cleared on every project change
+        except a rename, which keeps the same runs under the new name.
+        """
         if self.configuration_save_timer is not None:
             self.configuration_save_timer.stop()
             self.configuration_save_timer = None
@@ -739,6 +744,13 @@ class ImapToolsApp(App[None]):
         self.configuration_file_digest = self.env_digest()
         self.configuration_rejected_digest = None
         self.projects.remember(project)
+        self.history_scope = project.history_key
+        self.filesystem_watcher.watch_directory("history", scope_dir(self.history_scope), "*.json")
+        if not keep_history_view:
+            self.selected_output_id = None
+            self.log_lines.clear()
+            self.query_one("#output-log", RichLog).clear()
+        self.refresh_history(self.selected_output_id)
         if reload_form:
             self.populate_form(read_env(self.env_path))
         self.refresh_project_controls()
@@ -761,7 +773,7 @@ class ImapToolsApp(App[None]):
         except (OSError, ValueError) as exc:
             self.notify(str(exc), severity="error")
             return
-        self.activate_project(project, reload_form=action == "new")
+        self.activate_project(project, reload_form=action == "new", keep_history_view=action == "rename")
         self.notify(f"Project {project.name} {'created' if action == 'new' else 'renamed'}")
 
     def request_project_deletion(self) -> None:
@@ -769,7 +781,7 @@ class ImapToolsApp(App[None]):
             return
         self.request_confirmation(
             "delete-project",
-            f"Type DELETE to permanently delete project {self.project.name} ({self.project.path}).",
+            f"Type DELETE to permanently delete project {self.project.name} and its run history ({self.project.path}).",
             self.project,
             True,
         )
@@ -912,7 +924,9 @@ class ImapToolsApp(App[None]):
         selected_row: int | None = None
         selected_run_id: str | None = None
         records = [
-            record for record in load_records() if record.status != "running" or record.run_id == self.current_run_id
+            record
+            for record in load_records(self.history_scope)
+            if record.status != "running" or record.run_id == self.current_run_id
         ][:20]
         with self.prevent(DataTable.RowHighlighted):
             table.clear()
@@ -1089,7 +1103,7 @@ class ImapToolsApp(App[None]):
             self.cancellation_requested = True
             self.runner.terminate()
         elif action == "delete-history":
-            delete_record(str(payload))
+            delete_record(str(payload), self.history_scope)
             self.refresh_history()
         elif action == "delete-project":
             self.delete_project(payload)  # type: ignore[arg-type]
@@ -1188,7 +1202,7 @@ class ImapToolsApp(App[None]):
         self.log_lines.clear()
         self.query_one("#output-log", RichLog).clear()
         values = self.values()
-        session = RunSession(operation.name, values, writer_factory=HistoryWriter)
+        session = RunSession(operation.name, values, self.history_scope, writer_factory=HistoryWriter)
         self.progress = session.progress
         self.query_one("#cancel-run", Button).disabled = False
         record = session.record
@@ -1272,7 +1286,7 @@ class ImapToolsApp(App[None]):
         lines = (
             self.log_lines
             if self.selected_output_id == self.current_run_id
-            else read_log(self.selected_output_id or "").splitlines()
+            else read_log(self.selected_output_id or "", self.history_scope).splitlines()
         )
         for line in lines:
             if not match or match in line.lower():
@@ -1284,7 +1298,7 @@ class ImapToolsApp(App[None]):
             return
         destination = self.working_directory / f"imap-tools-{run_id}.log"
         try:
-            destination.write_text(read_log(run_id), encoding="utf-8")
+            destination.write_text(read_log(run_id, self.history_scope), encoding="utf-8")
             if os.name != "nt":
                 destination.chmod(0o600)
         except OSError as exc:

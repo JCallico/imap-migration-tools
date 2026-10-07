@@ -34,7 +34,12 @@ deleted from the interfaces. Project names must be valid file names on every pla
 unique regardless of letter case; `default` and `local` are reserved.
 
 Switching projects saves any pending edit to the current project first and then reloads the complete form from the
-selected file, so no value from the previous project is carried over. The last selected project reopens on the next
+selected file, so no value from the previous project is carried over. Run history is isolated the same way: History and
+Output show only the active project's runs, and a run is always recorded under the project that started it. Each project
+keeps its history in its own directory under `projects/` in the per-user data directory's `history` folder. Renaming a
+project carries its history with it, and deleting a project permanently deletes its history too, so a later project with
+the same name starts empty. A rename is refused, and the project left unchanged, when leftover history already exists for
+the new name. History recorded before projects existed is adopted by the `default` project the first time it is opened. The last selected project reopens on the next
 launch. Launch options select a project explicitly:
 
 ```bash
@@ -55,6 +60,9 @@ IMAP_TOOLS_ENV_FILE=~/.imap-migration-tools/"Acme Corp.env" imap-count
 ```
 
 A missing file named by `IMAP_TOOLS_ENV_FILE` stops the command instead of running with no configuration.
+
+Operation history is stored per project and is not part of the `.env` file, so copying or moving a `.env` file does not
+copy its history.
 
 ### Moving an existing `.env` into projects
 

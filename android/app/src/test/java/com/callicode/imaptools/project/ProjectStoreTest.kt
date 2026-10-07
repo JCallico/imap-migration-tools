@@ -180,4 +180,12 @@ class ProjectStoreTest {
             migrating.migratedProjects,
         )
     }
+
+    @Test
+    fun historyKeysAreStableDistinctAndIndependentOfLetterCase() {
+        assertEquals("default", ProjectProfile.DEFAULT.historyKey)
+        assertEquals("project-acme", ProjectProfile("Acme").historyKey)
+        assertEquals(ProjectProfile("ACME").historyKey, ProjectProfile("acme").historyKey)
+        assertEquals(3, setOf(ProjectProfile.DEFAULT, ProjectProfile("one"), ProjectProfile("two")).map { it.historyKey }.toSet().size)
+    }
 }

@@ -18,6 +18,7 @@ import com.callicode.imaptools.model.BackupEstimateState
 import com.callicode.imaptools.model.Operation
 import com.callicode.imaptools.model.OperationEvent
 import com.callicode.imaptools.model.OperationOptions
+import com.callicode.imaptools.model.OperationState
 import com.callicode.imaptools.model.ProjectProfile
 import com.callicode.imaptools.model.TargetType
 import com.callicode.imaptools.operation.HistoryEntry
@@ -79,6 +80,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // background work at launch for lower latency when the first operation starts.
         PythonRuntime.prewarm()
         backupWorkspaceStore.migrateLegacyLayout(projectStore.migratedProjects, initialProject.first)
+        HistoryStore.adoptLegacyHistory(application.filesDir, ProjectProfile.DEFAULT.historyKey)
         viewModelScope.launch(Dispatchers.IO) {
             for (pending in pendingSaves) {
                 runCatching {
@@ -120,6 +122,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         projectMemory[created.first.name] = created.second
         mutableProjects.value = projectStore.projects()
         mutableActiveProject.value = created.first
+        resetOutputForProjectChange()
         mutableConfiguration.value = created.second
         return null
     }
@@ -131,6 +134,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val configuration = projectMemory[project.name] ?: projectStore.load(project)
         projectMemory[project.name] = configuration
         mutableActiveProject.value = project
+        resetOutputForProjectChange()
         mutableConfiguration.value = configuration
     }
 
@@ -149,6 +153,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             runCatching { projectStore.revertRename(renamed, original) }
             return error.message ?: "Unable to move the project's backup workspaces"
         }
+        runCatching { HistoryStore.moveScope(getApplication<Application>().filesDir, original.historyKey, renamed.historyKey) }
+            .onFailure { error ->
+                runCatching { backupWorkspaceStore.renameProject(renamed, original) }
+                runCatching { projectStore.revertRename(renamed, original) }
+                return error.message ?: "Unable to move the project's history"
+            }
         projectMemory.remove(original.name)
         projectMemory[renamed.name] = configuration
         mutableProjects.value = projectStore.projects()
@@ -168,6 +178,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }.exceptionOrNull()
         if (storageError != null) return storageError.message ?: "Unable to update the project's backup workspaces"
+        val historyError = runCatching {
+            HistoryStore.deleteScope(getApplication<Application>().filesDir, deleting.historyKey)
+        }.exceptionOrNull()
+        if (historyError != null) return historyError.message ?: "Unable to delete the project's history"
         projectGeneration.incrementAndGet()
         projectStore.delete(deleting)
         projectMemory.remove(deleting.name)
@@ -178,9 +192,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         projectMemory[replacement.name] = configuration
         mutableProjects.value = remaining
         mutableActiveProject.value = replacement
+        resetOutputForProjectChange()
         mutableConfiguration.value = configuration
         mutableRetainedBackups.value = backupWorkspaceStore.retainedGroups()
         return null
+    }
+
+    /** The Output screen mirrors the last run process-wide, so it must not carry one project's run into another. */
+    private fun resetOutputForProjectChange() {
+        OperationBus.update { OperationState() }
     }
 
     fun activeProjectBackupNames(): List<String> =
@@ -200,6 +220,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             getApplication(),
             configuration.operation,
             RequestEncoder.encode(configuration, activeWorkspaceRoot()),
+            mutableActiveProject.value.historyKey,
             estimateInProgress,
             allowMeteredNetwork,
             estimatedBytes,
@@ -324,9 +345,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun cancel() = OperationDispatcher.cancel(getApplication())
 
-    fun history(): List<HistoryEntry> = HistoryStore(getApplication()).entries()
+    fun history(): List<HistoryEntry> = HistoryStore(getApplication(), mutableActiveProject.value.historyKey).entries()
 
-    fun deleteHistoryEntry(id: String): Boolean = HistoryStore(getApplication()).delete(id)
+    fun deleteHistoryEntry(id: String): Boolean =
+        HistoryStore(getApplication(), mutableActiveProject.value.historyKey).delete(id)
 
     fun exportWorkspace(name: String, destination: Uri) = archive("Backup exported") {
         export(RequestEncoder.safeBackupName(name), destination)

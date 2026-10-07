@@ -839,7 +839,7 @@ def test_all_operations_through_native_widgets(workspace, mock_server_factory, m
     click(workspace.run_button)
     assert workspace.controller.active
     wait_for(workspace, lambda: not workspace.controller.active)
-    record = history.load_records()[0]
+    record = history.load_records(workspace.history_scope)[0]
     assert record.status == "completed"
     assert record.operation == operation
     assert "INBOX" in workspace.output.GetValue()
@@ -855,7 +855,7 @@ def test_all_operations_through_native_widgets(workspace, mock_server_factory, m
 def test_external_history_preserves_selection_and_deletion(workspace, monkeypatch):
     first = history.new_record("count")
     first.status = "completed"
-    with_writer = history.HistoryWriter(first, history.Redactor([]))
+    with_writer = history.HistoryWriter(first, history.Redactor([]), workspace.history_scope)
     with_writer.write("first output")
     with_writer.close()
     workspace.refresh_history()
@@ -870,7 +870,7 @@ def test_external_history_preserves_selection_and_deletion(workspace, monkeypatc
     workspace.apply_theme("dark")
     assert workspace.history_table.GetItemBackgroundColour(0) == workspace.colours["surface"]
     second = history.new_record("backup")
-    writer = history.HistoryWriter(second, history.Redactor([]))
+    writer = history.HistoryWriter(second, history.Redactor([]), workspace.history_scope)
     writer.write("unfinished")
     workspace.refresh_history()
     assert len(workspace.records) == 1
@@ -904,7 +904,7 @@ def test_native_layout_and_focus_actions(workspace, native_app):
 def test_export_writes_complete_log_even_when_filtered(workspace, monkeypatch, tmp_path):
     record = history.new_record("count")
     record.status = "completed"
-    writer = history.HistoryWriter(record, history.Redactor(["test-secret"]))
+    writer = history.HistoryWriter(record, history.Redactor(["test-secret"]), workspace.history_scope)
     writer.write("INBOX test-secret")
     writer.write("Archive")
     writer.close()
@@ -1123,7 +1123,7 @@ def test_prepare_poll_and_history_error_paths(workspace, monkeypatch):
     workspace.poll()
     assert "history disk" in workspace.GetStatusBar().GetStatusText()
 
-    monkeypatch.setattr(history, "load_records", lambda: (_ for _ in ()).throw(OSError("unreadable")))
+    monkeypatch.setattr(history, "load_records", lambda scope: (_ for _ in ()).throw(OSError("unreadable")))
     workspace.records = []
     workspace.refresh_history()
     assert "unreadable" in workspace.GetStatusBar().GetStatusText()
@@ -1295,12 +1295,18 @@ def test_switching_projects_reloads_the_complete_form_without_merging(project_wo
     assert store.remembered() == "acme"
 
     started = []
-    monkeypatch.setattr(frame.controller, "start", lambda operation, values, request: started.append(request))
+    scopes = []
+    monkeypatch.setattr(
+        frame.controller,
+        "start",
+        lambda operation, values, request, scope: (started.append(request), scopes.append(scope)),
+    )
     monkeypatch.setattr(frame, "confirm", lambda *args: True)
     frame.controls["SRC_IMAP_USERNAME"].ChangeValue("user")
     frame.controls["SRC_IMAP_PASSWORD"].ChangeValue("acme-secret")
     frame.prepare_run()
     assert started[0].environment["IMAP_TOOLS_ENV_FILE"] == str(acme.path.resolve())
+    assert scopes == [acme.history_key]
     assert "default-secret" not in acme.path.read_text(encoding="utf-8")
 
 
@@ -1474,3 +1480,99 @@ def test_confirmation_dialog_fits_long_messages_after_theming(workspace):
         assert dialog.GetSize().width >= 480
     finally:
         dialog.Destroy()
+
+
+def test_long_project_names_and_paths_do_not_widen_the_configuration_form(project_workspace):
+    frame, store, _acme = project_workspace
+    long_name = ("Long project name " * 4)[:60].strip()
+    frame.switch_project(store.create(long_name))
+    frame.Layout()
+    for _ in range(10):
+        wx.Yield()
+
+    panel = frame.config_panel
+    assert panel.GetVirtualSize().width <= panel.GetClientSize().width
+    assert frame.project_choice.GetSize().width <= panel.GetClientSize().width
+    assert frame.controls["SRC_IMAP_HOST"].GetSize().width <= panel.GetClientSize().width
+    location = frame.project_location
+    assert location.GetToolTipText().endswith(f"{long_name}.env")
+    assert location.GetTextExtent(location.GetLabel()).width <= location.GetSize().width
+    assert "..." in location.GetLabel() and location.GetLabel().endswith(".env")
+    assert location.GetLabel().startswith("/")
+    assert frame.project_choice.GetStringSelection() == long_name
+
+
+def record_run(project, operation="count", log="finished"):
+    record = history.new_record(operation)
+    record.status = "completed"
+    record.exit_code = 0
+    writer = history.HistoryWriter(record, history.Redactor([]), project.history_key)
+    writer.write(log)
+    writer.close()
+    return record
+
+
+def test_each_project_shows_only_its_own_history_and_output(project_workspace):
+    frame, store, acme = project_workspace
+    default_run = record_run(store.default_project(), "backup", "default project log")
+    acme_run = record_run(acme, "count", "acme project log")
+
+    frame.refresh_history()
+    assert [record.run_id for record in frame.records] == [default_run.run_id]
+    assert "default project log" in frame.output.GetValue()
+
+    frame.switch_project(acme)
+    assert [record.run_id for record in frame.records] == [acme_run.run_id]
+    assert frame.history_table.GetItemCount() == 1
+    assert "acme project log" in frame.output.GetValue()
+    assert "default project log" not in frame.output.GetValue()
+
+    empty = store.create("empty")
+    frame.switch_project(empty)
+    assert frame.records == []
+    assert frame.history_table.GetItemCount() == 0
+    assert frame.output.GetValue() == ""
+    assert frame.selected_run_id is None
+    assert frame.progress.GetLabel() == "Idle"
+
+    frame.switch_project(store.default_project())
+    assert [record.run_id for record in frame.records] == [default_run.run_id]
+
+
+def test_history_actions_never_reach_another_projects_runs(project_workspace, monkeypatch, tmp_path):
+    frame, store, acme = project_workspace
+    default_run = record_run(store.default_project())
+    frame.switch_project(acme)
+    acme_run = record_run(acme)
+    frame.refresh_history()
+    monkeypatch.setattr(frame, "confirm", lambda *args: True)
+
+    frame.selected_run_id = default_run.run_id
+    frame.delete_history()
+    assert history.load_records(store.default_project().history_key)[0].run_id == default_run.run_id
+    assert history.read_log(default_run.run_id, acme.history_key) == ""
+
+    frame.selected_run_id = acme_run.run_id
+    frame.delete_history()
+    assert history.load_records(acme.history_key) == []
+    assert history.load_records(store.default_project().history_key)[0].run_id == default_run.run_id
+
+
+def test_renaming_a_project_keeps_its_history_and_deleting_it_removes_it(project_workspace, monkeypatch):
+    frame, store, acme = project_workspace
+    frame.switch_project(acme)
+    run = record_run(acme)
+    frame.refresh_history()
+
+    renamed = frame.project_name_entered("rename", "Acme Holdings")
+    assert [record.run_id for record in frame.records] == [run.run_id]
+    assert [record.run_id for record in history.load_records(renamed.history_key)] == [run.run_id]
+    assert history.load_records(acme.history_key) == []
+
+    prompts = []
+    monkeypatch.setattr(frame, "confirm", lambda message, require_delete=False: prompts.append(message) or True)
+    frame.request_project_deletion()
+    assert "run history" in prompts[0]
+    assert history.load_records(renamed.history_key) == []
+    assert store.create("Acme Holdings") and history.load_records(store.find("Acme Holdings").history_key) == []
+    assert frame.records == []

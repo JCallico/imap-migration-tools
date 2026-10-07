@@ -322,9 +322,16 @@ The default project cannot be renamed or deleted. When backups exist, the deleti
 and offers **Delete project only**, which preserves them under **Manage retained backups**, and **Delete project +
 backups**, which permanently removes all of the project’s private workspaces. Retained workspaces move to
 `files/backups/retained/<group>/`, so a later project with the same name starts with its own empty folder. A project
-without backups receives a single **Delete project** action. Every choice removes the project `.env` but leaves
-operation history, exported archives, provider authorization, mail, and provider accounts unchanged. Retained
+without backups receives a single **Delete project** action. Every choice removes the project `.env` and the project's
+own run history, but leaves exported archives, provider authorization, mail, and provider accounts unchanged. Retained
 workspaces can be exported or permanently deleted individually from the project screen.
+
+Run history is isolated per project. The History screen and the Output screen show only the active project's runs, and a
+run is recorded under the project that started it, even though it executes in a background service. Each project keeps
+its history in `files/history/<key>.json`, where the key is `default` or `project-<name in lowercase>`. **RENAME** moves
+the history with the project (and is undone with the rest of the rename if the move fails), and deleting a project deletes
+its history. Switching projects clears the Output screen, so one project's last run is never displayed in another. The
+single app-wide history written by earlier versions is adopted by the default project the first time this version starts.
 
 The first launch of this version converts the earlier `files/projects/<id>/.env` layout. The project named **Default**
 becomes `.env`; every other project becomes `<name>.env`, replacing characters that are not valid in file names with
@@ -351,12 +358,12 @@ uninstalling the application.
 | Action | What the app does | What remains and must be removed elsewhere |
 | --- | --- | --- |
 | **Disconnect** | Removes the account association from that project endpoint. If the same provider account has no other project or endpoint references, the app asks Google to revoke authorization or asks MSAL to remove the Microsoft account from this app’s cache. The disconnect completes only if that SDK operation succeeds. | It does not delete mail or the provider account, sign the account out of Android or other apps, or undo completed operations. Remove any remaining authorization in the provider’s connected-app/security settings and delete mail at the provider. |
-| **Delete project only** | Deletes that project’s private `.env` configuration and account references, while placing its private workspaces under **Manage retained backups**. Each retained workspace can be exported or permanently deleted later. | Operation history, exported ZIPs, provider authorization, accounts, and mail remain. |
-| **Delete project + backups** | Deletes the project configuration and permanently deletes all private backup workspaces owned by that project. | Operation history, exported ZIPs, provider authorization, accounts, and mail remain. Delete those separately where they are stored. |
+| **Delete project only** | Deletes that project’s private `.env` configuration, account references, and run history, while placing its private workspaces under **Manage retained backups**. Each retained workspace can be exported or permanently deleted later. | Exported ZIPs, provider authorization, accounts, and mail remain. |
+| **Delete project + backups** | Deletes the project configuration and run history, and permanently deletes all private backup workspaces owned by that project. | Exported ZIPs, provider authorization, accounts, and mail remain. Delete those separately where they are stored. |
 | **Export ZIP** | Writes a separate copy of the selected private workspace to the document-provider location chosen by the user. The private workspace remains. | Delete the ZIP with Files or the selected storage/cloud application. Also empty its trash or remove synchronized/versioned copies when required. |
 | **Import ZIP** | Reads the selected ZIP into a new private workspace under the active project. The source ZIP is not changed. A failed import removes its temporary private extraction directory. | Delete the original ZIP separately. The imported private copy can be removed with its project using **Delete project + backups**, retained and managed after **Delete project only**, or removed by clearing storage/uninstalling. |
 | **Delete local backup orphans** | During Backup, removes individual local message files which are no longer on the source mailbox. This synchronizes a workspace; it does not delete the entire backup. | Other workspace content, exported copies, and provider mail remain. |
-| **Delete saved output** | Permanently removes one operation's timestamp, status, progress events, result, and error from private history. History otherwise retains the 100 newest completed runs. | It does not undo the operation, change mail, delete projects/backups/archives, or disconnect an account. |
+| **Delete saved output** | Permanently removes one operation's timestamp, status, progress events, result, and error from private history. The project's history otherwise retains its 100 newest completed runs. | It does not undo the operation, change mail, delete projects/backups/archives, or disconnect an account. |
 | **Clear storage / uninstall** | Permanently removes all app-private projects, history/output, app-held authentication state, imported copies, and backup workspaces. | Exported ZIPs, source ZIPs used for import, provider accounts, mail, completed mailbox changes, provider-side grants/sessions, and cloud/file-provider copies remain and must be removed in those systems. |
 
 Clearing storage and uninstalling are all-or-nothing cleanup operations in the current prototype. Before using either,
@@ -406,7 +413,7 @@ organization controls for any remaining grant or session.
 | --- | --- | --- |
 | Project configuration | Private `files/projects/<id>/.env`, owner-only; contains hosts, usernames/provider IDs, modes, names, and options but no password or access/refresh token | Delete project, Clear storage, or uninstall |
 | Provider authentication | Provider SDK-managed cache in app-private storage; access tokens are otherwise held only in process memory | Last-reference Disconnect removes/revokes as described above; Clear storage/uninstall removes this app's local cache; provider-side state may remain |
-| Operation history | Private, owner-only `files/operation-history.json`; capped at 100; redacted before persistence | Delete saved output, Clear storage, or uninstall |
+| Operation history | Private, owner-only `files/history/<project key>.json` per project; each capped at 100; redacted before persistence | Delete saved output, delete the project, Clear storage, or uninstall |
 | Active/retained/imported backups | Private `files/backups/<project-id>/`; may intentionally contain complete RFC 5322 messages and attachments | Delete project + backups, Delete backup for retained workspaces, Clear storage, or uninstall |
 | Migration progress cache | Private hashed path inside the owning project workspace; contains message identifiers used to resume | Deleted with its workspace/project backup data, Clear storage, or uninstall |
 | Exported ZIP | User-selected document-provider location outside app-private storage | Delete in Files/provider and empty provider trash/version history if required |

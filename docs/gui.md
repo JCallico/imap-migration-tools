@@ -53,7 +53,8 @@ Configuration is organized as projects shared with the terminal interface. The P
 Configuration, and the Project menu, switch among the `default` project (`~/.imap-migration-tools/.env`), named
 projects (`~/.imap-migration-tools/<name>.env`), and a `local` project found from the working directory and its
 parents. Because `default` and named projects live in your home directory, they are available however the application
-is launched. New…, Rename…, and Delete… manage named projects; deletion requires typing `DELETE`. See
+is launched. New…, Rename…, and Delete… manage named projects; deletion requires typing `DELETE` and also deletes the project's run
+history. History and Output show only the active project's runs. See
 [Projects](configuration.md#projects) for the storage layout, migration of existing `.env` files, and recovery.
 
 Choose a project, or open a specific file as the `local` project, at launch:
@@ -79,7 +80,7 @@ folder/cache options, Gmail flags/labels, full restore/migrate, and deletion opt
 Run opens a confirmation; destructive runs require typing `DELETE` after reviewing the affected accounts or path.
 Cancel requests cleanup. If the worker does not exit promptly, Force stop becomes available.
 
-History is shared with the TUI in the existing user data directory. Other instances' unfinished runs remain hidden.
+History is shared with the TUI for the same project in the existing user data directory. Other instances' unfinished runs remain hidden.
 Select a completed run to filter, export, or delete its log. Active runs cannot be deleted. Logs and history use the
 same secret redaction as the terminal interface.
 

@@ -149,7 +149,7 @@ def test_reset_layout_keeps_full_history_started_column_visible(tmp_path, monkey
     monkeypatch.setattr(
         app_module,
         "load_records",
-        lambda: [RunRecord("run-1", "migrate", "2026-08-23T12:34:56+00:00", status="completed")],
+        lambda scope: [RunRecord("run-1", "migrate", "2026-08-23T12:34:56+00:00", status="completed")],
     )
 
     async def run_test():
@@ -551,9 +551,10 @@ def test_operation_lifecycle_streams_output_and_finalizes_history(tmp_path, monk
     records = []
 
     class FakeWriter:
-        def __init__(self, record, redactor):
+        def __init__(self, record, redactor, scope):
             self.record = record
             self.redactor = redactor
+            self.scope = scope
             self.closed = False
             records.append(self)
 
@@ -600,7 +601,7 @@ def test_cancelled_operation_is_not_recorded_as_completed(tmp_path, monkeypatch)
     records = []
 
     class FakeWriter:
-        def __init__(self, record, _redactor):
+        def __init__(self, record, _redactor, _scope):
             self.record = record
             records.append(record)
 
@@ -1056,8 +1057,8 @@ def test_autosave_enables_selected_operation_without_restart(tmp_path):
 
 
 def test_history_uses_single_output_panel(tmp_path, monkeypatch):
-    monkeypatch.setattr(app_module, "load_records", lambda: [])
-    monkeypatch.setattr(app_module, "read_log", lambda run_id: f"history for {run_id}\nsecond line\n")
+    monkeypatch.setattr(app_module, "load_records", lambda scope: [])
+    monkeypatch.setattr(app_module, "read_log", lambda run_id, scope: f"history for {run_id}\nsecond line\n")
 
     async def run_test():
         app = ImapToolsApp(tmp_path / ".env")
@@ -1076,23 +1077,23 @@ def test_history_uses_single_output_panel(tmp_path, monkeypatch):
 def test_history_reloads_external_instance_changes_without_stealing_selection(tmp_path, monkeypatch):
     history_root = tmp_path / "history"
     history_root.mkdir()
-    monkeypatch.setattr(app_module, "history_dir", lambda: history_root)
     monkeypatch.setattr("tui.history.history_dir", lambda: history_root)
+    app = ImapToolsApp(tmp_path / ".env")
     existing = app_module.HistoryWriter(
         RunRecord("run-existing", "count", "2026-08-23T12:00:00+00:00", status="completed"),
         app_module.Redactor([]),
+        app.history_scope,
     )
     existing.close()
 
     async def run_test():
-        app = ImapToolsApp(tmp_path / ".env")
         async with app.run_test(size=(160, 40)) as pilot:
             app.refresh_history("run-existing")
             app.view_history("run-existing")
             await pilot.pause()
 
             external_record = RunRecord("run-external", "backup", "2026-08-23T13:00:00+00:00")
-            external = app_module.HistoryWriter(external_record, app_module.Redactor([]))
+            external = app_module.HistoryWriter(external_record, app_module.Redactor([]), app.history_scope)
             external.write("external instance output")
             await pilot.pause(1.1)
 
@@ -1118,7 +1119,7 @@ def test_history_reloads_external_instance_changes_without_stealing_selection(tm
             table.move_cursor(row=table.get_row_index("run-existing"))
             app.view_history("run-existing")
             assert app.selected_output_id == "run-existing"
-            app_module.delete_record("run-existing")
+            app_module.delete_record("run-existing", app.history_scope)
             await pilot.pause(1.1)
             assert app.selected_output_id == "run-external"
             assert app.selected_history_id() == "run-external"
@@ -1234,7 +1235,7 @@ def test_confirmation_dispatches_force_delete_and_quit(tmp_path, monkeypatch):
             app.pending_action = "delete-history"
             app.pending_payload = "run-1"
             app.confirmation_dismissed(True)
-            app_module.delete_record.assert_called_once_with("run-1")
+            app_module.delete_record.assert_called_once_with("run-1", app.history_scope)
             app.refresh_history.assert_called_once()
 
             app.pending_action = "quit"
@@ -1268,7 +1269,7 @@ def test_save_prepare_cancel_history_export_and_focus_error_paths(tmp_path, monk
     asyncio.run(run_test())
 
     async def run_more():
-        monkeypatch.setattr(app_module, "load_records", lambda: [])
+        monkeypatch.setattr(app_module, "load_records", lambda scope: [])
         app = ImapToolsApp(tmp_path / ".env", tmp_path / "layout.json")
         app.working_directory = tmp_path
         async with app.run_test(size=(160, 40)) as pilot:
@@ -1300,7 +1301,7 @@ def test_save_prepare_cancel_history_export_and_focus_error_paths(tmp_path, monk
             table.move_cursor(row=0)
             await pilot.pause()
             assert app.selected_history_id() == "run-1"
-            monkeypatch.setattr(app_module, "read_log", lambda _run_id: "saved log\n")
+            monkeypatch.setattr(app_module, "read_log", lambda _run_id, _scope: "saved log\n")
             app.export_history()
             assert (tmp_path / "imap-tools-run-1.log").read_text(encoding="utf-8") == "saved log\n"
 
@@ -1351,10 +1352,10 @@ def test_remaining_layout_reload_history_and_quit_branches(tmp_path, monkeypatch
             assert count_mode.value == "source"
 
             records = [RunRecord("run-1", "count", "2026-08-23T12:00:00", status="completed")]
-            monkeypatch.setattr(app_module, "load_records", lambda: records)
+            monkeypatch.setattr(app_module, "load_records", lambda scope: records)
             app.refresh_history("run-1")
             assert app.selected_history_id() == "run-1"
-            monkeypatch.setattr(app_module, "read_log", lambda _run_id: "first\nmatching line\n")
+            monkeypatch.setattr(app_module, "read_log", lambda _run_id, _scope: "first\nmatching line\n")
             app.query_one("#output-filter", Input).value = "matching"
             app.filter_output()
             await pilot.pause()
@@ -1720,5 +1721,96 @@ def test_project_name_dialog_supports_buttons_and_cancel(tmp_path):
             await pilot.pause()
             assert not isinstance(app.screen, ProjectNameModal)
             assert store.named_projects() == []
+
+    asyncio.run(run_test())
+
+
+def record_project_run(project, operation, log):
+    record = RunRecord(f"run-{project.name}-{operation}", operation, "2026-08-23T12:00:00+00:00", status="completed")
+    writer = app_module.HistoryWriter(record, app_module.Redactor([]), project.history_key)
+    writer.write(log)
+    writer.close()
+    return record
+
+
+def test_each_project_shows_only_its_own_history_and_output(tmp_path):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        default_run = record_project_run(store.default_project(), "backup", "default project log")
+        acme_run = record_project_run(acme, "count", "acme project log")
+        app = ImapToolsApp(projects=store)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            table = app.query_one("#history-table", DataTable)
+            log = app.query_one("#output-log", RichLog)
+            assert {str(key.value) for key in table.rows} == {default_run.run_id}
+            assert any("default project log" in line.text for line in log.lines)
+
+            assert app.switch_project(acme)
+            await pilot.pause()
+            assert {str(key.value) for key in table.rows} == {acme_run.run_id}
+            texts = [line.text for line in log.lines]
+            assert any("acme project log" in text for text in texts)
+            assert not any("default project log" in text for text in texts)
+
+            empty = store.create("empty")
+            assert app.switch_project(empty)
+            await pilot.pause()
+            assert table.row_count == 0
+            assert not log.lines
+            assert app.selected_output_id is None
+
+            app.delete_project(empty)
+            await pilot.pause()
+            assert app.project.name == "default"
+            assert {str(key.value) for key in table.rows} == {default_run.run_id}
+
+    asyncio.run(run_test())
+
+
+def test_runs_are_recorded_under_the_active_project_and_travel_with_a_rename(tmp_path, monkeypatch):
+    async def run_test():
+        store = ProjectStore(tmp_path / "projects")
+        acme = store.create("acme")
+        app = ImapToolsApp(projects=store, project_name="acme")
+        scopes = []
+        original = app_module.RunSession
+
+        def session(operation, values, scope, writer_factory=None):
+            scopes.append(scope)
+            return original(operation, values, scope, writer_factory)
+
+        monkeypatch.setattr(app_module, "RunSession", session)
+        async with app.run_test(size=(160, 40)) as pilot:
+            await pilot.pause()
+            run = record_project_run(acme, "count", "acme run")
+            app.refresh_history(run.run_id)
+            assert app.history_scope == acme.history_key
+
+            app.project_name_entered("rename", "Acme Holdings")
+            await pilot.pause()
+            renamed = app.project
+            assert renamed.name == "Acme Holdings"
+            assert app.history_scope == renamed.history_key
+            assert app.history_scope != acme.history_key
+            assert [record.run_id for record in app_module.load_records(renamed.history_key)] == [run.run_id]
+            assert app_module.load_records(acme.history_key) == []
+            assert app.selected_output_id == run.run_id
+
+            options = RunOptions()
+            app.selected_operation = "count"
+            monkeypatch.setattr(app, "values", lambda: {})
+            monkeypatch.setattr(app.runner, "run", AsyncMock(return_value=0))
+            await app.start_operation(options).wait()
+            assert scopes == [renamed.history_key]
+
+            app.request_project_deletion()
+            await pilot.pause()
+            assert "run history" in app.screen.message
+            app.screen.query_one("#confirm-input", Input).value = "DELETE"
+            app.screen.query_one("#yes-action", Button).press()
+            await pilot.pause()
+            assert app_module.load_records(renamed.history_key) == []
 
     asyncio.run(run_test())

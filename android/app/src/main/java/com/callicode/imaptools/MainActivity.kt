@@ -55,6 +55,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -189,6 +190,8 @@ private fun ImapToolsApp(
     var backupPreflight by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var selectedHistory by remember { mutableStateOf<HistoryEntry?>(null) }
+    // A saved run belongs to one project, so it must never stay displayed after the project changes.
+    LaunchedEffect(activeProject.historyKey) { selectedHistory = null }
     var showNewProject by remember { mutableStateOf(false) }
     var newProjectName by remember { mutableStateOf("") }
     var showRenameProject by remember { mutableStateOf(false) }
@@ -606,13 +609,14 @@ internal fun ProjectDeletionDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 if (backupNames.isEmpty()) {
-                    Text("This permanently deletes the project configuration.")
+                    Text("This permanently deletes the project configuration and its run history.")
                 } else {
                     Text("Private backup workspaces (${backupNames.size}):")
                     backupNames.forEach { name ->
                         Text("> $name", fontFamily = FontFamily.Monospace)
                     }
                     Text("Choose whether to keep these backups on the device or delete them with the project.")
+                    Text("The project's run history is deleted either way.")
                 }
             }
         },

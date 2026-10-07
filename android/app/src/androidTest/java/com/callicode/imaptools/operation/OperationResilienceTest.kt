@@ -61,7 +61,7 @@ class OperationResilienceTest {
     fun backupDoesNotStartWhenReservedStorageWouldBeConsumed() {
         val runner = OperationRunner(
             context = context,
-            pending = PendingOperation(Operation.BACKUP, "{}", false, false, null),
+            pending = PendingOperation(Operation.BACKUP, "{}", "instrumentation-test", false, false, null),
             onEvent = {},
             availableBytes = { 0L },
         )
@@ -83,6 +83,7 @@ class OperationResilienceTest {
                     context = context,
                     operation = Operation.COUNT,
                     request = localCount(backup).request,
+                    historyScope = "instrumentation-test",
                 ),
             )
             val deadline = SystemClock.elapsedRealtime() + 60_000L
@@ -95,6 +96,7 @@ class OperationResilienceTest {
             assertEquals(500, JSONObject(completed.result.orEmpty()).getInt("total"))
         } finally {
             OperationDispatcher.cancel(context)
+            HistoryStore.deleteScope(context.filesDir, "instrumentation-test")
             backup.deleteRecursively()
         }
     }
@@ -105,6 +107,7 @@ class OperationResilienceTest {
             .put("operation", "count")
             .put("target", JSONObject().put("kind", "local").put("path", path.absolutePath))
             .toString(),
+        historyScope = "instrumentation-test",
         estimateInProgress = false,
         allowMeteredNetwork = false,
         estimatedBytes = null,

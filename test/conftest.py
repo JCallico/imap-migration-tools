@@ -27,6 +27,12 @@ def isolate_test_dotenv(tmp_path_factory, monkeypatch):
     monkeypatch.chdir(isolated_cwd)
     monkeypatch.setenv("IMAP_TOOLS_PROJECTS_DIR", str(tmp_path_factory.mktemp("isolated-projects")))
     monkeypatch.delenv("IMAP_TOOLS_ENV_FILE", raising=False)
+    try:
+        from ui import history
+    except ModuleNotFoundError:  # optional desktop dependencies are not installed
+        return
+    history_root = tmp_path_factory.mktemp("isolated-history")
+    monkeypatch.setattr(history, "history_dir", lambda: history_root)
 
 
 def get_free_port():

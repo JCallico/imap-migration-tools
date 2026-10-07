@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 import ui.projects as projects_module
+from ui import history
 from ui.projects import (
+    Project,
     ProjectStore,
     _move_without_replacing,
     _resolve,
@@ -272,3 +274,59 @@ def test_remembered_project_ignores_a_windows_byte_order_mark(tmp_path):
 
     assert store.remembered() == "Acme Corp"
     assert store.initial().name == "Acme Corp"
+
+
+def test_history_keys_are_stable_distinct_and_independent_of_letter_case(tmp_path):
+    first = tmp_path / "one" / ".env"
+    second = tmp_path / "two" / ".env"
+    for path in (first, second):
+        path.parent.mkdir()
+        path.touch()
+    store = ProjectStore(tmp_path / "projects")
+    acme = store.create("Acme")
+
+    keys = {
+        store.default_project().history_key,
+        acme.history_key,
+        Project("local", first, "local").history_key,
+        Project("local", second, "local").history_key,
+    }
+
+    assert len(keys) == 4
+    assert store.default_project().history_key == "default"
+    assert acme.history_key == Project("ACME", acme.path, "named").history_key
+    assert Project("local", first, "local").history_key == Project("local", first, "local").history_key
+
+
+def test_rename_moves_history_and_a_failed_move_leaves_the_project_unchanged(tmp_path, monkeypatch):
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create("acme")
+    writer = history.HistoryWriter(history.new_record("count"), history.Redactor([]), project.history_key)
+    writer.close()
+
+    renamed = store.rename(project, "Acme Corp")
+    assert len(history.load_records(renamed.history_key)) == 1
+    assert history.load_records(project.history_key) == []
+
+    store.create("Taken")
+    history.HistoryWriter(history.new_record("count"), history.Redactor([]), store.find("Taken").history_key).close()
+    store.find("Taken").path.unlink()
+    with pytest.raises(ValueError, match="Unable to move the project's history"):
+        store.rename(renamed, "Taken")
+    assert renamed.path.is_file()
+    assert not (tmp_path / "projects" / "Taken.env").exists()
+    assert len(history.load_records(renamed.history_key)) == 1
+
+
+def test_delete_removes_the_projects_history_so_a_same_named_project_starts_empty(tmp_path):
+    store = ProjectStore(tmp_path / "projects")
+    project = store.create("acme")
+    other = store.create("other")
+    for item in (project, other):
+        history.HistoryWriter(history.new_record("count"), history.Redactor([]), item.history_key).close()
+
+    store.delete(project)
+
+    assert history.load_records(project.history_key) == []
+    assert len(history.load_records(other.history_key)) == 1
+    assert history.load_records(store.create("acme").history_key) == []

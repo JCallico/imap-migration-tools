@@ -58,13 +58,14 @@ def test_external_file_validation(tmp_path):
 
 def test_session_redacts_and_persists_cancelled_status(tmp_path, monkeypatch):
     monkeypatch.setattr(history, "history_dir", lambda: tmp_path)
-    session = RunSession("backup", {"SRC_IMAP_PASSWORD": "private-password"})
+    session = RunSession("backup", {"SRC_IMAP_PASSWORD": "private-password"}, "project-acme")
     assert session.receive("SAVED private-password") == "SAVED [REDACTED]"
     record = session.finish(0, cancelled=True)
     assert record.status == "cancelled"
     assert record.copied == 1
-    assert history.load_records()[0] == record
-    assert "private-password" not in history.read_log(record.run_id)
+    assert history.load_records("project-acme")[0] == record
+    assert history.load_records("project-other") == []
+    assert "private-password" not in history.read_log(record.run_id, "project-acme")
 
 
 def test_real_desktop_worker_runs_count(tmp_path):
@@ -179,7 +180,7 @@ def test_session_reports_history_write_and_close_failures():
         def close(self):
             raise OSError("close failed")
 
-    session = RunSession("count", {}, writer_factory=BrokenWriter)
+    session = RunSession("count", {}, "project-acme", writer_factory=BrokenWriter)
     assert session.receive("TOTAL 1") == "TOTAL 1"
     assert "write failed" in session.warning
     session.finish(1)
@@ -190,6 +191,6 @@ def test_session_reports_history_initialization_failure():
     def broken_writer(*args):
         raise OSError("history unavailable")
 
-    session = RunSession("count", {}, writer_factory=broken_writer)
+    session = RunSession("count", {}, "project-acme", writer_factory=broken_writer)
     assert "history unavailable" in session.warning
     assert session.finish(0).status == "completed"

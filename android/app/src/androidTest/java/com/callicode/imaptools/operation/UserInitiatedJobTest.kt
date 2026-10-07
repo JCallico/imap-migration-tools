@@ -22,7 +22,7 @@ class UserInitiatedJobTest {
     fun backupJobRequiresInternetAndUnmeteredNetworkAndIncludesEstimate() {
         val job = buildUserInitiatedJobInfo(
             context,
-            PendingOperation(Operation.BACKUP, "{}", false, false, 1234L),
+            PendingOperation(Operation.BACKUP, "{}", "instrumentation-test", false, false, 1234L),
         )
 
         assertTrue(job.isUserInitiated)
@@ -37,7 +37,7 @@ class UserInitiatedJobTest {
     fun approvedMeteredJobDoesNotRequireUnmeteredNetwork() {
         val job = buildUserInitiatedJobInfo(
             context,
-            PendingOperation(Operation.MIGRATE, "{}", false, true, null),
+            PendingOperation(Operation.MIGRATE, "{}", "instrumentation-test", false, true, null),
         )
 
         assertTrue(job.isUserInitiated)
