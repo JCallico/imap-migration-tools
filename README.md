@@ -165,7 +165,7 @@ The interface provides a guided autosaving `.env` form, operation readiness guid
 local run history.
 
 <p align="left">
-  <img src="https://raw.githubusercontent.com/JCallico/imap-migration-tools/main/docs/images/tui-overview.jpg" width="800" alt="IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels">
+  <img src="docs/images/tui-overview.jpg" width="800" alt="IMAP Migration Tools TUI showing Configuration, Tools, Operation, History, and Output panels">
 </p>
 
 Review the generated command in the Output panel and verify backups and counts before enabling destructive options.
