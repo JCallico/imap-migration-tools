@@ -1339,7 +1339,6 @@ def test_project_menu_shortcut_focuses_the_selector(project_workspace, monkeypat
     monkeypatch.setattr(frame.config_panel, "ScrollChildIntoView", lambda control: revealed.append(control))
 
     event = wx.CommandEvent(wx.EVT_MENU.typeId, frame.choose_project_item.GetId())
-    event.SetEventObject(frame.choose_project_item)
     assert frame.GetEventHandler().ProcessEvent(event)
 
     assert focused == [True]

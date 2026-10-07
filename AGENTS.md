@@ -108,6 +108,11 @@ Never stage, commit, or push changes automatically. Only perform each operation 
 specific operation. A request to edit, fix, test, or otherwise prepare changes does not authorize staging, committing, or
 pushing them.
 
+Do not add AI-tool or model attribution to commits, pull-request descriptions, release notes, or other project
+artifacts. In particular, never add `Generated with` notices or `Co-Authored-By` trailers naming Claude, Codex, ChatGPT,
+another AI system, or an AI vendor. Commit authors and coauthors must be the actual human contributors designated by
+the user or repository maintainers.
+
 Run focused tests while iterating. After the final edit and before every commit or push, always run the full test suite
 and the complete lint, format, and whitespace sequence:
 
