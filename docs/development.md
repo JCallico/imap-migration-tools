@@ -195,6 +195,21 @@ cooperative and preserve structured progress events. The Python bridge is covere
 encoding and UI behavior belong under `android/app/src/test` and `android/app/src/androidTest` respectively. See the
 [Android guide](android.md) for build instructions and scoped-storage constraints.
 
+## PyPI README
+
+`README.md` uses repository-relative links (`docs/gui.md`, `docs/images/shot.png`) so GitHub shows the files of the branch
+being viewed. PyPI renders the README outside the repository, where those links break, so the publish workflow runs
+`tools/pypi_readme.py` on its throwaway checkout just before building. It rewrites each relative link to an absolute URL
+pinned to the release tag (images to `raw.githubusercontent.com`, other files to `github.com/.../blob/<tag>/...`),
+skipping code blocks and code spans, and fails if a relative link points at a missing file or leaves the repository. The
+rewrite is never committed. The `PyPI README` CI job repeats the rewrite against the pull request commit, builds the
+package, and runs `twine check --strict`, so a broken README link or description fails the pull request before a release.
+Keep using relative links in `README.md`; do not hard-code `main` URLs.
+
+```bash
+python tools/pypi_readme.py --repo JCallico/imap-migration-tools --ref v1.2.3 --output /tmp/pypi-readme.md
+```
+
 ## Pull request green loop
 
 The repository includes the [PR Green Loop](../.codex/skills/pr-green-loop/SKILL.md) Codex skill. Invoke it by name when

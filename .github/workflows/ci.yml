@@ -134,6 +134,31 @@ jobs:
         run: mypy src/ --ignore-missing-imports --no-error-summary || true
         # Using || true as this codebase may not have type hints yet
 
+  pypi-readme:
+    name: PyPI README
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Make README links absolute, as the release workflow does
+        run: python tools/pypi_readme.py --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_SHA"
+
+      - name: Build and check the package description
+        run: |
+          python -m build
+          python -m twine check --strict dist/*
+
   build:
     name: Build Check
     runs-on: ubuntu-latest

@@ -23,11 +23,17 @@ jobs:
         sed -i "s/^version = .*/version = \"$VERSION\"/" pyproject.toml
         grep "^version =" pyproject.toml
         
-    - name: Install pypa/build
+    - name: Make README links absolute for PyPI
+      # PyPI renders the README outside the repository, so pin its relative links to this release tag.
+      run: python3 tools/pypi_readme.py --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+
+    - name: Install pypa/build and twine
       run: >-
-        python3 -m pip install build --user
+        python3 -m pip install build twine --user
     - name: Build a binary wheel and a source tarball
       run: python3 -m build
+    - name: Check the package description renders on PyPI
+      run: python3 -m twine check --strict dist/*
     - name: Store the distribution packages
       uses: actions/upload-artifact@v4
       with:
