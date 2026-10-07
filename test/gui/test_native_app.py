@@ -1497,8 +1497,10 @@ def test_long_project_names_and_paths_do_not_widen_the_configuration_form(projec
     location = frame.project_location
     assert location.GetToolTipText().endswith(f"{long_name}.env")
     assert location.GetTextExtent(location.GetLabel()).width <= location.GetSize().width
-    assert "..." in location.GetLabel() and location.GetLabel().endswith(".env")
-    assert location.GetLabel().startswith("/")
+    head, separator, tail = location.GetLabel().partition("...")
+    assert separator and head and tail.endswith(".env")
+    assert frame.project_location_text.startswith(head)
+    assert frame.project_location_text.endswith(tail)
     assert frame.project_choice.GetStringSelection() == long_name
 
 
