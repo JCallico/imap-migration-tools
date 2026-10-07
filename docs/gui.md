@@ -53,8 +53,9 @@ Configuration is organized as projects shared with the terminal interface. The P
 Configuration, and the Project menu, switch among the `default` project (`~/.imap-migration-tools/.env`), named
 projects (`~/.imap-migration-tools/<name>.env`), and a `local` project found from the working directory and its
 parents. Because `default` and named projects live in your home directory, they are available however the application
-is launched. New…, Rename…, and Delete… manage named projects; deletion requires typing `DELETE` and also deletes the project's run
-history. History and Output show only the active project's runs. See
+is launched. Press `Alt+P` to focus the selector, then use the arrow keys to choose a project. New…, Rename…, and
+Delete… manage named projects; deletion requires typing `DELETE` and also deletes the project's run history. History
+and Output show only the active project's runs. See
 [Projects](configuration.md#projects) for the storage layout, migration of existing `.env` files, and recovery.
 
 Choose a project, or open a specific file as the `local` project, at launch:

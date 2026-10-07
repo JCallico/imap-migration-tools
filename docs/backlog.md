@@ -3,16 +3,14 @@
 This backlog records planned cross-interface work which is intentionally outside the current Android implementation.
 It is not a release commitment or an indication that an item is already supported.
 
-## Project support follow-ups
+## Project support follow-up
 
-Projects are implemented for the Textual TUI, the native desktop GUI on Linux and Windows, and Android: a project is one
-`.env` file, `default` is `~/.imap-migration-tools/.env`, named projects are `<name>.env` in the same directory, and a
-discovered `.env` is the `local` project. The remaining work is:
-
-- Verify and, where needed, adapt the desktop GUI project workflow on macOS, including the native menu bar placement of
-  the Project menu and keyboard access to the selector.
-- Add `--project NAME` to the five command-line tools. They already honor `IMAP_TOOLS_ENV_FILE`, which the TUI and GUI
-  use to pin each run to the active project file, and direct `.env` discovery must remain unchanged.
+Projects are implemented for the Textual TUI, the native desktop GUI on Linux, macOS, and Windows, and Android: a
+project is one `.env` file, `default` is `~/.imap-migration-tools/.env`, named projects are `<name>.env` in the same
+directory, and a discovered `.env` is the `local` project. The desktop GUI exposes Project in the native macOS menu
+bar and `Alt+P` focuses its selector. The remaining work is to add `--project NAME` to the five command-line tools.
+They already honor `IMAP_TOOLS_ENV_FILE`, which the TUI and GUI use to pin each run to the active project file, and
+direct `.env` discovery must remain unchanged.
 
 ## Project deletion and retained-backup management for the terminal and desktop applications
 

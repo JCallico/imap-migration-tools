@@ -673,6 +673,26 @@ def test_header_omits_configuration_filename_and_view_uses_submenus(workspace):
     ]
 
 
+@pytest.mark.skipif(wx.Platform != "__WXMAC__", reason="Cocoa-only native menu integration")
+def test_macos_project_menu_uses_the_native_menu_bar(workspace):
+    assert workspace.app_menu_bar is None
+    menu_bar = workspace.GetMenuBar()
+    assert [menu_bar.GetMenuLabel(index).replace("&", "") for index in range(menu_bar.GetMenuCount())] == [
+        "File",
+        "Project",
+        "Operations",
+        "View",
+        "Help",
+    ]
+    project_menu = menu_bar.GetMenu(menu_bar.FindMenu("Project"))
+    assert [item.GetItemLabelText() for item in project_menu.GetMenuItems() if not item.IsSeparator()] == [
+        "Choose project",
+        "New project…",
+        "Rename project…",
+        "Delete project…",
+    ]
+
+
 def test_help_menu_uses_structured_information_dialogs(workspace):
     menu_bar = workspace.app_menu_bar or workspace.GetMenuBar()
     help_menu = menu_bar.GetMenu(menu_bar.FindMenu("Help"))
@@ -689,6 +709,7 @@ def test_help_menu_uses_structured_information_dialogs(workspace):
             "Review history",
             "Adjust the workspace",
         ]
+        assert ("Alt+P", "Focus the project selector") in dialogs[1].shortcut_rows
         assert ("Ctrl/Cmd+=", "Zoom in") in dialogs[1].shortcut_rows
         assert "Version" in dialogs[2].section_titles
         assert "License" in dialogs[2].section_titles
@@ -1308,6 +1329,21 @@ def test_switching_projects_reloads_the_complete_form_without_merging(project_wo
     assert started[0].environment["IMAP_TOOLS_ENV_FILE"] == str(acme.path.resolve())
     assert scopes == [acme.history_key]
     assert "default-secret" not in acme.path.read_text(encoding="utf-8")
+
+
+def test_project_menu_shortcut_focuses_the_selector(project_workspace, monkeypatch):
+    frame, _store, _acme = project_workspace
+    focused = []
+    revealed = []
+    monkeypatch.setattr(frame.project_choice, "SetFocus", lambda: focused.append(True))
+    monkeypatch.setattr(frame.config_panel, "ScrollChildIntoView", lambda control: revealed.append(control))
+
+    event = wx.CommandEvent(wx.EVT_MENU.typeId, frame.choose_project_item.GetId())
+    event.SetEventObject(frame.choose_project_item)
+    assert frame.GetEventHandler().ProcessEvent(event)
+
+    assert focused == [True]
+    assert revealed == [frame.project_choice]
 
 
 def test_pending_edit_is_saved_to_the_previous_project_and_invalid_edits_block_switching(project_workspace):

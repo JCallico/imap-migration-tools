@@ -396,6 +396,7 @@ KEYBOARD_SECTIONS = (
     (
         "Workspace",
         (
+            ("Alt+P", "Focus the project selector"),
             ("Tab / Shift+Tab", "Move focus forward or backward"),
             ("Enter / Space", "Activate the focused control"),
             ("Alt+0", "Reset the panel layout"),
@@ -849,6 +850,8 @@ class Workspace(wx.Frame):
         self._menu_action(file_menu, "Quit\tCtrl+Q", self.Close, wx.ID_EXIT)
         bar.Append(file_menu, "&File")
         project_menu = menu_type()
+        self.choose_project_item = self._menu_action(project_menu, "Choose project\tAlt+P", self.focus_project_selector)
+        project_menu.AppendSeparator()
         self._menu_action(project_menu, "New project…", lambda: self.request_project_name("new"))
         self.rename_project_item = self._menu_action(
             project_menu, "Rename project…", lambda: self.request_project_name("rename")
@@ -922,6 +925,11 @@ class Workspace(wx.Frame):
 
     def show_about(self):
         self._show_information(AboutDialog)
+
+    def focus_project_selector(self):
+        """Reveal and focus the project selector for keyboard selection."""
+        self.config_panel.ScrollChildIntoView(self.project_choice)
+        self.project_choice.SetFocus()
 
     def transparency_supported(self):
         """Return whether the current window manager supports native opacity."""
