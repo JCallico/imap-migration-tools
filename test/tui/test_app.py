@@ -1436,9 +1436,10 @@ def test_button_and_confirmation_dispatch_branches(tmp_path, monkeypatch):
 
 def test_unmounted_and_entrypoint_guard_branches(tmp_path, monkeypatch):
     app = ImapToolsApp(tmp_path / ".env")
-    monkeypatch.setattr(app, "query_one_optional", lambda _selector: None)
+    monkeypatch.setattr(app, "query_one_optional", lambda *_args: None)
     app.apply_responsive_layout(narrow=True)
     app.show_neutral_configuration_status()
+    app.refresh_project_controls()
     monkeypatch.setattr(app, "query", lambda _selector: Mock(nodes=[]))
     assert not app.save_configuration()
 

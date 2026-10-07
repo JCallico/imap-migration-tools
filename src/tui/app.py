@@ -690,7 +690,9 @@ class ImapToolsApp(App[None]):
 
     def refresh_project_controls(self) -> None:
         """Synchronize the selector and management buttons with the projects directory."""
-        select = self.query_one("#project-select", Select)
+        select = self.query_one_optional("#project-select", Select)
+        if select is None:  # a poll timer can fire while the workspace is being torn down
+            return
         with self.prevent(Select.Changed):
             select.set_options(self.project_options())
             select.value = self.project.name
