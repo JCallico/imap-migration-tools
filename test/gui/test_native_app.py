@@ -1578,3 +1578,21 @@ def test_renaming_a_project_keeps_its_history_and_deleting_it_removes_it(project
     assert history.load_records(renamed.history_key) == []
     assert store.create("Acme Holdings") and history.load_records(store.find("Acme Holdings").history_key) == []
     assert frame.records == []
+
+
+def test_readiness_banner_wraps_to_the_room_it_has_after_every_project_switch(project_workspace):
+    frame, store, acme = project_workspace
+    long_name = ("Long project name " * 4)[:60].strip()
+    for project in (acme, store.create(long_name), store.default_project(), acme, store.find(long_name)):
+        frame.switch_project(project)
+        frame.Layout()
+        for _ in range(10):
+            wx.Yield()
+
+        panel, label = frame.operation_panel, frame.readiness_label
+        available = panel.GetClientSize().width - 36
+        lines = label.GetLabel().split("\n")
+        assert "".join(lines).replace(" ", "") == frame.readiness_text.replace(" ", "")
+        assert all(label.GetTextExtent(line).width <= available for line in lines)
+        assert label.GetSize().width <= available
+        assert panel.GetVirtualSize().width <= panel.GetClientSize().width

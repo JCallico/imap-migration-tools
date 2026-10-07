@@ -13,6 +13,7 @@ import wx
 import wx.lib.agw.flatmenu as FM
 import wx.lib.scrolledpanel
 from platformdirs import user_config_path
+from wx.lib.wordwrap import wordwrap
 
 from gui.controller import RunController
 from ui import history
@@ -1481,6 +1482,7 @@ class Workspace(wx.Frame):
         actions.Add(folder_box, 0, wx.EXPAND | wx.BOTTOM, 12)
         self.readiness_panel = wx.Panel(operation_panel)
         readiness_sizer = wx.BoxSizer(wx.VERTICAL)
+        self.readiness_text = ""
         self.readiness_label = wx.StaticText(self.readiness_panel, label="")
         self.readiness_label.SetFont(self.readiness_label.GetFont().Bold())
         readiness_sizer.Add(self.readiness_label, 0, wx.EXPAND | wx.ALL, 10)
@@ -1839,6 +1841,20 @@ class Workspace(wx.Frame):
             compare_destination_mode=self.destination_mode.GetStringSelection(),
         )
 
+    def fit_readiness_label(self):
+        """Wrap the readiness banner to the width it really has, so it can never push the panel wider.
+
+        The room is the panel's client width minus the panel padding (16) and the banner's own border (20). The text is
+        measured and broken here instead of with ``StaticText.Wrap``, which on Windows sometimes leaves text unwrapped.
+        """
+        label = self.readiness_label
+        width = max(160, self.operation_panel.GetClientSize().width - 40)
+        dc = wx.ClientDC(label)
+        dc.SetFont(label.GetFont())
+        wrapped = wordwrap(self.readiness_text, width, dc)
+        if label.GetLabel() != wrapped:
+            label.SetLabel(wrapped)
+
     def refresh_readiness(self):
         values = self.values()
         if not account_ready(values, "DEST") and self.count_mode.GetStringSelection() == "destination":
@@ -1861,8 +1877,8 @@ class Workspace(wx.Frame):
         self.tools.SetSelection(selected)
         state = states[self.operation]
         readiness_status = "WARNING" if state.warning else "READY" if state.ready else "MISSING"
-        self.readiness_label.SetLabel(f"{readiness_status} :: {state.detail}")
-        self.readiness_label.Wrap(max(160, self.run_button.GetParent().GetClientSize().width - 20))
+        self.readiness_text = f"{readiness_status} :: {state.detail}"
+        self.fit_readiness_label()
         self.run_button.Enable(state.ready and not self.controller.active)
         semantic = (
             self.colours["warning"]
@@ -2125,7 +2141,7 @@ class Workspace(wx.Frame):
         if hasattr(self, "operation_description"):
             available = max(180, self.run_button.GetParent().GetClientSize().width - 32)
             self.operation_description.Wrap(available)
-            self.readiness_label.Wrap(available)
+            self.fit_readiness_label()
         compact = width < 1050
         self.operation_subtitle.Show(not compact)
         if compact == self.compact:
