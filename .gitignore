@@ -19,3 +19,6 @@ local.properties
 build/
 dist/
 *.spec
+
+# Agent loop stage checkpoints
+.agent-loop/
