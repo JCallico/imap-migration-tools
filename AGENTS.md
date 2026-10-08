@@ -102,11 +102,26 @@ gradle -p android lintDebug testDebugUnitTest assembleDebug
 - `python-dotenv` is a standard runtime dependency. The legacy `imap-migration-tools[dotenv]` extra remains an empty compatibility alias. If changes affect `.env` support, update `README.md`, `.env.example`, and the CI/dev dependency setup as needed.
 - For CLI `.env` coverage, add an end-to-end case to each affected `test/test_imap_*.py` module. Use its local `dotenv_file` fixture, run the real `main()`, and assert an observable outcome against a mock IMAP server or local backup. Do not replace this with parser interception or a centralized CLI test module.
 
+## Agent loop
+
+- `tools/agent_loop/` is the issue-to-pull-request dispatcher; `docs/agent-loop.md` is its operator guide and
+  `docs/agent-loop-plan.md` its design. Configuration lives in `.github/agent-loop.toml`.
+- Use the GitHub CLI (`gh`) for every GitHub interaction, in the dispatcher and in agent loop skills.
+- Only users with the repository `admin` permission can trigger write-capable actions: `/approve`, `/revise <notes>`,
+  "Request changes" reviews, and changes to `agent:*` labels. The dispatcher enforces this in code; skills must not make
+  authorization decisions or act on comments the dispatcher did not hand them.
+- The bot may commit and push only to `agent/*` branches it created for an approved issue. It never force-pushes,
+  merges, edits `.github/workflows/`, or changes `main`.
+- Implementation and review must never use the same model and, by default, not the same vendor. Model choices are
+  configuration, not code.
+- Reaching a subscription limit pauses work; never switch a stage to paid API billing or pass API-key variables to it.
+
 ## Verification before handoff
 
 Never stage, commit, or push changes automatically. Only perform each operation when the user explicitly asks for that
 specific operation. A request to edit, fix, test, or otherwise prepare changes does not authorize staging, committing, or
-pushing them.
+pushing them. The only exception is the agent loop described below: a repository administrator's `/approve` of an issue
+analysis authorizes the loop, acting as its GitHub App, to commit and push to that issue's own `agent/*` branch.
 
 Do not add AI-tool or model attribution to commits, pull-request descriptions, release notes, or other project
 artifacts. In particular, never add `Generated with` notices or `Co-Authored-By` trailers naming Claude, Codex, ChatGPT,

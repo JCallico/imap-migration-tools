@@ -1,0 +1,68 @@
+# Agent loop configuration. See docs/agent-loop.md.
+# Precedence, highest first: --stage-model, AGENT_LOOP_* environment variables, this file, built-in defaults.
+# GitHub App credentials (app_id, installation_id, private_key_path) belong in the environment of the machine that
+# runs the loop, never in this file.
+
+[github]
+repo = "JCallico/imap-migration-tools"
+# Issues created before this time are analyzed only after an administrator applies agent:adopt.
+enabled_since = "2026-10-06T00:00:00Z"
+# Optional: narrows (never widens) the set of repository administrators whose commands count.
+allowed_admins = []
+
+[stages.analysis]          # spec writing, library-versus-scratch research
+engine = "claude"
+model = "claude-opus-5-5"
+effort = "medium"
+on_exhausted = "wait"
+
+[stages.implementation]    # agentic coding plus pr-green-loop
+engine = "codex"
+model = "gpt-6.1-sol"
+effort = "medium"
+on_exhausted = "wait"
+
+[stages.feedback]          # address review items, rerun pr-green-loop
+engine = "codex"
+model = "gpt-6.1-sol"
+effort = "medium"
+on_exhausted = "wait"
+
+[stages.ci_fix]            # CI log diagnosis inside pr-green-loop
+engine = "codex"
+model = "gpt-6.1-sol"
+effort = "medium"
+on_exhausted = "wait"
+
+[stages.review]            # independent cross-vendor pull request review
+engine = "claude"
+model = "claude-sonnet-5-5"
+effort = "medium"
+on_exhausted = "wait"
+
+[stages.summarize]         # notification summaries, needs-info detection
+engine = "claude"
+model = "claude-haiku-4-5-20251001"
+effort = "low"
+on_exhausted = "fallback"
+fallbacks = ["codex:gpt-6-luna:low"]
+
+[policy]
+require_distinct_review_model = true    # hard rule; cannot be disabled
+require_distinct_review_vendor = true
+max_ai_review_rounds = 3
+max_concurrent_implementations = 1
+max_reanalyses_without_admin = 2
+max_diff_lines = 1500
+
+[quota]
+low_threshold_percent = 80
+reserve_for_inflight = true
+unknown_backoff_max_hours = 6
+max_stage_minutes = 90
+max_turns = 200
+
+[notify]
+backends = ["github"]
+mention = ["JCallico"]
+admin_delay_alert_hours = 12

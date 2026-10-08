@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Loop"
+  short_description: "Check, preview, and operate the issue-to-PR agent loop"
+  default_prompt: "Check the agent loop setup and show what the next dispatcher tick would do."
