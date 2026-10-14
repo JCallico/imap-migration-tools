@@ -12,7 +12,6 @@ from .authz import (
     Authorizer,
     evaluate_approval,
     label_applied_by_admin,
-    latest_analysis,
     parse_analysis,
     untrusted_label_changes,
 )
@@ -61,6 +60,7 @@ SKIP = "skip"
 REVERT_LABEL = "revert_label"
 REPLY_UNAUTHORIZED = "reply_unauthorized"
 SET_LABELS = "set_labels"
+REACT = "react"
 
 
 @dataclass
@@ -74,8 +74,10 @@ class Action:
     remove_labels: tuple[str, ...] = ()
     event: LabelEvent | None = None
     comment_id: str | None = None
+    comment_ids: tuple[str, ...] = ()
     notes: str = ""
     priority: int = 99
+    quota_wait: bool = False
 
     def describe(self) -> str:
         kind = "PR" if self.item.is_pr else "issue"
@@ -89,6 +91,8 @@ class Action:
             text = f"{target}: {verb} {self.event.label} (changed by {self.event.actor or 'unknown'}, not an admin)"
         elif self.kind == REPLY_UNAUTHORIZED:
             text = f"{target}: reply that only administrators can issue commands"
+        elif self.kind == REACT:
+            text = f"{target}: acknowledge {len(self.comment_ids)} administrator comment(s) with a reaction"
         elif self.kind == SET_LABELS:
             text = f"{target}: labels +{list(self.add_labels)} -{list(self.remove_labels)}"
         else:
@@ -157,27 +161,35 @@ def _stage_action(ctx: Context, item: Item, stage: str, priority_key: str, **kwa
         selection = select_stage_model(ctx.config, stage, ctx.usable)
     priority = PRIORITY[priority_key]
     if selection.waiting:
-        return Action(WAIT, item, stage=stage, reason=selection.reason, priority=priority)
+        return Action(WAIT, item, stage=stage, reason=selection.reason, priority=priority, quota_wait=selection.quota)
     return Action(RUN_STAGE, item, stage=stage, model=selection.model, priority=priority, **kwargs)
 
 
+def _is_analysis_output(comment, authorizer: Authorizer) -> bool:
+    """True for bot comments produced by the analysis stage: analyses and requests for more information."""
+    if not authorizer.is_bot(comment.author):
+        return False
+    return parse_analysis(comment) is not None or any(
+        stage == "analysis" for stage, _model in _RUN_MARKER.findall(comment.body)
+    )
+
+
 def _reanalyses_since_admin(item: Item, ctx: Context) -> int:
-    """Count analyses posted since the last trusted administrator comment."""
+    """Count analysis-stage outputs posted since the last trusted administrator comment."""
     last_admin = max(
         (comment.created_at for comment in item.comments if ctx.authorizer.comment_is_trusted(comment)),
         default=None,
     )
-    count = 0
-    for comment in item.comments:
-        if ctx.authorizer.is_bot(comment.author) and parse_analysis(comment) is not None:
-            if last_admin is None or comment.created_at > last_admin:
-                count += 1
-    return count
+    return sum(
+        1
+        for comment in item.comments
+        if _is_analysis_output(comment, ctx.authorizer) and (last_admin is None or comment.created_at > last_admin)
+    )
 
 
 def _reply_after_needs_info(item: Item, ctx: Context) -> bool:
-    analysis = latest_analysis(item, ctx.authorizer)
-    since = analysis.comment.created_at if analysis else item.created_at
+    outputs = [comment.created_at for comment in item.comments if _is_analysis_output(comment, ctx.authorizer)]
+    since = max(outputs, default=item.created_at)
     return any(
         comment.created_at > since
         and not ctx.authorizer.is_bot(comment.author)
@@ -201,12 +213,29 @@ def _decide_issue(item: Item, labels: set[str], ctx: Context) -> list[Action]:
             return [Action(SKIP, item, reason="waiting for the reporter's reply")]
         return _reanalysis(item, ctx, "reporter replied", remove=(NEEDS_INFO,))
     if AWAITING_APPROVAL in labels:
-        decision = evaluate_approval(item, ctx.authorizer)
+        decision = evaluate_approval(item, ctx.authorizer, ctx.now, config.policy.revision_debounce_minutes)
         actions = [
             Action(REPLY_UNAUTHORIZED, item, comment_id=comment.id, reason=f"command from {comment.author}")
             for comment in decision.ignored
             if not already_replied_unauthorized(item, comment.id, ctx.authorizer)
         ]
+        if decision.comments:
+            actions.append(
+                Action(REACT, item, comment_ids=tuple(comment.id for comment in decision.comments), priority=0)
+            )
+        if decision.status == "revise" and decision.analysis is not None:
+            limit = config.policy.max_revisions_per_issue
+            if decision.analysis.rev - 1 >= limit:
+                actions.append(
+                    Action(
+                        SET_LABELS,
+                        item,
+                        add_labels=(BLOCKED,),
+                        remove_labels=(AWAITING_APPROVAL,),
+                        reason=f"{limit} revisions reached; the administrator decides how to proceed",
+                    )
+                )
+                return actions
         if decision.status == "approved":
             actions.append(
                 _stage_action(
@@ -234,8 +263,14 @@ def _decide_issue(item: Item, labels: set[str], ctx: Context) -> list[Action]:
             )
         elif decision.status in ("stale", "no_analysis"):
             actions += _reanalysis(item, ctx, decision.reason, remove=(AWAITING_APPROVAL,))
+        elif decision.status == "waiting" and decision.ready_at is not None:
+            actions.append(
+                Action(
+                    SKIP, item, reason=f"batching administrator comments; revising after {decision.ready_at:%H:%M} UTC"
+                )
+            )
         else:
-            actions.append(Action(SKIP, item, reason="waiting for administrator /approve or /revise"))
+            actions.append(Action(SKIP, item, reason="waiting for the administrator: /approve, or a comment to revise"))
         return actions
     if IMPLEMENTING in labels:
         return [_stage_action(ctx, item, "implementation", "implementation", reason="implementation in progress")]

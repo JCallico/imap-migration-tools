@@ -15,6 +15,7 @@ UsableFn = Callable[[str, bool], "tuple[bool, str]"]
 class Selection:
     model: ModelRef | None
     reason: str = ""
+    quota: bool = False  # waiting because of subscription quota rather than policy
 
     @property
     def waiting(self) -> bool:
@@ -44,7 +45,7 @@ def select_reviewer(config: LoopConfig, authors: Iterable[ModelRef], usable: Usa
             return Selection(candidate)
     if len(blocked_by_policy) == len(stage.candidates):
         return Selection(None, "no configured reviewer is distinct from the pull request's author models")
-    return Selection(None, "waiting for reviewer quota")
+    return Selection(None, "waiting for reviewer quota", quota=True)
 
 
 def select_author(
@@ -59,6 +60,7 @@ def select_author(
     existing = tuple(existing_authors)
     review = config.stage("review")
     reasons = []
+    quota = False
     for candidate in config.stage(stage_name).candidates:
         authors = (*existing, candidate)
         if not any(
@@ -70,8 +72,9 @@ def select_author(
         ok, why = usable(candidate.engine, stage_name in LONG_STAGES)
         if ok:
             return Selection(candidate)
+        quota = True
         reasons.append(why)
-    return Selection(None, "; ".join(reason for reason in reasons if reason) or "waiting for quota")
+    return Selection(None, "; ".join(reason for reason in reasons if reason) or "waiting for quota", quota)
 
 
 def select_stage_model(config: LoopConfig, stage_name: str, usable: UsableFn) -> Selection:
@@ -82,4 +85,4 @@ def select_stage_model(config: LoopConfig, stage_name: str, usable: UsableFn) ->
         if ok:
             return Selection(candidate)
         reasons.append(why)
-    return Selection(None, "; ".join(reason for reason in reasons if reason) or "waiting for quota")
+    return Selection(None, "; ".join(reason for reason in reasons if reason) or "waiting for quota", quota=True)

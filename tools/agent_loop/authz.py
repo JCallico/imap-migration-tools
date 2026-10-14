@@ -10,6 +10,7 @@ import hashlib
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 
 from .gh import Gh, GhError
 from .snapshot import Comment, Item, LabelEvent
@@ -18,8 +19,12 @@ AGENT_LABEL_PREFIX = "agent:"
 
 APPROVE = "approve"
 REVISE = "revise"
+NOTE = "note"
 
-_COMMAND = re.compile(r"^/(approve|revise)(?:[ \t]+(.*))?$")
+_COMMAND = re.compile(r"^/(approve|revise|note)(?:[ \t]+(.*))?$")
+# A first line that looks like one of our commands but is malformed (for example "/approve now") is ignored rather
+# than treated as an ordinary comment, so a typo can never be read as a request to revise.
+_COMMAND_LIKE = re.compile(r"^/(approve|revise|note)\b", re.IGNORECASE)
 _ANALYSIS_MARKER = re.compile(r"<!--\s*agent-loop:analysis\s+([^>]*?)\s*-->")
 _MARKER_FIELD = re.compile(r"(\w+)=(\S+)")
 
@@ -34,7 +39,8 @@ def parse_command(body: str) -> Command | None:
     """Parse a command that must be the exact first line of a comment.
 
     ``/approve`` takes no arguments. ``/revise`` requires notes, taken from the rest of the first line and any
-    following lines. Quoted text, code blocks, and commands later in a comment never match.
+    following lines. ``/note`` marks a comment that must not trigger a revision. Quoted text, code blocks, and
+    commands later in a comment never match.
     """
     lines = body.replace("\r\n", "\n").split("\n")
     first = lines[0].rstrip()
@@ -44,8 +50,23 @@ def parse_command(body: str) -> Command | None:
     name, rest = match.group(1), (match.group(2) or "").strip()
     if name == APPROVE:
         return Command(APPROVE) if not rest else None
+    if name == NOTE:
+        return Command(NOTE, "\n".join([rest, *lines[1:]]).strip())
     notes = "\n".join([rest, *lines[1:]]).strip()
     return Command(REVISE, notes) if notes else None
+
+
+def looks_like_command(body: str) -> bool:
+    """True when the first line starts with one of our commands, whether or not it is well formed."""
+    return bool(_COMMAND_LIKE.match(body.replace("\r\n", "\n").split("\n")[0].strip()))
+
+
+def mentions(body: str, login: str | None) -> bool:
+    """True when ``body`` @mentions ``login`` (a GitHub App's ``[bot]`` suffix is optional in the mention)."""
+    if not login:
+        return False
+    name = re.escape(login.removesuffix("[bot]"))
+    return bool(re.search(rf"(?<![\w/@.-])@{name}(?:\[bot\])?(?![\w-])", body, re.IGNORECASE))
 
 
 def analysis_hash(issue_title: str, issue_body: str, analysis_text: str) -> str:
@@ -62,8 +83,14 @@ def strip_analysis_marker(body: str) -> str:
     return _ANALYSIS_MARKER.sub("", body).strip()
 
 
-def analysis_marker(rev: int, digest: str, model: str) -> str:
-    return f"<!-- agent-loop:analysis rev={rev} hash={digest} model={model} -->"
+def analysis_marker(rev: int, digest: str, model: str, seen: datetime | None = None) -> str:
+    """Hidden marker binding an analysis to the issue text it analyzed.
+
+    ``seen`` is the newest comment timestamp in the snapshot the model was given, so comments posted while the
+    analysis was running are still treated as new afterwards.
+    """
+    seen_field = f" seen={int(seen.timestamp())}" if seen is not None else ""
+    return f"<!-- agent-loop:analysis rev={rev} hash={digest} model={model}{seen_field} -->"
 
 
 @dataclass(frozen=True)
@@ -72,6 +99,12 @@ class Analysis:
     rev: int
     hash: str
     model: str
+    seen_at: datetime | None = None
+
+    @property
+    def since(self) -> datetime:
+        """Comments after this moment were not part of the analysis."""
+        return self.seen_at or self.comment.created_at
 
     def matches(self, item: Item) -> bool:
         return analysis_hash(item.title, item.body, strip_analysis_marker(self.comment.body)) == self.hash
@@ -88,7 +121,13 @@ def parse_analysis(comment: Comment) -> Analysis | None:
         return None
     if "hash" not in fields:
         return None
-    return Analysis(comment, rev, fields["hash"], fields.get("model", ""))
+    seen_at = None
+    if "seen" in fields:
+        try:
+            seen_at = datetime.fromtimestamp(int(fields["seen"]), timezone.utc)
+        except (ValueError, OverflowError, OSError):
+            seen_at = None
+    return Analysis(comment, rev, fields["hash"], fields.get("model", ""), seen_at)
 
 
 class Authorizer:
@@ -139,14 +178,20 @@ class Authorizer:
 
 @dataclass
 class ApprovalDecision:
-    """Outcome of evaluating administrator commands against the latest analysis."""
+    """Outcome of evaluating administrator comments against the latest analysis.
 
-    status: str  # "no_analysis", "stale", "pending", "approved", "revise"
+    ``status`` is ``no_analysis``, ``stale``, ``pending`` (nothing to act on), ``waiting`` (comments received, waiting
+    for the administrator to finish), ``revise``, or ``approved``.
+    """
+
+    status: str
     analysis: Analysis | None = None
     command: Comment | None = None
     notes: str = ""
     ignored: list[Comment] = field(default_factory=list)
     reason: str = ""
+    comments: list[Comment] = field(default_factory=list)  # administrator comments the loop is acting on
+    ready_at: datetime | None = None
 
 
 def latest_analysis(item: Item, authorizer: Authorizer) -> Analysis | None:
@@ -158,28 +203,47 @@ def latest_analysis(item: Item, authorizer: Authorizer) -> Analysis | None:
     return max(analyses, key=lambda analysis: (analysis.comment.created_at, analysis.rev), default=None)
 
 
-def evaluate_approval(item: Item, authorizer: Authorizer) -> ApprovalDecision:
-    """Find the effective administrator command for the latest analysis.
+def compose_notes(entries: list[tuple[Comment, Command | None]]) -> str:
+    """Join the administrator's comments into revision notes for the analysis stage."""
+    texts = [(comment, command.notes if command is not None else comment.body.strip()) for comment, command in entries]
+    texts = [(comment, text) for comment, text in texts if text]
+    if len(texts) == 1:
+        return texts[0][1]
+    return "\n\n".join(
+        f"Comment {index} from {comment.author}:\n{text}" for index, (comment, text) in enumerate(texts, 1)
+    )
 
-    Commands count only when posted after the latest analysis, authored and edited exclusively by administrators,
-    and when the analysis still matches the current issue title and body. Unauthorized commands are always reported
-    in ``ignored`` so the dispatcher can answer them, even when the analysis itself is stale.
+
+def evaluate_approval(
+    item: Item,
+    authorizer: Authorizer,
+    now: datetime | None = None,
+    debounce_minutes: float = 0.0,
+) -> ApprovalDecision:
+    """Decide what the administrator's comments since the latest analysis ask for.
+
+    Only comments authored, and edited, exclusively by administrators count. ``/approve`` and ``/revise <notes>`` are
+    explicit: the latest explicit command wins and acts immediately. Without one, every other administrator comment is a
+    request to revise: it runs immediately when it @mentions the bot, and otherwise after the administrator has been
+    quiet for ``debounce_minutes`` so several comments become one revision. ``/note`` comments never trigger anything.
+    Unauthorized commands are always reported in ``ignored`` so the dispatcher can answer them.
     """
+    now = now or datetime.now(timezone.utc)
     analysis = latest_analysis(item, authorizer)
-    since = analysis.comment.created_at if analysis is not None else None
-    trusted: Comment | None = None
-    trusted_command: Command | None = None
+    since = analysis.since if analysis is not None else None
+    entries: list[tuple[Comment, Command | None]] = []
     ignored: list[Comment] = []
     for comment in sorted(item.comments, key=lambda comment: comment.created_at):
         if (since is not None and comment.created_at <= since) or authorizer.is_bot(comment.author):
             continue
         command = parse_command(comment.body)
-        if command is None:
-            continue
-        if authorizer.comment_is_trusted(comment):
-            trusted, trusted_command = comment, command
-        else:
+        if command is None and looks_like_command(comment.body):
+            continue  # malformed command: never an implicit revision
+        trusted = authorizer.comment_is_trusted(comment)
+        if command is not None and not trusted:
             ignored.append(comment)
+        elif trusted and not (command is not None and command.name == NOTE):
+            entries.append((comment, command))
     if analysis is None:
         return ApprovalDecision("no_analysis", ignored=ignored, reason="no analysis comment from the agent loop bot")
     if analysis.comment.edited and not (
@@ -191,10 +255,25 @@ def evaluate_approval(item: Item, authorizer: Authorizer) -> ApprovalDecision:
     if not analysis.matches(item):
         reason = f"issue or analysis rev {analysis.rev} changed after it was posted"
         return ApprovalDecision("stale", analysis, ignored=ignored, reason=reason)
-    if trusted is None or trusted_command is None:
+    if not entries:
         return ApprovalDecision("pending", analysis, ignored=ignored)
-    status = "approved" if trusted_command.name == APPROVE else "revise"
-    return ApprovalDecision(status, analysis, trusted, trusted_command.notes, ignored)
+    explicit = [(comment, command) for comment, command in entries if command is not None]
+    if explicit:
+        last_comment, last_command = explicit[-1]
+        if last_command.name == APPROVE:
+            return ApprovalDecision("approved", analysis, last_comment, "", ignored, comments=[last_comment])
+        notes = compose_notes([entry for entry in entries if entry[1] is None or entry[1].name == REVISE])
+        return ApprovalDecision(
+            "revise", analysis, last_comment, notes, ignored, comments=[comment for comment, _ in entries]
+        )
+    comments = [comment for comment, _ in entries]
+    notes = compose_notes(entries)
+    if any(mentions(comment.body, authorizer.bot_login) for comment in comments):
+        return ApprovalDecision("revise", analysis, comments[-1], notes, ignored, comments=comments)
+    ready_at = comments[-1].created_at + timedelta(minutes=debounce_minutes)
+    if now >= ready_at:
+        return ApprovalDecision("revise", analysis, comments[-1], notes, ignored, comments=comments)
+    return ApprovalDecision("waiting", analysis, None, notes, ignored, comments=comments, ready_at=ready_at)
 
 
 def untrusted_label_changes(item: Item, authorizer: Authorizer) -> list[LabelEvent]:

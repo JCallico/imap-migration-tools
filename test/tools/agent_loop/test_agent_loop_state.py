@@ -99,7 +99,7 @@ def test_admin_approval_starts_implementation_with_codex():
         comments=[analysis_comment(TITLE, BODY), comment("c1", ADMIN, "/approve", 20)],
     )
 
-    action = only(state.decide(item, ctx))
+    action = only(state.decide(item, ctx), state.RUN_STAGE)
 
     assert (action.stage, action.model) == ("implementation", SOL)
     assert action.add_labels == (state.IMPLEMENTING,) and action.remove_labels == (state.AWAITING_APPROVAL,)
@@ -128,9 +128,8 @@ def test_quota_exhaustion_waits_instead_of_switching_models():
         comments=[analysis_comment(TITLE, BODY), comment("c1", ADMIN, "/approve", 20)],
     )
 
-    action = only(state.decide(item, ctx))
+    action = only(state.decide(item, ctx), state.WAIT)
 
-    assert action.kind == state.WAIT
     assert "codex exhausted" in action.reason
 
 
@@ -227,3 +226,78 @@ def test_unmanaged_pr_truncated_item_and_global_pause():
     assert state.decide(make_item(is_pr=True), ctx) == []
     assert only(state.decide(make_item(truncated=True), ctx)).kind == state.SKIP
     assert state.plan([make_item()], paused_ctx) == []
+
+
+def test_needs_info_requests_count_toward_the_reanalysis_limit():
+    ctx, _ = context()
+    asked = [comment(f"q{n}", BOT, f"questions\n{state.run_marker('analysis', OPUS)}", 10 * n) for n in (1, 2, 3)]
+    reply = comment("r", "reporter", "answers", 40)
+
+    actions = state.decide(make_item(labels=(state.NEEDS_INFO,), comments=[*asked, reply]), ctx)
+
+    assert only(actions).kind == state.SKIP and "limit" in only(actions).reason
+
+
+def test_reply_must_follow_the_latest_needs_info_request():
+    ctx, _ = context()
+    early_reply = comment("r", "reporter", "answers", 5)
+    asked = comment("q", BOT, f"questions\n{state.run_marker('analysis', OPUS)}", 10)
+
+    actions = state.decide(make_item(labels=(state.NEEDS_INFO,), comments=[early_reply, asked]), ctx)
+
+    assert only(actions).reason == "waiting for the reporter's reply"
+
+
+def test_quota_waits_are_flagged_for_the_waiting_label():
+    def claude_exhausted(engine, long_stage):
+        return (engine != "claude", "claude exhausted")
+
+    ctx, _ = context(usable=claude_exhausted)
+
+    action = only(state.decide(make_item(), ctx))
+
+    assert action.kind == state.WAIT and action.quota_wait
+
+
+def awaiting(*admin_comments, rev=1):
+    return make_item(
+        labels=(state.AWAITING_APPROVAL,),
+        comments=[analysis_comment(TITLE, BODY, rev=rev), *admin_comments],
+    )
+
+
+def test_plain_admin_comment_is_acknowledged_then_revised_after_the_wait():
+    ctx, _ = context()
+    chat = comment("c1", ADMIN, "Please also check Windows", 20)
+    early = replace(ctx, now=at(22))
+    late = replace(ctx, now=at(26))
+
+    soon = state.decide(awaiting(chat), early)
+    later = state.decide(awaiting(chat), late)
+
+    assert [a.kind for a in soon] == [state.REACT, state.SKIP] and soon[0].comment_ids == ("c1",)
+    assert "batching" in soon[1].reason
+    revise = only(later, state.RUN_STAGE)
+    assert (revise.stage, revise.model) == ("analysis", OPUS)
+    assert revise.notes == "Please also check Windows" and revise.add_labels == (state.ANALYZING,)
+    assert only(later, state.REACT).priority == 0
+
+
+def test_revision_limit_escalates_to_blocked():
+    ctx, _ = context()
+    config = replace(ctx.config, policy=replace(ctx.config.policy, max_revisions_per_issue=2))
+    ctx = replace(ctx, config=config, now=at(200))
+
+    actions = state.decide(awaiting(comment("c1", ADMIN, "more changes", 20), rev=3), ctx)
+
+    assert [a.kind for a in actions] == [state.REACT, state.SET_LABELS]
+    assert actions[1].add_labels == (state.BLOCKED,) and "2 revisions" in actions[1].reason
+
+
+def test_approval_is_acknowledged_and_starts_implementation():
+    ctx, _ = context()
+
+    actions = state.decide(awaiting(comment("c1", ADMIN, "/approve", 20)), ctx)
+
+    assert [a.kind for a in actions] == [state.REACT, state.RUN_STAGE]
+    assert actions[1].stage == "implementation"

@@ -1,6 +1,7 @@
 # Agent loop implementation plan
 
-Status: Phase 1 (foundations) implemented; later phases pending. See [agent-loop.md](agent-loop.md) for operation.
+Status: Phases 1 (foundations) and 2 (analysis and approval) implemented on `feat/agent-loop-foundations`; the GitHub
+App, labels, and branch rules are set up. Later phases pending. See [agent-loop.md](agent-loop.md) for operation.
 
 ## Goal
 
@@ -8,7 +9,8 @@ Automate the project lifecycle from GitHub issue to review-ready pull request. T
 only to:
 
 1. create issues (or let external contributors create them);
-2. review an issue's analysis and either approve it with `/approve`, request revisions with `/revise <notes>`, or close
+2. review an issue's analysis and either approve it with `/approve`, request revisions by simply commenting (or with
+   `/revise <notes>` or by mentioning the bot), or close
    the issue; and
 3. review the final pull request and merge it, close it, or request further changes.
 
@@ -35,6 +37,7 @@ feedback) runs autonomously on this machine using the administrator's existing C
 | State | GitHub labels plus hidden HTML markers in comments; local state only for locks, quota, and sessions |
 | Bot identity | GitHub App installed only on this repository (`<app-name>[bot]`) |
 | Approval signal | `/approve` comment from a repository administrator, bound to the analysis hash |
+| Revision signal | Any other administrator comment on an issue awaiting approval; debounced, immediate on `/revise` or a bot mention, suppressed by `/note` |
 | Trigger authority | Only repository administrators can trigger write-capable actions; see [Trigger authorization](#trigger-authorization) |
 | Notifications | GitHub-native only (mentions, assignment, review requests); pluggable notifier interface for later |
 | Models | Configurable per stage; implementation and review must never use the same model |
@@ -51,7 +54,7 @@ restarts.
 | *(no `agent:*` label, open issue)* | Issue | Dispatcher | `agent:analyzing` |
 | `agent:analyzing` | Issue | `issue-analysis` | `agent:awaiting-approval` or `agent:needs-info` |
 | `agent:needs-info` | Issue | Reporter or administrator reply, then dispatcher (read-only re-analysis, capped) | `agent:analyzing` |
-| `agent:awaiting-approval` | Issue | **Administrator**: `/approve`, `/revise <notes>`, or close | `agent:implementing` or `agent:analyzing` |
+| `agent:awaiting-approval` | Issue | **Administrator**: `/approve`, any other comment (revise), or close | `agent:implementing` or `agent:analyzing` |
 | `agent:implementing` | Issue + PR | `implement-approved-issue` + `pr-green-loop` | PR gets `agent:ai-review` |
 | `agent:ai-review` | PR | `cross-model-pr-review` | `agent:changes-requested` or `agent:ready-for-admin` |
 | `agent:changes-requested` | PR | `address-review-feedback` + `pr-green-loop` | `agent:ai-review` (max 3 AI rounds, then escalate) |
@@ -277,13 +280,20 @@ existing `setup-development-environment` pattern, so either engine can run any s
   [Trigger authorization](#trigger-authorization).
 - **Approval binding:** approval is bound to the analysis hash. Editing the issue or analysis afterwards requires
   re-approval.
-- **GitHub App:** installed on this repository only. Permissions: Contents, Pull requests, and Issues read/write;
-  Metadata, Checks, and Actions read. No Workflows or Administration permission. Private key stored outside the
-  repository with mode 600; installation tokens are short-lived.
+- **GitHub App:** `imap-tools-agent`, installed on this repository only. Permissions: Contents, Pull requests, and
+  Issues read/write; Metadata, Checks, and Actions read. No Workflows or Administration permission. Private key stored
+  outside the repository at `~/.ssh/imap-agent-app.pem` with mode 600; installation tokens are short-lived and held in
+  memory only.
+- **Analysis stage isolation:** read-only runs in a disposable worktree under `~/.cache/agent-loop/` (never under a
+  location stages are denied, which an early version got wrong, leaving the model unable to read its own checkout); Claude is denied editing, web access,
+  subagents, and reads of credential locations; Codex uses its read-only sandbox without network access. Output that
+  looks like a credential is never posted, and @mentions in model text are neutralized.
 - **Diff policy gate** before `agent:ready-for-admin`: reject changes to `.github/workflows/**`, secret-like content,
   oversized diffs, and files outside the spec's declared scope unless justified in the PR.
-- **Branch protection on `main`** (currently unprotected): require pull requests, required CI checks, and one approving
-  review from the administrator. Applied only after explicit confirmation.
+- **Branch protection on `main`** (applied 2026-10-14 by updating the existing `main_branch_ruleset`): pull requests
+  only, squash merges only, one approval dismissed on new pushes, resolved conversations, twelve required CI checks, no
+  force-push or deletion. The Admin role may bypass only through pull requests, because GitHub forbids approving your
+  own pull request; bot pull requests always need the administrator's approval.
 - **Budgets:** one concurrent implementation, three AI review rounds, three materially identical CI failures, and
   per-stage time and turn caps; exceeding a budget sets `agent:blocked` and notifies.
 - **Opt-in only** for pre-existing issues and pull requests; `agent:paused` and a global flag act as kill switches.
@@ -297,7 +307,7 @@ in code before any model runs; skills never decide authorization.
 
 | Trigger | Required actor | Ignored when |
 | --- | --- | --- |
-| `/approve`, `/revise <notes>` issue comments | Administrator | Author is not an administrator, or the comment was edited by anyone other than its administrator author |
+| `/approve`, `/revise <notes>`, and plain comments on an issue awaiting approval (implicit revisions) | Administrator | Author is not an administrator, or the comment was edited by anyone other than its administrator author. `/note` comments and malformed commands never trigger |
 | Admin "Request changes" PR review and its threads | Administrator | Review author is not an administrator |
 | PR review threads acted on by `address-review-feedback` | Administrator, or the AI reviewer identified by the dispatcher's own run marker | Any other author, including the bot's other comments and outside reviewers |
 | `agent:*` labels that change state (`agent:paused`, adopting an existing issue or PR, clearing `agent:blocked`) | Administrator who applied the label, from the issue timeline | Applied by anyone else; the dispatcher reverts it and records why |
@@ -312,8 +322,15 @@ Verification rules:
   first seen, so revoked access takes effect immediately.
 - **Edits:** collaborators with write access can edit other users' comments. A command comment counts only if
   it has never been edited, or every edit in its GraphQL `userContentEdits` history was made by an administrator.
-- **Exact syntax:** a command must be the first line of the comment and match exactly (`/approve`, `/revise <notes>`).
-  Quoted text, code blocks, and mentions inside other comments never count.
+- **Exact syntax:** `/approve`, `/revise <notes>`, and `/note` must be the first line of the comment and match
+  exactly. Quoted text and code blocks never count, and a first line that looks like a command but is malformed is
+  ignored rather than treated as feedback.
+- **Implicit revisions:** every other administrator comment after the latest analysis is feedback. The bot reacts
+  with 👀, then revises once after `revision_debounce_minutes` of quiet, immediately when the comment mentions the
+  bot or uses `/revise`. The latest explicit command wins, so `/approve` is never overridden by plain comments, and
+  `/approve` is never implicit. `max_revisions_per_issue` escalates long threads to `agent:blocked`.
+- **No lost comments:** each analysis records the newest comment it was shown (`seen=`), so comments posted while
+  the model was running still count afterwards.
 - **Binding:** `/approve` applies only to the analysis revision current when it was posted (by hash); a later analysis
   revision or issue edit requires a new `/approve`.
 - **Bot exclusion:** comments authored by the App itself never count as commands, even though the App writes the
@@ -374,14 +391,17 @@ test/tools/agent_loop/                 # unit tests with recorded CLI fixtures a
 
 ## Rollout
 
-Each phase is its own branch and pull request.
+Phases were originally planned as separate branches and pull requests; at the administrator's request, Phases 1 and 2
+are delivered together on `feat/agent-loop-foundations` (PR #76).
 
-1. **Foundations** — AGENTS.md amendment; GitHub App setup guide; label bootstrap script (run only on request);
+1. **Foundations** *(implemented)* — AGENTS.md amendment; GitHub App setup guide; label bootstrap script (run only on request);
    dispatcher skeleton with configuration and precedence, distinct-model validation, App authentication, quota ledger
    and classifier, API-key scrubbing, `doctor`, `status`, `--dry-run`, and the GitHub notifier; captured CLI output
    fixtures; unit tests.
-2. **Analysis and approval** — `issue-analysis` skill and `/approve`/`/revise` handling, exercised live on one or two
-   real issues.
+2. **Analysis and approval** *(implemented)* — `issue-analysis` skill, read-only analysis runner with disposable
+   worktrees, output contract and safety checks, `/approve`, conversational revisions (implicit, debounced, mention,
+   `/revise`, `/note`) and `agent:needs-info` handling, quota pauses
+   with a status comment, and a per-tick limit on model-backed stage runs. Next: exercise live on issue #77.
 3. **Implementation** — `implement-approved-issue`, `pr-green-loop` updates, checkpoints, and session resume, tested
    on a throwaway issue including an injected quota exhaustion mid-implementation.
 4. **Review and feedback** — `cross-model-pr-review`, `address-review-feedback`, reviewer selection, actual-model
@@ -400,10 +420,11 @@ Each phase is its own branch and pull request.
 
 ## Administrator prerequisites
 
-1. Create the GitHub App, install it on this repository only, generate a private key, and store it outside the
-   repository (for example `~/.config/agent-loop/app.pem`, mode 600). Phase 1 provides a step-by-step guide.
-2. Confirm when branch protection for `main` may be applied.
-3. Enable GitHub Mobile or email notifications for mentions and review requests.
+1. ~~Create the GitHub App, install it on this repository only, and store its private key privately.~~ Done
+   2026-10-14 (`imap-tools-agent`; see [agent-loop.md](agent-loop.md#this-repositorys-setup)).
+2. ~~Apply branch protection for `main`.~~ Done 2026-10-14.
+3. ~~Create the `agent:*` labels.~~ Done 2026-10-14.
+4. Enable GitHub Mobile or email notifications for mentions and review requests.
 
 ## Open items for review
 

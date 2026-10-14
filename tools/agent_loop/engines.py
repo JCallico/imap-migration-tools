@@ -71,6 +71,38 @@ BLOCKED_VARIABLES = frozenset(
 )
 BLOCKED_PREFIXES = ("AWS_", "GOOGLE_APPLICATION_CREDENTIALS", "VERTEX_")
 
+READ_ONLY_DENIED_TOOLS = ("Edit", "Write", "NotebookEdit")
+# Locations holding credentials that no stage needs to read: SSH and App keys, CLI logins, loop state, and .env files.
+SECRET_READ_DENIALS = (
+    "Read(~/.ssh/**)",
+    "Read(~/.gnupg/**)",
+    "Read(~/.aws/**)",
+    "Read(~/.config/**)",
+    "Read(~/.codex/**)",
+    "Read(~/.claude/**)",
+    "Read(~/.local/state/**)",
+    "Read(~/.local/share/keyrings/**)",
+    "Read(**/.env)",
+)
+
+
+def denied_read_roots(home: Path | None = None) -> list[Path]:
+    """Directories (resolved) that ``SECRET_READ_DENIALS`` forbid stages to read."""
+    home = home or Path.home()
+    roots = []
+    for rule in SECRET_READ_DENIALS:
+        pattern = rule.removeprefix("Read(").removesuffix(")")
+        if not pattern.startswith("~/"):
+            continue
+        roots.append((home / pattern[2:].removesuffix("/**")).resolve())
+    return roots
+
+
+def is_readable_by_stages(path: Path, home: Path | None = None) -> bool:
+    """False when ``path`` lies inside a directory that stages are forbidden to read."""
+    resolved = path.resolve()
+    return not any(resolved == root or root in resolved.parents for root in denied_read_roots(home))
+
 
 def is_blocked_variable(name: str) -> bool:
     return name in BLOCKED_VARIABLES or name.startswith(BLOCKED_PREFIXES)
@@ -103,9 +135,13 @@ def build_command(
     resume_session: str | None = None,
     max_turns: int | None = None,
     allowed_tools: Sequence[str] = (),
+    disallowed_tools: Sequence[str] = (),
     output_schema: Path | None = None,
 ) -> list[str]:
-    """Return the argv for a headless run; the prompt is always supplied on stdin."""
+    """Return the argv for a headless run; the prompt is always supplied on stdin.
+
+    Tool rules apply to Claude only; Codex relies on its sandbox (read-only sandboxes also have no network access).
+    """
     if sandbox not in (READ_ONLY, WORKSPACE_WRITE):
         raise ValueError(f"unsupported sandbox {sandbox!r}")
     if ref.engine == "codex":
@@ -147,9 +183,10 @@ def build_command(
         if max_turns:
             command += ["--max-turns", str(max_turns)]
         if allowed_tools:
-            command += ["--allowedTools", ",".join(allowed_tools)]
-        if sandbox == READ_ONLY:
-            command += ["--disallowedTools", "Edit,Write,NotebookEdit"]
+            command += ["--allowedTools", *allowed_tools]
+        denied = [*(READ_ONLY_DENIED_TOOLS if sandbox == READ_ONLY else ()), *disallowed_tools]
+        if denied:
+            command += ["--disallowedTools", *dict.fromkeys(denied)]
         if resume_session:
             command += ["--resume", resume_session]
         return command

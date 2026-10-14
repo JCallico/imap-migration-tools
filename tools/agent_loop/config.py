@@ -82,6 +82,9 @@ class PolicyConfig:
     max_concurrent_implementations: int = 1
     max_reanalyses_without_admin: int = 2
     max_diff_lines: int = 1500
+    max_stage_runs_per_tick: int = 1
+    revision_debounce_minutes: float = 5.0
+    max_revisions_per_issue: int = 5
 
 
 @dataclass(frozen=True)
@@ -103,6 +106,7 @@ class NotifyConfig:
 @dataclass(frozen=True)
 class GitHubConfig:
     repo: str | None = None
+    base_branch: str = "main"
     bot_login: str | None = None
     allowed_admins: tuple[str, ...] = ()
     enabled_since: datetime | None = None
@@ -120,11 +124,24 @@ class LoopConfig:
     github: GitHubConfig = field(default_factory=GitHubConfig)
     paused: bool = False
     state_dir: Path | None = None
+    worktree_dir: Path | None = None
     env_passthrough: tuple[str, ...] = ()
     source: Path | None = None
 
     def stage(self, name: str) -> StageConfig:
         return self.stages[name]
+
+    def resolved_worktree_dir(self) -> Path:
+        """Return where stage checkouts are created.
+
+        This must lie outside every location stages are forbidden to read (see ``SECRET_READ_DENIALS``), which is why
+        it defaults to the cache directory rather than the state directory.
+        """
+        if self.worktree_dir is not None:
+            return self.worktree_dir
+        base = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+        repo = (self.github.repo or "default").replace("/", "-")
+        return base / "agent-loop" / repo / "worktrees"
 
     def resolved_state_dir(self) -> Path:
         """Return the local state directory, partitioned per repository."""
@@ -245,7 +262,7 @@ def _dataclass_from_table(cls: type, table: Mapping[str, Any], where: str) -> An
 def _github_from_table(table: Mapping[str, Any]) -> GitHubConfig:
     _check_keys(table, GitHubConfig.__dataclass_fields__, "[github]")
     values: dict[str, Any] = {}
-    for key in ("repo", "bot_login", "app_id", "installation_id"):
+    for key in ("repo", "base_branch", "bot_login", "app_id", "installation_id"):
         if key in table:
             values[key] = str(table[key])
     if "allowed_admins" in table:
@@ -274,11 +291,13 @@ def _apply_file(data: Mapping[str, Any]) -> dict[str, Any]:
     if "github" in data:
         result["github"] = _github_from_table(data["github"])
     loop = data.get("loop") or {}
-    _check_keys(loop, ("paused", "state_dir", "env_passthrough"), "[loop]")
+    _check_keys(loop, ("paused", "state_dir", "worktree_dir", "env_passthrough"), "[loop]")
     if "paused" in loop:
         result["paused"] = bool(loop["paused"])
     if "state_dir" in loop:
         result["state_dir"] = Path(str(loop["state_dir"])).expanduser()
+    if "worktree_dir" in loop:
+        result["worktree_dir"] = Path(str(loop["worktree_dir"])).expanduser()
     if "env_passthrough" in loop:
         result["env_passthrough"] = tuple(str(item) for item in loop["env_passthrough"])
     return result
@@ -315,7 +334,10 @@ def _apply_environment(config: LoopConfig, environ: Mapping[str, str]) -> LoopCo
     state_dir = config.state_dir
     if environ.get("AGENT_LOOP_STATE_DIR"):
         state_dir = Path(environ["AGENT_LOOP_STATE_DIR"]).expanduser()
-    return replace(config, stages=stages, github=github, paused=paused, state_dir=state_dir)
+    worktree_dir = config.worktree_dir
+    if environ.get("AGENT_LOOP_WORKTREE_DIR"):
+        worktree_dir = Path(environ["AGENT_LOOP_WORKTREE_DIR"]).expanduser()
+    return replace(config, stages=stages, github=github, paused=paused, state_dir=state_dir, worktree_dir=worktree_dir)
 
 
 def _apply_overrides(config: LoopConfig, overrides: Iterable[str]) -> LoopConfig:
@@ -353,6 +375,12 @@ def validate(config: LoopConfig) -> None:
         errors.append("[quota] low_threshold_percent must be between 0 and 100")
     if config.quota.max_stage_minutes <= 0:
         errors.append("[quota] max_stage_minutes must be positive")
+    if policy.revision_debounce_minutes < 0:
+        errors.append("[policy] revision_debounce_minutes cannot be negative")
+    if policy.max_revisions_per_issue < 1:
+        errors.append("[policy] max_revisions_per_issue must be at least 1")
+    if policy.max_stage_runs_per_tick < 1:
+        errors.append("[policy] max_stage_runs_per_tick must be at least 1")
     if policy.max_ai_review_rounds < 1:
         errors.append("[policy] max_ai_review_rounds must be at least 1")
     unknown_backends = sorted(set(config.notify.backends) - {"github"})

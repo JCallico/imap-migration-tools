@@ -136,3 +136,13 @@ def test_fallbacks_only_used_when_on_exhausted_is_fallback(tmp_path):
 
     assert config.stage("analysis").candidates == (config.stage("analysis").primary,)
     assert len(config.stage("summarize").candidates) == 2
+
+
+def test_worktree_dir_precedence(tmp_path):
+    path = write(tmp_path, f'[loop]\nworktree_dir = "{tmp_path / "from-file"}"\n')
+
+    from_file = load_config(path, environ={})
+    from_env = load_config(path, environ={"AGENT_LOOP_WORKTREE_DIR": str(tmp_path / "from-env")})
+
+    assert from_file.resolved_worktree_dir() == tmp_path / "from-file"
+    assert from_env.resolved_worktree_dir() == tmp_path / "from-env"

@@ -5,15 +5,16 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import time
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
 
 from filelock import FileLock, Timeout
 
-from . import state
+from . import repo_ops, state
 from .app_auth import AppAuthError, AppTokenProvider, check_private_key_file, provider_from_config
 from .authz import Authorizer
 from .config import AUTHOR_STAGES, LoopConfig
@@ -28,6 +29,8 @@ from .notify import GitHubNotifier, Notification
 from .quota import QuotaLedger
 from .selection import reviewer_allowed
 from .snapshot import fetch_open_items
+from .stages import RUNNERS, StageContext
+from .worktree import WorktreeError, repository_root
 
 PAUSE_FILE = "paused"
 
@@ -44,6 +47,9 @@ class Runtime:
     bot_login: str | None
     state_dir: Path
     ledger: QuotaLedger
+    repo_root: Path = field(default_factory=Path.cwd)
+    environ: Mapping[str, str] = field(default_factory=lambda: dict(os.environ))
+    engine_runner: Callable[..., subprocess.CompletedProcess] = subprocess.run
 
 
 def build_runtime(config: LoopConfig, *, require_app: bool) -> Runtime:
@@ -75,7 +81,13 @@ def build_runtime(config: LoopConfig, *, require_app: bool) -> Runtime:
         low_threshold_percent=config.quota.low_threshold_percent,
         unknown_backoff_max_hours=config.quota.unknown_backoff_max_hours,
     )
-    return Runtime(config, Gh(repo, token_provider=provider), provider, bot_login, state_dir, ledger)
+    try:
+        repo_root = repository_root()
+    except WorktreeError as exc:
+        raise DispatcherError("run the dispatcher from inside a checkout of the repository") from exc
+    return Runtime(
+        config, Gh(repo, token_provider=provider), provider, bot_login, state_dir, ledger, repo_root=repo_root
+    )
 
 
 def is_paused(runtime: Runtime) -> bool:
@@ -97,46 +109,32 @@ def _usable(runtime: Runtime):
     return usable
 
 
-def plan_actions(runtime: Runtime) -> list[state.Action]:
-    authorizer = Authorizer(runtime.gh, runtime.bot_login, runtime.config.github.allowed_admins)
+def _authorizer(runtime: Runtime) -> Authorizer:
+    return Authorizer(runtime.gh, runtime.bot_login, runtime.config.github.allowed_admins)
+
+
+def plan_actions(runtime: Runtime, authorizer: Authorizer | None = None) -> list[state.Action]:
+    authorizer = authorizer or _authorizer(runtime)
     ctx = state.Context(runtime.config, authorizer, _usable(runtime), datetime.now(timezone.utc))
     return state.plan(fetch_open_items(runtime.gh), ctx)
 
 
-def _label_path(runtime: Runtime, number: int) -> str:
-    owner, name = runtime.gh.repo_parts()
-    return f"repos/{owner}/{name}/issues/{number}/labels"
-
-
-def _add_labels(runtime: Runtime, number: int, labels) -> None:
-    if labels:
-        runtime.gh.api(_label_path(runtime, number), method="POST", body={"labels": list(labels)})
-
-
-def _remove_label(runtime: Runtime, number: int, label: str) -> None:
-    try:
-        runtime.gh.api(f"{_label_path(runtime, number)}/{quote(label, safe='')}", method="DELETE")
-    except GhError as exc:
-        if exc.returncode and "404" not in exc.stderr and "Not Found" not in exc.stderr:
-            raise
-
-
-def execute(runtime: Runtime, action: state.Action) -> str:
-    """Execute dispatcher-owned actions. Stage runners are added in later rollout phases."""
+def execute(runtime: Runtime, action: state.Action, authorizer: Authorizer | None = None) -> str:
+    """Execute one planned action on GitHub."""
     number = action.item.number
     if action.kind == state.REVERT_LABEL and action.event is not None:
         if action.event.added:
-            _remove_label(runtime, number, action.event.label)
+            repo_ops.remove_label(runtime.gh, number, action.event.label)
         else:
-            _add_labels(runtime, number, [action.event.label])
+            repo_ops.add_labels(runtime.gh, number, [action.event.label])
         return f"reverted: {action.describe()}"
     if action.kind == state.SET_LABELS:
-        _add_labels(runtime, number, action.add_labels)
+        repo_ops.add_labels(runtime.gh, number, action.add_labels)
         for label in action.remove_labels:
-            _remove_label(runtime, number, label)
+            repo_ops.remove_label(runtime.gh, number, label)
         if state.BLOCKED in action.add_labels:
             notifier = GitHubNotifier(runtime.gh, runtime.config.notify.mention)
-            key = f"blocked-{number}-{action.item.head_sha or 'issue'}"
+            key = f"blocked-{number}-{action.item.head_sha or len(action.item.comments)}"
             notifier.send(Notification(number, key, f"Needs your decision: {action.reason}.", is_pr=action.item.is_pr))
         return f"done: {action.describe()}"
     if action.kind == state.REPLY_UNAUTHORIZED and action.comment_id:
@@ -147,8 +145,21 @@ def execute(runtime: Runtime, action: state.Action) -> str:
         )
         runtime.gh.api(f"repos/{owner}/{name}/issues/{number}/comments", method="POST", body={"body": body})
         return f"done: {action.describe()}"
+    if action.kind == state.REACT:
+        for comment_id in action.comment_ids:
+            repo_ops.react(runtime.gh, comment_id)
+        return f"acknowledged: {action.describe()}"
+    if action.kind == state.WAIT and action.quota_wait and not action.item.is_pr:
+        if state.WAITING_QUOTA not in action.item.labels:
+            repo_ops.add_labels(runtime.gh, number, [state.WAITING_QUOTA])
+        return f"waiting: {action.describe()}"
     if action.kind == state.RUN_STAGE:
-        return f"pending (stage runner not yet available): {action.describe()}"
+        runner = RUNNERS.get(action.stage or "")
+        if runner is None:
+            return f"pending (stage runner not yet available): {action.describe()}"
+        authorizer = authorizer or _authorizer(runtime)
+        authorizer.refresh()  # permissions are re-checked when work actually starts
+        return runner(StageContext(runtime, authorizer), action)
     return action.describe()
 
 
@@ -166,17 +177,35 @@ def tick(runtime: Runtime, *, dry_run: bool) -> list[str]:
             raise DispatcherError("live ticks must run as the GitHub App; use --dry-run or configure the App")
         if runtime.bot_login is None and not dry_run:
             raise DispatcherError("bot login unknown; set [github] bot_login or configure the GitHub App")
-        actions = plan_actions(runtime)
+        authorizer = _authorizer(runtime)
+        actions = plan_actions(runtime, authorizer)
         if dry_run:
             lines = [f"[dry-run] {action.describe()}" for action in actions]
             if runtime.bot_login is None:
                 lines.insert(0, "[dry-run] bot identity unknown: existing analyses and run markers are not recognized")
         else:
-            lines = [execute(runtime, action) for action in actions]
+            lines = _execute_all(runtime, actions, authorizer)
         _log_tick(runtime, dry_run, lines)
         return lines or ["no open items require action"]
     finally:
         lock.release()
+
+
+def _execute_all(runtime: Runtime, actions: list[state.Action], authorizer: Authorizer) -> list[str]:
+    """Execute actions in priority order, limiting model-backed stage runs per tick."""
+    lines = []
+    budget = runtime.config.policy.max_stage_runs_per_tick
+    for action in actions:
+        if action.kind == state.RUN_STAGE and action.stage in RUNNERS:
+            if budget <= 0:
+                lines.append(f"deferred to the next tick: {action.describe()}")
+                continue
+            budget -= 1
+        try:
+            lines.append(execute(runtime, action, authorizer))
+        except Exception as exc:  # one failing item must not stop the rest of the tick
+            lines.append(f"error on #{action.item.number}: {type(exc).__name__}: {exc}")
+    return lines
 
 
 def _log_tick(runtime: Runtime, dry_run: bool, lines: list[str]) -> None:

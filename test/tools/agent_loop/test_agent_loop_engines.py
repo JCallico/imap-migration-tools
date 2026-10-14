@@ -68,8 +68,10 @@ def test_claude_commands(tmp_path):
 
     assert read_only[:2] == ["claude", "-p"]
     assert "--strict-mcp-config" in read_only
-    assert read_only[read_only.index("--disallowedTools") + 1] == "Edit,Write,NotebookEdit"
-    assert read_only[read_only.index("--allowedTools") + 1] == "Read,Grep"
+    denied = read_only.index("--disallowedTools")
+    assert read_only[denied + 1 : denied + 4] == ["Edit", "Write", "NotebookEdit"]
+    allowed = read_only.index("--allowedTools")
+    assert read_only[allowed + 1 : allowed + 3] == ["Read", "Grep"]
     assert read_only[read_only.index("--max-turns") + 1] == "5"
     assert writable[writable.index("--permission-mode") + 1] == "acceptEdits"
     assert writable[-2:] == ["--resume", "s1"]

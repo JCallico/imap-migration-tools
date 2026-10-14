@@ -5,6 +5,7 @@
 
 [github]
 repo = "JCallico/imap-migration-tools"
+base_branch = "main"
 # Issues created before this time are analyzed only after an administrator applies agent:adopt.
 enabled_since = "2026-10-06T00:00:00Z"
 # Optional: narrows (never widens) the set of repository administrators whose commands count.
@@ -54,6 +55,9 @@ max_ai_review_rounds = 3
 max_concurrent_implementations = 1
 max_reanalyses_without_admin = 2
 max_diff_lines = 1500
+max_stage_runs_per_tick = 1          # model-backed stage runs per tick; the rest wait for the next tick
+revision_debounce_minutes = 5        # wait this long after an administrator's last comment, then revise once
+max_revisions_per_issue = 5          # revisions of one analysis before escalating to agent:blocked
 
 [quota]
 low_threshold_percent = 80

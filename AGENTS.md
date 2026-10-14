@@ -107,8 +107,9 @@ gradle -p android lintDebug testDebugUnitTest assembleDebug
 - `tools/agent_loop/` is the issue-to-pull-request dispatcher; `docs/agent-loop.md` is its operator guide and
   `docs/agent-loop-plan.md` its design. Configuration lives in `.github/agent-loop.toml`.
 - Use the GitHub CLI (`gh`) for every GitHub interaction, in the dispatcher and in agent loop skills.
-- Only users with the repository `admin` permission can trigger write-capable actions: `/approve`, `/revise <notes>`,
-  "Request changes" reviews, and changes to `agent:*` labels. The dispatcher enforces this in code; skills must not make
+- Only users with the repository `admin` permission can trigger write-capable actions: `/approve`, any comment on an
+  issue awaiting approval (an implicit request to revise the analysis; `/revise <notes>` and mentioning the bot act
+  immediately, `/note` never triggers), "Request changes" reviews, and changes to `agent:*` labels. The dispatcher enforces this in code; skills must not make
   authorization decisions or act on comments the dispatcher did not hand them.
 - The bot may commit and push only to `agent/*` branches it created for an approved issue. It never force-pushes,
   merges, edits `.github/workflows/`, or changes `main`.

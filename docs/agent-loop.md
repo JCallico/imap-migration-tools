@@ -6,18 +6,18 @@ plan are in [agent-loop-plan.md](agent-loop-plan.md).
 
 ## Current status
 
-Phase 1 (foundations) is implemented:
+Implemented:
 
-- configuration with precedence and implementation/review model-separation rules;
-- GitHub App authentication, with every GitHub call made through the GitHub CLI;
-- administrator-only trigger authorization and analysis-approval binding;
-- the label state machine, with `tick --dry-run` showing the planned actions;
-- the subscription quota ledger and failure classifier;
-- the GitHub notifier, label bootstrap, `doctor`, `status`, `pause`, and `resume`.
+- **Phase 1 (foundations):** configuration with precedence and implementation/review model-separation rules; GitHub
+  App authentication, with every GitHub call made through the GitHub CLI; administrator-only trigger authorization and
+  analysis-approval binding; the label state machine; the subscription quota ledger and failure classifier; the GitHub
+  notifier, label bootstrap, `doctor`, `status`, `pause`, and `resume`.
+- **Phase 2 (analysis and approval):** the read-only issue analysis stage, the `issue-analysis` skill, `/approve` and
+  conversational revisions (any administrator comment, `/revise`, or a mention of the bot), reporter follow-up for `agent:needs-info`, quota pauses with a status comment, and
+  administrator notification.
 
-Stage runners (analysis, implementation, review, and feedback) arrive in later phases. Until then, a live `tick`
-performs only dispatcher-owned actions: reverting unauthorized label changes, answering unauthorized commands, and
-escalating pull requests that exceed the AI review round limit. Planned stage runs are reported as pending.
+Implementation, review, and feedback stages arrive in later phases. Until then, an approved issue stays labeled
+`agent:awaiting-approval` and `tick` reports its implementation as pending.
 
 ## Administrator workflow
 
@@ -25,7 +25,9 @@ escalating pull requests that exceed the AI review round limit. Planned stage ru
 | --- | --- | --- |
 | Issue | Create an issue (or let others create one) | The loop analyzes it and labels it `agent:awaiting-approval` |
 | Issue | Comment `/approve` as the first line | Implementation starts from the approved analysis |
-| Issue | Comment `/revise <notes>` | The analysis is revised using your notes |
+| Issue | Comment anything else (a question, a change request, an answer to the analysis's open questions) | The bot reacts with 👀, waits until you have been quiet for `revision_debounce_minutes` (default 5), then posts one revised analysis covering all your comments |
+| Issue | Mention the bot (`@imap-tools-agent can you reconsider…`) or start with `/revise <notes>` | The same revision, started on the next tick without waiting |
+| Issue | Start a comment with `/note` | The comment is kept as context but never triggers a revision, for example when talking to a collaborator |
 | Issue | Close the issue | The loop stops |
 | Pull request | Merge or close | Done |
 | Pull request | Submit a "Request changes" review | The loop addresses your comments and returns the PR for review |
@@ -33,11 +35,33 @@ escalating pull requests that exceed the AI review round limit. Planned stage ru
 | Existing issue or PR | Apply `agent:adopt` | Opts in an item created before `enabled_since` (or a PR the loop did not create) |
 
 Only users with the repository **Admin** role count. Commands and `agent:*` label changes from anyone else are
-ignored or reverted, and the bot replies once to say so. A command must be the first line of a comment, must not be
-edited by anyone other than an administrator, and applies only to the analysis revision it follows. If the issue or
-the analysis changes afterwards, the loop re-analyzes and a new `/approve` is required.
+ignored or reverted, and the bot replies once to say so. Comments from other people are never a trigger, even when
+they mention the bot, but the model still reads them as context. `/approve` is always explicit: it must be the first
+line of a comment, it wins over plain comments written around it, and only a later `/revise` overrides it. A
+malformed command such as `/approve now` is ignored, never read as feedback. Comments must not have been edited by
+anyone other than an administrator, and apply only to the analysis they follow, including comments written while the
+analysis was still running. If the issue or the analysis changes afterwards, the loop re-analyzes and a new `/approve`
+is required. After `max_revisions_per_issue` (default 5) revisions, the issue is labeled `agent:blocked` and you are
+notified so a long thread cannot spend subscription quota indefinitely.
 
 ## Setup
+
+### This repository's setup
+
+Completed on 2026-10-14 for `JCallico/imap-migration-tools`:
+
+| Item | Value |
+| --- | --- |
+| GitHub App | `imap-tools-agent`, owned by JCallico, acting as `imap-tools-agent[bot]` |
+| Installation | JCallico account, **only** `imap-migration-tools` |
+| App permissions | Contents, Issues, Pull requests: read and write; Actions, Checks, Metadata: read-only |
+| Private key | `~/.ssh/imap-agent-app.pem`, mode 600, on the machine that runs the loop |
+| Loop settings | `~/.config/agent-loop/env` (mode 600): App ID, installation ID, key path |
+| Shell loading | `~/.bashrc` loads that file above Omarchy's interactive-shell guard, so every bash shell has it |
+| Labels | All eleven `agent:*` labels, created by the App |
+| Branch rules | Ruleset `main_branch_ruleset` updated as described under [Branch protection](#branch-protection) |
+
+The App ID, installation ID, and key path are not secrets; the key itself is, and never leaves that machine.
 
 ### Dependencies
 
@@ -66,26 +90,42 @@ your own comments) and so that bot activity is clearly separated from yours.
 
    Leave everything else, especially **Workflows** and **Administration**, at **No access**.
 4. Under "Where can this GitHub App be installed?", choose **Only on this account**, then create the App.
-5. Note the **App ID**. Under **Private keys**, generate a key and move it outside the repository:
+5. Note the **App ID** (the Client ID is not needed). Under **Private keys**, generate a key and move it to a private
+   location outside the repository and outside synced folders such as OneDrive. This repository's machine uses
+   `~/.ssh`:
 
    ```bash
-   install -d -m 700 ~/.config/agent-loop
-   mv ~/Downloads/<app-name>.*.private-key.pem ~/.config/agent-loop/app.pem
-   chmod 600 ~/.config/agent-loop/app.pem
+   mv ~/Downloads/<app-name>.*.private-key.pem ~/.ssh/imap-agent-app.pem
+   chmod 600 ~/.ssh/imap-agent-app.pem
    ```
+
+   Any private path works (for example `~/.config/agent-loop/app.pem`); the dispatcher refuses keys readable by other
+   users. A lost or exposed key is replaced by generating a new one in the App settings and deleting the old one.
 
 6. Choose **Install App**, install it on **Only select repositories → imap-migration-tools**, and note the installation
    ID from the URL (`.../settings/installations/<installation-id>`).
-7. Provide the credentials to the machine that runs the loop, for example in `~/.config/agent-loop/env`
-   (mode 600), which a systemd unit can later load with `EnvironmentFile=`:
+7. Put the settings in `~/.config/agent-loop/env` (mode 600). A systemd unit can later load the same file with
+   `EnvironmentFile=`:
 
    ```bash
-   AGENT_LOOP_APP_ID=123456
-   AGENT_LOOP_APP_INSTALLATION_ID=78901234
-   AGENT_LOOP_APP_PRIVATE_KEY_PATH=/home/<you>/.config/agent-loop/app.pem
+   install -d -m 700 ~/.config/agent-loop
+   cat > ~/.config/agent-loop/env <<'EOF'
+   AGENT_LOOP_APP_ID=<app-id>
+   AGENT_LOOP_APP_INSTALLATION_ID=<installation-id>
+   AGENT_LOOP_APP_PRIVATE_KEY_PATH=/home/<you>/.ssh/imap-agent-app.pem
+   EOF
+   chmod 600 ~/.config/agent-loop/env
    ```
 
-8. Verify:
+8. Load it in every shell by adding this to `~/.bashrc`. On Omarchy, place it **above** the
+   `[[ $- != *i* ]] && return` guard so non-interactive shells get it too:
+
+   ```bash
+   # Agent loop GitHub App settings (above the interactive guard so every bash shell gets them)
+   if [ -f ~/.config/agent-loop/env ]; then set -a; . ~/.config/agent-loop/env; set +a; fi
+   ```
+
+9. Verify in a new terminal:
 
    ```bash
    set -a; . ~/.config/agent-loop/env; set +a
@@ -108,8 +148,21 @@ PYTHONPATH=tools .venv/bin/python -m agent_loop labels --apply   # create or upd
 
 ### Branch protection
 
-Protect `main` so that even a malfunctioning loop cannot merge: require pull requests, the CI checks, and one approving
-review from an administrator. Apply this through **Settings → Rules → Rulesets** after reviewing the plan.
+`main` is protected so that even a malfunctioning loop cannot merge. The repository ruleset `main_branch_ruleset`
+(**Settings → Rules → Rulesets**) enforces:
+
+- pull requests for every change, squash merges only, and resolved review conversations;
+- one approving review, dismissed when new commits are pushed;
+- these status checks: `Lint`, `Test (Python 3.10)` through `Test (Python 3.13)`, `Security Scan`, `Build Check`,
+  `PyPI README`, `Native GUI (ubuntu-24.04)`, `Native GUI (macos-latest)`, `Native GUI (windows-latest)`, and the
+  Android `build`;
+- no force-pushes and no deletion of `main`;
+- a bypass for the repository **Admin** role in pull-request mode only: administrators can merge their own pull
+  requests (GitHub does not allow self-approval) with "bypass rules" or `gh pr merge --squash --admin`, but nobody can
+  push to `main` directly.
+
+Pull requests opened by the bot therefore need an administrator's approval and green checks. The ruleset as it was
+before the agent loop is saved locally at `~/.local/state/agent-loop/main_branch_ruleset.backup.json`.
 
 ## Configuration
 
@@ -120,7 +173,8 @@ review from an administrator. Apply this through **Settings → Rules → Rulese
    `AGENT_LOOP_CONFIG`, `AGENT_LOOP_REPO`, `AGENT_LOOP_BOT_LOGIN`, `AGENT_LOOP_PAUSED`, `AGENT_LOOP_STATE_DIR`, and
    the `AGENT_LOOP_APP_*` credentials;
 3. the configuration file;
-4. built-in defaults (identical to the committed file).
+4. built-in defaults (the same stage models and policy as the committed file; repository, `enabled_since`, and
+   `notify.mention` have no defaults).
 
 Stages are `analysis`, `implementation`, `feedback`, `ci_fix`, `review`, and `summarize`. Engines are `codex` and
 `claude`. The dispatcher refuses to start when the review model equals any code-authoring model or, unless
@@ -139,6 +193,36 @@ PYTHONPATH=tools .venv/bin/python -m agent_loop resume
 ```
 
 Local state (quota ledger, tick log, pause marker, and locks) lives in `~/.local/state/agent-loop/<owner>-<repo>/`.
+Stage checkouts are disposable git worktrees under `~/.cache/agent-loop/<owner>-<repo>/worktrees/` (override with
+`[loop] worktree_dir` or `AGENT_LOOP_WORKTREE_DIR`). They deliberately live outside the state directory: stages are
+forbidden to read `~/.local/state`, `~/.config`, `~/.ssh`, and other credential locations, so a checkout inside one of
+them would be unreadable to the very stage that needs it. The dispatcher refuses to run a stage whose checkout lies
+inside a denied location.
+
+## Analysis stage
+
+On a live `tick`, each new issue (and each issue with a pending revision request or a reporter reply to
+`agent:needs-info`)
+is analyzed by the configured `analysis` model, at most `max_stage_runs_per_tick` per tick:
+
+1. The issue is labeled `agent:analyzing`, and a disposable worktree of `origin/<base_branch>` is created under the
+   worktree directory (see above).
+2. The model receives the `issue-analysis` skill from the dispatcher's own checkout and the issue as a quoted JSON
+   document marked untrusted. The administrator's comments that requested a revision are passed separately as trusted
+   input.
+3. The run is read-only. For Claude, only `Read`, `Grep`, `Glob`, and read-only `git` commands are allowed; editing,
+   web access, and subagents are denied, as is reading credential locations (`~/.ssh`, `~/.config`, `~/.codex`,
+   `~/.claude`, `~/.local/state`, `~/.gnupg`, `~/.aws`, keyrings, and `.env` files). Codex runs in its read-only
+   sandbox, which has no network access but can read any local file.
+4. The result must be a JSON object (`analysis` or `needs_info`). Before posting, the dispatcher rejects output that
+   looks like a credential and neutralizes @mentions in model text, so only the dispatcher notifies people.
+5. An analysis is posted with a hidden hash marker, the issue moves to `agent:awaiting-approval`, and the
+   administrator is mentioned and assigned. A request for information mentions the reporter and moves the issue to
+   `agent:needs-info`.
+
+A subscription limit labels the issue `agent:waiting-quota` and keeps one status comment up to date until the work
+resumes. Invalid output, a possible credential, an authentication problem, or a failed run labels the issue
+`agent:blocked` and notifies the administrator; remove the label to retry.
 
 ## Subscription limits
 
