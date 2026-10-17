@@ -53,6 +53,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ".[tui]"
+          pip install -r tools/agent_loop/requirements.txt
           pip install pytest pytest-cov
 
       - name: Run tests with coverage

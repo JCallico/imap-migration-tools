@@ -1,0 +1,4 @@
+interface:
+  display_name: "Issue Analysis"
+  short_description: "Turn a GitHub issue into an implementation-ready spec"
+  default_prompt: "Analyze this GitHub issue and produce an implementation-ready specification for approval."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement Approved Issue"
+  short_description: "Implement an approved specification and repair failing checks"
+  default_prompt: "Implement the approved specification on this branch and report the result as JSON."

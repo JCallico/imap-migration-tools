@@ -1,0 +1,4 @@
+# Agent loop dispatcher dependencies (development tooling; not part of the published package).
+filelock>=3.12
+PyJWT[crypto]>=2.8
+tomli>=2.0; python_version < "3.11"
