@@ -85,6 +85,9 @@ class PolicyConfig:
     max_stage_runs_per_tick: int = 1
     revision_debounce_minutes: float = 5.0
     max_revisions_per_issue: int = 5
+    max_ci_fix_attempts: int = 3
+    max_verify_rounds: int = 3
+    protected_paths: tuple[str, ...] = (".github/workflows/**",)
 
 
 @dataclass(frozen=True)
@@ -94,6 +97,23 @@ class QuotaConfig:
     unknown_backoff_max_hours: float = 6.0
     max_stage_minutes: int = 90
     max_turns: int = 200
+
+
+DEFAULT_VERIFY_COMMANDS = (
+    "{python} -m pytest test/ -q -p no:cacheprovider",
+    "{python} -m ruff check src/ tools/ test/",
+    "{python} -m ruff format --check src/ tools/ test/",
+    "git diff --check",
+)
+
+
+@dataclass(frozen=True)
+class VerifyConfig:
+    """Checks the dispatcher runs, outside any sandbox, before a stage's changes are committed and pushed."""
+
+    commands: tuple[str, ...] = DEFAULT_VERIFY_COMMANDS
+    timeout_minutes: float = 30.0
+    pythonpath: str = "src"
 
 
 @dataclass(frozen=True)
@@ -120,6 +140,7 @@ class LoopConfig:
     stages: Mapping[str, StageConfig]
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     quota: QuotaConfig = field(default_factory=QuotaConfig)
+    verify: VerifyConfig = field(default_factory=VerifyConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
     github: GitHubConfig = field(default_factory=GitHubConfig)
     paused: bool = False
@@ -275,7 +296,7 @@ def _github_from_table(table: Mapping[str, Any]) -> GitHubConfig:
 
 
 def _apply_file(data: Mapping[str, Any]) -> dict[str, Any]:
-    _check_keys(data, ("stages", "policy", "quota", "notify", "github", "loop"), "configuration")
+    _check_keys(data, ("stages", "policy", "quota", "verify", "notify", "github", "loop"), "configuration")
     stages = dict(DEFAULT_STAGES)
     for name, table in (data.get("stages") or {}).items():
         if name not in STAGES:
@@ -286,6 +307,8 @@ def _apply_file(data: Mapping[str, Any]) -> dict[str, Any]:
         result["policy"] = _dataclass_from_table(PolicyConfig, data["policy"], "[policy]")
     if "quota" in data:
         result["quota"] = _dataclass_from_table(QuotaConfig, data["quota"], "[quota]")
+    if "verify" in data:
+        result["verify"] = _dataclass_from_table(VerifyConfig, data["verify"], "[verify]")
     if "notify" in data:
         result["notify"] = _dataclass_from_table(NotifyConfig, data["notify"], "[notify]")
     if "github" in data:
@@ -379,6 +402,10 @@ def validate(config: LoopConfig) -> None:
         errors.append("[policy] revision_debounce_minutes cannot be negative")
     if policy.max_revisions_per_issue < 1:
         errors.append("[policy] max_revisions_per_issue must be at least 1")
+    if policy.max_ci_fix_attempts < 1 or policy.max_verify_rounds < 1:
+        errors.append("[policy] max_ci_fix_attempts and max_verify_rounds must be at least 1")
+    if not config.verify.commands:
+        errors.append("[verify] commands must not be empty")
     if policy.max_stage_runs_per_tick < 1:
         errors.append("[policy] max_stage_runs_per_tick must be at least 1")
     if policy.max_ai_review_rounds < 1:

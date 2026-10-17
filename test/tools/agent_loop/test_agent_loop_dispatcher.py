@@ -175,3 +175,36 @@ def test_review_round_limit_blocks_and_notifies_admin(tmp_path):
     assert runner.api_calls("DELETE")[0]["args"][3].endswith("/labels/agent%3Aai-review")
     notice = json.loads(posts[-1]["input"])["body"]
     assert notice.startswith(f"@{ADMIN} Needs your decision") and "key=blocked-9-abc" in notice
+
+
+def test_live_tick_checks_ci_for_an_implementing_pull_request(tmp_path):
+    issue = issue_node(77, labels=["agent:implementing"])
+    pr = issue_node(88, labels=["agent:implementing"])
+    pr.update(
+        {
+            "id": "PR_node",
+            "isDraft": True,
+            "headRefOid": "abc123",
+            "headRefName": "agent/issue-77-add-feature",
+            "reviews": {"nodes": []},
+        }
+    )
+    base = github([issue], pulls=[pr])
+
+    def route(args, stdin):
+        path = next((arg for arg in args if arg.startswith("repos/")), "")
+        if path.endswith("/rules/branches/main"):
+            return [{"type": "required_status_checks", "parameters": {"required_status_checks": [{"context": "Lint"}]}}]
+        if path.endswith("/check-runs"):
+            return {"check_runs": [{"id": 1, "name": "Lint", "status": "in_progress", "conclusion": None}]}
+        if path.endswith("/status"):
+            return {"statuses": []}
+        return base.route(args, stdin)
+
+    runner = FakeGhRunner(route)
+
+    lines = tick(runtime(tmp_path, runner), dry_run=False)
+
+    assert "waiting for CI on PR #88: 0/1 required checks passed" in lines
+    assert "issue #77: skip — implementation is tracked by PR #88" in lines
+    assert runner.api_calls("POST") == []

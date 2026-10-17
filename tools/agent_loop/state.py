@@ -18,6 +18,7 @@ from .authz import (
 from .config import LoopConfig, ModelRef, parse_model_ref
 from .selection import UsableFn, select_author, select_reviewer, select_stage_model
 from .snapshot import Item, LabelEvent
+from .worktree import issue_number_from_branch
 
 ANALYZING = "agent:analyzing"
 NEEDS_INFO = "agent:needs-info"
@@ -61,6 +62,7 @@ REVERT_LABEL = "revert_label"
 REPLY_UNAUTHORIZED = "reply_unauthorized"
 SET_LABELS = "set_labels"
 REACT = "react"
+CHECK_CI = "check_ci"
 
 
 @dataclass
@@ -78,6 +80,7 @@ class Action:
     notes: str = ""
     priority: int = 99
     quota_wait: bool = False
+    related: Item | None = None  # the issue a pull request implements
 
     def describe(self) -> str:
         kind = "PR" if self.item.is_pr else "issue"
@@ -91,6 +94,8 @@ class Action:
             text = f"{target}: {verb} {self.event.label} (changed by {self.event.actor or 'unknown'}, not an admin)"
         elif self.kind == REPLY_UNAUTHORIZED:
             text = f"{target}: reply that only administrators can issue commands"
+        elif self.kind == CHECK_CI:
+            text = f"{target}: check CI, repair failures, or mark ready for AI review"
         elif self.kind == REACT:
             text = f"{target}: acknowledge {len(self.comment_ids)} administrator comment(s) with a reaction"
         elif self.kind == SET_LABELS:
@@ -107,6 +112,8 @@ class Context:
     usable: UsableFn
     now: datetime
     actions: list[Action] = field(default_factory=list)
+    prs_by_issue: dict[int, Item] = field(default_factory=dict)
+    issues_by_number: dict[int, Item] = field(default_factory=dict)
 
 
 def run_markers(item: Item, authorizer: Authorizer) -> list[tuple[str, ModelRef]]:
@@ -198,6 +205,18 @@ def _reply_after_needs_info(item: Item, ctx: Context) -> bool:
     )
 
 
+def _implementations_in_flight(item: Item, ctx: Context) -> list[int]:
+    """Other issues whose implementation has started and whose pull request is not yet ready for review."""
+    busy = []
+    for number, issue in ctx.issues_by_number.items():
+        if number == item.number or IMPLEMENTING not in issue.labels:
+            continue
+        pr = ctx.prs_by_issue.get(number)
+        if pr is None or IMPLEMENTING in pr.labels:
+            busy.append(number)
+    return busy
+
+
 def _decide_issue(item: Item, labels: set[str], ctx: Context) -> list[Action]:
     config = ctx.config
     has_state = any(label in labels for label in STATE_LABELS)
@@ -236,7 +255,12 @@ def _decide_issue(item: Item, labels: set[str], ctx: Context) -> list[Action]:
                     )
                 )
                 return actions
-        if decision.status == "approved":
+        busy = _implementations_in_flight(item, ctx) if decision.status == "approved" else []
+        if decision.status == "approved" and len(busy) >= config.policy.max_concurrent_implementations:
+            actions.append(
+                Action(SKIP, item, reason=f"approved; waiting for the implementation of #{busy[0]} to reach review")
+            )
+        elif decision.status == "approved":
             actions.append(
                 _stage_action(
                     ctx,
@@ -273,6 +297,9 @@ def _decide_issue(item: Item, labels: set[str], ctx: Context) -> list[Action]:
             actions.append(Action(SKIP, item, reason="waiting for the administrator: /approve, or a comment to revise"))
         return actions
     if IMPLEMENTING in labels:
+        pr = ctx.prs_by_issue.get(item.number)
+        if pr is not None:
+            return [Action(SKIP, item, reason=f"implementation is tracked by PR #{pr.number}")]
         return [_stage_action(ctx, item, "implementation", "implementation", reason="implementation in progress")]
     return [Action(SKIP, item, reason="no issue action for current labels")]
 
@@ -350,7 +377,16 @@ def _decide_pr(item: Item, labels: set[str], ctx: Context) -> list[Action]:
             ]
         return [_stage_action(ctx, item, "review", "review", reason=f"AI review round {rounds + 1}")]
     if IMPLEMENTING in labels:
-        return [_stage_action(ctx, item, "implementation", "implementation", reason="implementation in progress")]
+        number = issue_number_from_branch(item.head_ref)
+        return [
+            Action(
+                CHECK_CI,
+                item,
+                priority=PRIORITY["ci_fix"],
+                related=ctx.issues_by_number.get(number) if number is not None else None,
+                reason="implementation pull request",
+            )
+        ]
     return [Action(SKIP, item, reason="no pull request action for current labels")]
 
 
@@ -376,6 +412,12 @@ def plan(items: Iterable[Item], ctx: Context) -> list[Action]:
     """Decide actions for every item and order them by priority."""
     if ctx.config.paused:
         return []
+    items = list(items)
+    ctx.issues_by_number = {item.number: item for item in items if not item.is_pr}
+    for item in items:
+        number = issue_number_from_branch(item.head_ref) if item.is_pr else None
+        if number is not None:
+            ctx.prs_by_issue[number] = item
     actions = [action for item in items for action in decide(item, ctx)]
     return sorted(actions, key=lambda action: (action.priority, action.item.number))
 

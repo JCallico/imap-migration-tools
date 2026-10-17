@@ -59,6 +59,22 @@ max_stage_runs_per_tick = 1          # model-backed stage runs per tick; the res
 revision_debounce_minutes = 5        # wait this long after an administrator's last comment, then revise once
 max_revisions_per_issue = 5          # revisions of one analysis before escalating to agent:blocked
 
+max_ci_fix_attempts = 3              # CI repair runs per pull request before escalating to agent:blocked
+max_verify_rounds = 3                # verification-and-repair rounds per implementation run
+protected_paths = [".github/workflows/**"]   # the bot never changes these
+
+[verify]
+# Run by the dispatcher outside any sandbox before anything is committed or pushed. {python} is the interpreter
+# running the dispatcher. These mirror the sequence in AGENTS.md.
+commands = [
+  "{python} -m pytest test/ -q -p no:cacheprovider",
+  "{python} -m ruff check src/ tools/ test/",
+  "{python} -m ruff format --check src/ tools/ test/",
+  "git diff --check",
+]
+timeout_minutes = 30
+pythonpath = "src"
+
 [quota]
 low_threshold_percent = 80
 reserve_for_inflight = true

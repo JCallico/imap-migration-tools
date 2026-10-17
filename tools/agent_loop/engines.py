@@ -162,7 +162,8 @@ def build_command(
             if output_schema is not None:
                 command += ["--output-schema", str(output_schema)]
         else:
-            command.append(resume_session)
+            # `codex exec resume` takes no -s/-C: the sandbox is re-applied by config and the session keeps its cwd.
+            command += ["-c", f'sandbox_mode="{sandbox}"', resume_session]
         command.append("-")
         return command
     if ref.engine == "claude":

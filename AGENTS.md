@@ -112,7 +112,8 @@ gradle -p android lintDebug testDebugUnitTest assembleDebug
   immediately, `/note` never triggers), "Request changes" reviews, and changes to `agent:*` labels. The dispatcher enforces this in code; skills must not make
   authorization decisions or act on comments the dispatcher did not hand them.
 - The bot may commit and push only to `agent/*` branches it created for an approved issue. It never force-pushes,
-  merges, edits `.github/workflows/`, or changes `main`.
+  merges, edits `.github/workflows/`, or changes `main`. The dispatcher performs every commit, push, and GitHub
+  change; models only edit files in a sandboxed worktree and never receive GitHub credentials.
 - Implementation and review must never use the same model and, by default, not the same vendor. Model choices are
   configuration, not code.
 - Reaching a subscription limit pauses work; never switch a stage to paid API billing or pass API-key variables to it.

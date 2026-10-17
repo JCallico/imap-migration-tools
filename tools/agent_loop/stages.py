@@ -53,8 +53,8 @@ def _notify(ctx: StageContext, item, key: str, message: str) -> None:
 def _block(ctx: StageContext, item, reason: str) -> str:
     """Stop work on an item and ask the administrator to decide; never echoes model output."""
     repo_ops.set_labels(ctx.gh, item, add=[state.BLOCKED], remove=[state.WAITING_QUOTA])
-    _notify(ctx, item, f"blocked-{item.number}-{len(item.comments)}", f"Needs your decision: {reason}.")
-    return f"blocked issue #{item.number}: {reason}"
+    _notify(ctx, item, f"blocked-{item.number}-{len(item.comments)}", f"Needs your decision: {reason.rstrip('. ')}.")
+    return f"blocked {'PR' if item.is_pr else 'issue'} #{item.number}: {reason}"
 
 
 def _pause_for_quota(ctx: StageContext, item, engine: str) -> str:
@@ -67,7 +67,27 @@ def _pause_for_quota(ctx: StageContext, item, engine: str) -> str:
         ctx.runtime.bot_login,
         f"Paused: the {engine} subscription limit was reached. Work resumes automatically after about {when}.",
     )
-    return f"paused issue #{item.number}: {engine} {entry.status} until {when}"
+    return f"paused {'PR' if item.is_pr else 'issue'} #{item.number}: {engine} {entry.status} until {when}"
+
+
+def settle_run(ctx: StageContext, item, ref: ModelRef, run: EngineRun, what: str) -> str | None:
+    """Record a run's quota effects; return a result line when the run did not succeed, otherwise ``None``."""
+    runtime = ctx.runtime
+    if run.snapshot is not None:
+        runtime.ledger.record_snapshot(run.snapshot)
+    classification = run.classification
+    assert classification is not None
+    runtime.ledger.record_classification(ref.engine, classification)
+    kind = "PR" if item.is_pr else "issue"
+    if classification.kind in (QUOTA_EXHAUSTED, UNCLASSIFIED):
+        return _pause_for_quota(ctx, item, ref.engine)
+    if classification.kind == TRANSIENT:
+        return f"retrying {kind} #{item.number} next tick: transient {ref.engine} error"
+    if classification.kind == AUTH:
+        return _block(ctx, item, f"the {ref.engine} CLI reported an authentication problem; run `agent_loop doctor`")
+    if classification.kind != SUCCESS:
+        return _block(ctx, item, f"the {what} run did not complete ({classification.detail or classification.kind})")
+    return None
 
 
 def run_analysis(ctx: StageContext, action: state.Action) -> str:
@@ -119,19 +139,9 @@ def run_analysis(ctx: StageContext, action: state.Action) -> str:
     except WorktreeError as exc:
         return _block(ctx, item, f"could not prepare a checkout of `{config.github.base_branch}` ({exc})")
 
-    if run.snapshot is not None:
-        runtime.ledger.record_snapshot(run.snapshot)
-    classification = run.classification
-    assert classification is not None
-    runtime.ledger.record_classification(ref.engine, classification)
-    if classification.kind in (QUOTA_EXHAUSTED, UNCLASSIFIED):
-        return _pause_for_quota(ctx, item, ref.engine)
-    if classification.kind == TRANSIENT:
-        return f"retrying issue #{item.number} next tick: transient {ref.engine} error"
-    if classification.kind == AUTH:
-        return _block(ctx, item, f"the {ref.engine} CLI reported an authentication problem; run `agent_loop doctor`")
-    if classification.kind != SUCCESS:
-        return _block(ctx, item, f"the analysis run did not complete ({classification.detail or classification.kind})")
+    stopped = settle_run(ctx, item, ref, run, "analysis")
+    if stopped:
+        return stopped
 
     try:
         result = analysis.parse_result(run.final_message)
@@ -184,6 +194,3 @@ def run_analysis(ctx: StageContext, action: state.Action) -> str:
         repo_ops.assign(ctx.gh, item.number, mention)
     mismatch = " (model differed from the configured one)" if run.model_mismatch else ""
     return f"analyzed issue #{item.number} with {model}{mismatch}: {next_label}"
-
-
-RUNNERS = {"analysis": run_analysis}

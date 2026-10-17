@@ -59,6 +59,8 @@ class Item:
     is_draft: bool = False
     truncated: bool = False
     url: str = ""
+    node_id: str = ""
+    head_ref: str | None = None
 
 
 def parse_time(value: str | None) -> datetime | None:
@@ -99,7 +101,7 @@ timelineItems(last: {EVENT_LIMIT}, itemTypes: [LABELED_EVENT, UNLABELED_EVENT]) 
   }}
 }}"""
 _COMMON = f"""
-number title body url state createdAt
+id number title body url state createdAt
 author {_ACTOR}
 labels(first: 50) {{ nodes {{ name }} }}
 {_COMMENTS}
@@ -122,7 +124,7 @@ query($owner: String!, $name: String!, $cursor: String) {{
       pageInfo {{ hasNextPage endCursor }}
       nodes {{
         {_COMMON}
-        isDraft headRefOid
+        isDraft headRefOid headRefName
         reviews(last: {REVIEW_LIMIT}) {{
           nodes {{ state submittedAt body author {_ACTOR} commit {{ oid }} }}
         }}
@@ -191,6 +193,8 @@ def item_from_node(node: dict, is_pr: bool) -> Item:
         is_draft=bool(node.get("isDraft")),
         truncated=truncated,
         url=node.get("url") or "",
+        node_id=node.get("id") or "",
+        head_ref=node.get("headRefName"),
     )
 
 

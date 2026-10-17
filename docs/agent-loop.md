@@ -16,8 +16,12 @@ Implemented:
   conversational revisions (any administrator comment, `/revise`, or a mention of the bot), reporter follow-up for `agent:needs-info`, quota pauses with a status comment, and
   administrator notification.
 
-Implementation, review, and feedback stages arrive in later phases. Until then, an approved issue stays labeled
-`agent:awaiting-approval` and `tick` reports its implementation as pending.
+- **Phase 3 (implementation):** after `/approve`, the implementation stage builds the change on an `agent/issue-<n>-*`
+  branch, the dispatcher verifies it, applies the diff policy, pushes it, and opens a draft pull request; each tick then
+  watches CI, repairs failures, and marks the pull request ready for AI review once the required checks pass.
+
+Review and feedback stages (AI review, responding to review comments) arrive in the next phase. Until then, a pull
+request labeled `agent:ai-review` waits for you; you can review and merge it yourself.
 
 ## Administrator workflow
 
@@ -29,6 +33,8 @@ Implementation, review, and feedback stages arrive in later phases. Until then, 
 | Issue | Mention the bot (`@imap-tools-agent can you reconsider…`) or start with `/revise <notes>` | The same revision, started on the next tick without waiting |
 | Issue | Start a comment with `/note` | The comment is kept as context but never triggers a revision, for example when talking to a collaborator |
 | Issue | Close the issue | The loop stops |
+| Issue | Reply `/approve` | The issue becomes `agent:implementing`; a draft PR with `Closes #<n>` appears when the change is verified |
+| Pull request | Wait | CI runs on each push; failures are repaired automatically (up to `max_ci_fix_attempts`); the PR is marked ready and labeled `agent:ai-review` when the required checks pass |
 | Pull request | Merge or close | Done |
 | Pull request | Submit a "Request changes" review | The loop addresses your comments and returns the PR for review |
 | Issue or PR | Apply `agent:paused` | The loop leaves the item alone until you remove the label |
@@ -176,6 +182,9 @@ before the agent loop is saved locally at `~/.local/state/agent-loop/main_branch
 4. built-in defaults (the same stage models and policy as the committed file; repository, `enabled_since`, and
    `notify.mention` have no defaults).
 
+Verification, diff-policy, and CI-repair settings live in `[verify]` and `[policy]` (`max_verify_rounds`,
+`max_ci_fix_attempts`, `protected_paths`, `max_diff_lines`).
+
 Stages are `analysis`, `implementation`, `feedback`, `ci_fix`, `review`, and `summarize`. Engines are `codex` and
 `claude`. The dispatcher refuses to start when the review model equals any code-authoring model or, unless
 `require_distinct_review_vendor = false`, shares its vendor. The repository `.env` file is deliberately not loaded; it
@@ -198,6 +207,61 @@ Stage checkouts are disposable git worktrees under `~/.cache/agent-loop/<owner>-
 forbidden to read `~/.local/state`, `~/.config`, `~/.ssh`, and other credential locations, so a checkout inside one of
 them would be unreadable to the very stage that needs it. The dispatcher refuses to run a stage whose checkout lies
 inside a denied location.
+
+## Implementation stage
+
+After `/approve` (and at most `max_concurrent_implementations` at a time), each tick runs this pipeline. The model
+only edits files; the dispatcher does everything that touches git history or GitHub, as the GitHub App.
+
+1. **Approval is re-verified** at the moment work starts: the approval must still follow the current analysis, and
+   the issue text must be unchanged. Otherwise the issue becomes `agent:blocked`.
+2. **A persistent worktree** `impl-<n>` is created under the worktree directory on branch `agent/issue-<n>-<slug>`
+   from the latest `origin/<base_branch>`. A local branch with unpushed commits is reused, never reset.
+3. **The implementation model** (Codex by default) runs in its `workspace-write` sandbox: it can edit the worktree
+   but cannot write elsewhere, use the network, or run git commits. It receives the `implement-approved-issue` skill,
+   the approved analysis, and your comments; the original issue text is deliberately withheld. It writes progress
+   notes to `.agent-loop/progress.md`, which is never committed.
+4. **Verification runs outside the sandbox.** The dispatcher runs the `[verify]` commands (the AGENTS.md sequence:
+   full pytest suite, Ruff check and format check, `git diff --check`), because the sandbox blocks the loopback
+   sockets that most tests need. Failures are returned to the same model session for up to `max_verify_rounds`
+   repair rounds; then the issue becomes `agent:blocked`.
+5. **The diff policy gate** runs on the commit: no changes to `policy.protected_paths` (default
+   `.github/workflows/**`), no symbolic links, submodules, or binary files, no credential-like content, and at most
+   `max_diff_lines` changed lines outside tests. Violations name the rule and path, never the content.
+6. **The dispatcher commits and pushes** to the `agent/*` branch (never force, never any other branch) using a
+   one-shot credential helper, so the App token never appears in a command line or in the model's environment. The
+   commit is attributed to the bot account.
+7. **A draft pull request** is opened with `Closes #<n>`, the model's summary and notes (mentions neutralized and
+   scanned for credentials), the verification results, and a comment recording which model implemented it, which the
+   review stage later uses to pick a different model.
+
+### CI loop
+
+Each tick, a pull request labeled `agent:implementing` is checked against the status checks required by the base
+branch's rules (falling back to every reported check):
+
+- **Pending or not yet reported:** wait.
+- **Failed:** the `ci_fix` model receives the failing job logs (credentials redacted) and repairs the branch. The fix
+  goes through the same verification, policy gate, and push; at most `max_ci_fix_attempts` times, then
+  `agent:blocked`.
+- **Green:** the pull request is marked ready for review, labeled `agent:ai-review`, and its worktree is removed.
+
+### Interruptions
+
+A subscription limit, transient error, or restart never loses work. The worktree and the model's session id are kept
+(`~/.local/state/agent-loop/<owner>-<repo>/stages/issue-<n>.json`); the next tick resumes the session (falling back
+to a fresh session that rediscovers the work from the worktree) and the status comment says when work continues.
+Every stage step is idempotent: an existing pull request for the branch is reused, and a finished model run is not
+repeated when only verification or pushing remained.
+
+### Isolation limits
+
+Codex's sandbox restricts writes and the network, **not reads**: an implementation or repair run can read any file your
+account can read, including the App private key. That is why the model never receives credentials, why you approve
+the specification before it runs, and why every change passes the diff policy gate and your review before merging.
+Treat the implementation model as running with your account's read access and review its output accordingly. If you
+configure a Claude model as the implementer, its tool allow- and deny-lists apply instead (no network tools, no git
+commits, credential locations denied), but there is no operating-system sandbox.
 
 ## Analysis stage
 

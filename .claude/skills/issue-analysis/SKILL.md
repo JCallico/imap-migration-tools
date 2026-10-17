@@ -19,6 +19,9 @@ repository administrator can approve or revise. You are read-only: investigate, 
   variables, and legacy wrapper scripts are compatibility contracts; shared logic belongs in `src/core/`, `src/auth/`,
   `src/providers/`, or `src/utils/`; tests mirror the source layout.
 - Do not write code beyond short illustrative snippets. The implementation stage writes the code.
+- The implementation stage runs in a sandbox with no network or `gh` access and may not edit `.github/workflows/`.
+  Do not write acceptance criteria that require creating or linking GitHub issues, or changing workflows. Record such
+  work as deferred follow-ups in the specification text, and let the administrator file them.
 
 ## Investigate
 

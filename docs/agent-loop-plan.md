@@ -1,7 +1,7 @@
 # Agent loop implementation plan
 
-Status: Phases 1 (foundations) and 2 (analysis and approval) implemented on `feat/agent-loop-foundations`; the GitHub
-App, labels, and branch rules are set up. Later phases pending. See [agent-loop.md](agent-loop.md) for operation.
+Status: Phases 1 (foundations), 2 (analysis and approval), and 3 (implementation) implemented on
+`feat/agent-loop-foundations`; the GitHub App, labels, and branch rules are set up. Review and feedback phases pending. See [agent-loop.md](agent-loop.md) for operation.
 
 ## Goal
 
@@ -55,7 +55,7 @@ restarts.
 | `agent:analyzing` | Issue | `issue-analysis` | `agent:awaiting-approval` or `agent:needs-info` |
 | `agent:needs-info` | Issue | Reporter or administrator reply, then dispatcher (read-only re-analysis, capped) | `agent:analyzing` |
 | `agent:awaiting-approval` | Issue | **Administrator**: `/approve`, any other comment (revise), or close | `agent:implementing` or `agent:analyzing` |
-| `agent:implementing` | Issue + PR | `implement-approved-issue` + `pr-green-loop` | PR gets `agent:ai-review` |
+| `agent:implementing` | Issue + PR | `implement-approved-issue`, then the dispatcher's CI loop | PR gets `agent:ai-review` |
 | `agent:ai-review` | PR | `cross-model-pr-review` | `agent:changes-requested` or `agent:ready-for-admin` |
 | `agent:changes-requested` | PR | `address-review-feedback` + `pr-green-loop` | `agent:ai-review` (max 3 AI rounds, then escalate) |
 | `agent:ready-for-admin` | PR | **Administrator**: merge, close, or "Request changes" review | Done, or `agent:changes-requested` |
@@ -255,9 +255,12 @@ existing `setup-development-environment` pattern, so either engine can run any s
    a spec: problem, acceptance criteria, approach and options with a recommendation, affected files, test plan
    (including the `.env` end-to-end requirements), risks, size, and open questions. Posted with
    `<!-- agent-loop:analysis rev=N hash=… model=… -->`. Runs read-only with no write token.
-2. **`implement-approved-issue`** — Verifies approval provenance and hash. Creates a worktree on
-   `agent/issue-<n>-<slug>` from `origin/main`. Implements from the spec, runs the full AGENTS.md verification
-   sequence, opens a draft PR with `Closes #n`, runs `pr-green-loop`, then marks the PR ready.
+2. **`implement-approved-issue`** — Guides the sandboxed author model (implementation and CI repair). The dispatcher,
+   not the skill, verifies approval provenance and hash, creates the worktree on `agent/issue-<n>-<slug>` from
+   `origin/main`, runs the full AGENTS.md verification sequence outside the sandbox, commits and pushes as the App,
+   opens a draft PR with `Closes #n`, and runs the green loop: it watches CI each tick, repairs failures, and marks the
+   PR ready. (Design change from the first draft: the plan had the model run `pr-green-loop` itself, which would have
+   required giving it GitHub credentials and a network-enabled sandbox.)
 3. **`address-review-feedback`** — Collects unresolved review threads through `gh api graphql`, keeping only items
    whose author is a repository administrator or the dispatcher-recorded AI reviewer run (see
    [Trigger authorization](#trigger-authorization)); all other comments are ignored. Classifies each kept item as
@@ -268,9 +271,10 @@ existing `setup-development-environment` pattern, so either engine can run any s
    PR's author-model set from the dispatcher. Posts a GitHub review with inline comments and a verdict bound to the head
    SHA. Never approves for merge or merges.
 5. **`agent-loop`** — Operator skill: run one tick or `--dry-run`, show status and quota, run `doctor`, pause or resume.
-6. **`pr-green-loop` and `release-green-loop` updates** — Add scoped non-interactive authorization (an approved issue
-   authorizes commits and pushes to its own `agent/*` branch only; never force-push, merge, or touch `main`), the
-   checkpoint-and-resume step, and exclusion of quota interruptions from the failure budget.
+6. **`pr-green-loop` and `release-green-loop`** — Unchanged and still available for manual delivery work. The agent
+   loop does not run them: their commit, push, and CI-monitoring steps are implemented in the dispatcher (scoped to
+   `agent/*` branches, never forcing, never touching `main`), with checkpoint-and-resume and quota interruptions
+   excluded from the CI repair budget.
 
 ## Security and guardrails
 
@@ -402,8 +406,12 @@ are delivered together on `feat/agent-loop-foundations` (PR #76).
    worktrees, output contract and safety checks, `/approve`, conversational revisions (implicit, debounced, mention,
    `/revise`, `/note`) and `agent:needs-info` handling, quota pauses
    with a status comment, and a per-tick limit on model-backed stage runs. Next: exercise live on issue #77.
-3. **Implementation** — `implement-approved-issue`, `pr-green-loop` updates, checkpoints, and session resume, tested
-   on a throwaway issue including an injected quota exhaustion mid-implementation.
+3. **Implementation** *(implemented)* — `implement-approved-issue` skill; a sandboxed author model with
+   dispatcher-run verification (the sandbox blocks the loopback sockets the tests need), the diff policy gate, commits and
+   pushes by the dispatcher as the App, draft pull requests, and a tick-driven CI loop (wait, repair failures, mark
+   ready) that replaces a model-driven `pr-green-loop`, so the model never holds GitHub credentials. Checkpoints in
+   `.agent-loop/progress.md`, persisted session ids with resume and fresh-session fallback, and quota pauses that keep
+   the worktree. Next: exercise on a small throwaway issue.
 4. **Review and feedback** — `cross-model-pr-review`, `address-review-feedback`, reviewer selection, actual-model
    verification, and the diff policy gate.
 5. **Operation** — enable the systemd timer, run logs in `~/.local/state/agent-loop/`, operator guide finalized.

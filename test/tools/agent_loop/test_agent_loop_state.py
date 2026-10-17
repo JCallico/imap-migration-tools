@@ -301,3 +301,75 @@ def test_approval_is_acknowledged_and_starts_implementation():
 
     assert [a.kind for a in actions] == [state.REACT, state.RUN_STAGE]
     assert actions[1].stage == "implementation"
+
+
+# --- Phase 3: implementation tracking, CI checking, and concurrency ------------------------------------------------
+
+
+def impl_pr(number=88, issue=77, labels=(state.IMPLEMENTING,)):
+    pr = make_item(number=number, is_pr=True, labels=labels)
+    return replace(pr, head_ref=f"agent/issue-{issue}-add-feature", head_sha="abc")
+
+
+def approved_issue_item(number, labels=(state.AWAITING_APPROVAL,)):
+    return make_item(
+        number=number,
+        labels=labels,
+        comments=[analysis_comment(TITLE, BODY), comment(f"ok{number}", ADMIN, "/approve", 20)],
+    )
+
+
+def test_implementing_pull_request_is_routed_to_the_ci_check_with_its_issue():
+    ctx, _ = context()
+    issue = make_item(number=77, labels=(state.IMPLEMENTING,))
+
+    actions = state.plan([issue, impl_pr()], ctx)
+
+    check = only(actions, state.CHECK_CI)
+    assert check.item.number == 88 and check.related.number == 77 and check.priority == state.PRIORITY["ci_fix"]
+    assert only([a for a in actions if a.item.number == 77]).reason == "implementation is tracked by PR #88"
+
+
+def test_issue_without_a_pull_request_continues_its_implementation():
+    ctx, _ = context()
+
+    actions = state.plan([make_item(number=77, labels=(state.IMPLEMENTING,))], ctx)
+
+    action = only(actions, state.RUN_STAGE)
+    assert (action.stage, action.model) == ("implementation", SOL)
+
+
+def test_only_one_implementation_runs_at_a_time():
+    ctx, _ = context()
+    busy = make_item(number=70, labels=(state.IMPLEMENTING,))
+    second = approved_issue_item(71)
+
+    waiting = state.plan([busy, second], ctx)
+    after_review = state.plan(
+        [make_item(number=70, labels=(state.IMPLEMENTING,)), impl_pr(88, 70, (state.AI_REVIEW,)), second], ctx
+    )
+
+    skipped = [a for a in waiting if a.item.number == 71 and a.kind == state.SKIP]
+    assert skipped and "waiting for the implementation of #70" in skipped[0].reason
+    assert not [a for a in waiting if a.kind == state.RUN_STAGE and a.item.number == 71]
+    started = [a for a in after_review if a.item.number == 71 and a.kind == state.RUN_STAGE]
+    assert started and started[0].stage == "implementation"
+
+
+def test_a_pull_request_still_in_ci_keeps_the_implementation_slot_busy():
+    ctx, _ = context()
+    items = [make_item(number=70, labels=(state.IMPLEMENTING,)), impl_pr(88, 70), approved_issue_item(71)]
+
+    actions = state.plan(items, ctx)
+
+    assert not [a for a in actions if a.item.number == 71 and a.kind == state.RUN_STAGE]
+
+
+def test_a_higher_limit_allows_parallel_implementations():
+    ctx, _ = context()
+    config = replace(ctx.config, policy=replace(ctx.config.policy, max_concurrent_implementations=2))
+    ctx = replace(ctx, config=config)
+
+    actions = state.plan([make_item(number=70, labels=(state.IMPLEMENTING,)), approved_issue_item(71)], ctx)
+
+    assert [a for a in actions if a.item.number == 71 and a.kind == state.RUN_STAGE]

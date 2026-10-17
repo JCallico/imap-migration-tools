@@ -27,10 +27,12 @@ from .engines import (
 from .gh import Gh, GhError, detect_repo
 from .notify import GitHubNotifier, Notification
 from .quota import QuotaLedger
+from .runners import RUNNERS, check_ci
 from .selection import reviewer_allowed
 from .snapshot import fetch_open_items
-from .stages import RUNNERS, StageContext
-from .worktree import WorktreeError, repository_root
+from .stages import StageContext
+from .stagestate import ProgressStore
+from .worktree import WorktreeError, delete_local_branch, issue_number_from_branch, remove_worktree, repository_root
 
 PAUSE_FILE = "paused"
 
@@ -50,6 +52,16 @@ class Runtime:
     repo_root: Path = field(default_factory=Path.cwd)
     environ: Mapping[str, str] = field(default_factory=lambda: dict(os.environ))
     engine_runner: Callable[..., subprocess.CompletedProcess] = subprocess.run
+    remote_url: str | None = None  # push target override; defaults to the repository's GitHub HTTPS URL
+    budget: int = 1  # model-backed stage runs still allowed in this tick
+    cache: dict = field(default_factory=dict)  # per-tick lookups such as the required status checks
+
+    def take_budget(self) -> bool:
+        """Use one of this tick's model-backed stage runs; ``False`` when none remain."""
+        if self.budget <= 0:
+            return False
+        self.budget -= 1
+        return True
 
 
 def build_runtime(config: LoopConfig, *, require_app: bool) -> Runtime:
@@ -113,10 +125,39 @@ def _authorizer(runtime: Runtime) -> Authorizer:
     return Authorizer(runtime.gh, runtime.bot_login, runtime.config.github.allowed_admins)
 
 
-def plan_actions(runtime: Runtime, authorizer: Authorizer | None = None) -> list[state.Action]:
+def plan_actions(runtime: Runtime, authorizer: Authorizer | None = None, items=None) -> list[state.Action]:
     authorizer = authorizer or _authorizer(runtime)
     ctx = state.Context(runtime.config, authorizer, _usable(runtime), datetime.now(timezone.utc))
-    return state.plan(fetch_open_items(runtime.gh), ctx)
+    return state.plan(items if items is not None else fetch_open_items(runtime.gh), ctx)
+
+
+def cleanup_worktrees(runtime: Runtime, items) -> list[str]:
+    """Remove implementation worktrees (and their local branches) for work that is no longer in progress."""
+    root = runtime.config.resolved_worktree_dir()
+    if not root.is_dir():
+        return []
+    issues = {item.number: item for item in items if not item.is_pr}
+    pulls = {issue_number_from_branch(item.head_ref): item for item in items if item.is_pr}
+    store = ProgressStore(runtime.state_dir / "stages")
+    removed = []
+    for path in sorted(root.glob("impl-*")):
+        suffix = path.name.removeprefix("impl-")
+        if not suffix.isdigit():
+            continue
+        number = int(suffix)
+        issue, pull = issues.get(number), pulls.get(number)
+        if (
+            issue is not None
+            and state.IMPLEMENTING in issue.labels
+            and (pull is None or state.IMPLEMENTING in pull.labels)
+        ):
+            continue
+        remove_worktree(runtime.repo_root, path)
+        branch = store.load(number).branch
+        if branch:
+            delete_local_branch(runtime.repo_root, branch)
+        removed.append(f"removed finished worktree {path.name}")
+    return removed
 
 
 def execute(runtime: Runtime, action: state.Action, authorizer: Authorizer | None = None) -> str:
@@ -135,7 +176,11 @@ def execute(runtime: Runtime, action: state.Action, authorizer: Authorizer | Non
         if state.BLOCKED in action.add_labels:
             notifier = GitHubNotifier(runtime.gh, runtime.config.notify.mention)
             key = f"blocked-{number}-{action.item.head_sha or len(action.item.comments)}"
-            notifier.send(Notification(number, key, f"Needs your decision: {action.reason}.", is_pr=action.item.is_pr))
+            notifier.send(
+                Notification(
+                    number, key, f"Needs your decision: {action.reason.rstrip('. ')}.", is_pr=action.item.is_pr
+                )
+            )
         return f"done: {action.describe()}"
     if action.kind == state.REPLY_UNAUTHORIZED and action.comment_id:
         owner, name = runtime.gh.repo_parts()
@@ -153,6 +198,10 @@ def execute(runtime: Runtime, action: state.Action, authorizer: Authorizer | Non
         if state.WAITING_QUOTA not in action.item.labels:
             repo_ops.add_labels(runtime.gh, number, [state.WAITING_QUOTA])
         return f"waiting: {action.describe()}"
+    if action.kind == state.CHECK_CI:
+        authorizer = authorizer or _authorizer(runtime)
+        authorizer.refresh()
+        return check_ci(StageContext(runtime, authorizer), action)
     if action.kind == state.RUN_STAGE:
         runner = RUNNERS.get(action.stage or "")
         if runner is None:
@@ -178,13 +227,15 @@ def tick(runtime: Runtime, *, dry_run: bool) -> list[str]:
         if runtime.bot_login is None and not dry_run:
             raise DispatcherError("bot login unknown; set [github] bot_login or configure the GitHub App")
         authorizer = _authorizer(runtime)
-        actions = plan_actions(runtime, authorizer)
+        items = fetch_open_items(runtime.gh)
+        actions = plan_actions(runtime, authorizer, items)
         if dry_run:
             lines = [f"[dry-run] {action.describe()}" for action in actions]
             if runtime.bot_login is None:
                 lines.insert(0, "[dry-run] bot identity unknown: existing analyses and run markers are not recognized")
         else:
             lines = _execute_all(runtime, actions, authorizer)
+            lines += cleanup_worktrees(runtime, items)
         _log_tick(runtime, dry_run, lines)
         return lines or ["no open items require action"]
     finally:
@@ -194,13 +245,13 @@ def tick(runtime: Runtime, *, dry_run: bool) -> list[str]:
 def _execute_all(runtime: Runtime, actions: list[state.Action], authorizer: Authorizer) -> list[str]:
     """Execute actions in priority order, limiting model-backed stage runs per tick."""
     lines = []
-    budget = runtime.config.policy.max_stage_runs_per_tick
+    runtime.budget = runtime.config.policy.max_stage_runs_per_tick
+    runtime.cache = {}
     for action in actions:
         if action.kind == state.RUN_STAGE and action.stage in RUNNERS:
-            if budget <= 0:
+            if not runtime.take_budget():
                 lines.append(f"deferred to the next tick: {action.describe()}")
                 continue
-            budget -= 1
         try:
             lines.append(execute(runtime, action, authorizer))
         except Exception as exc:  # one failing item must not stop the rest of the tick
