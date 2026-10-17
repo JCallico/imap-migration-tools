@@ -18,7 +18,7 @@ from agent_loop.app_auth import (
     provider_from_config,
 )
 from agent_loop.config import GitHubConfig
-from agent_loop.gh import Gh, GhError
+from agent_loop.gh import Gh, GhError, describe_args
 from agent_loop.labels import LABELS, bootstrap_labels
 from agent_loop.notify import GitHubNotifier, Notification, notification_marker
 
@@ -74,6 +74,16 @@ def test_gh_errors_redact_authorization_headers():
     with pytest.raises(GhError) as error:
         gh.api("/app", headers=["Authorization: Bearer secret.jwt"])
     assert "secret.jwt" not in str(error.value)
+
+
+def test_gh_call_log_summary_elides_values_queries_and_credentials():
+    summary = describe_args(["api", "graphql", "-f", "query=mutation { secret }"])
+    assert summary == "api graphql -f query=..."
+    assert (
+        describe_args(["api", "-H", "Authorization: token ghs_x", "repos/o/r"])
+        == "api -H Authorization: <redacted> repos/o/r"
+    )
+    assert describe_args(["issue", "comment", "5", "--body", "text"]) == "issue comment 5 --body"
 
 
 def test_graphql_errors_raise():

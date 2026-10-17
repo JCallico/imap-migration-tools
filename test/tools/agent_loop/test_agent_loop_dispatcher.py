@@ -1,6 +1,8 @@
 """End-to-end dispatcher tests against a scripted gh CLI: GraphQL snapshots in, GitHub writes out."""
 
+import io
 import json
+import logging
 from dataclasses import replace
 
 import pytest
@@ -208,3 +210,18 @@ def test_live_tick_checks_ci_for_an_implementing_pull_request(tmp_path):
     assert "waiting for CI on PR #88: 0/1 required checks passed" in lines
     assert "issue #77: skip — implementation is tracked by PR #88" in lines
     assert runner.api_calls("POST") == []
+
+
+@pytest.mark.parametrize(("flags", "info", "debug"), [([], False, False), (["-v"], True, False), (["-vv"], True, True)])
+def test_verbose_flag_sends_progress_to_stderr_at_the_requested_detail(flags, info, debug):
+    args = cli.build_parser().parse_args([*flags, "tick", "--dry-run"])
+    stream = io.StringIO()
+    try:
+        cli.configure_logging(args.verbose, stream)
+        logging.getLogger("agent_loop.dispatcher").info("tick started")
+        logging.getLogger("agent_loop.gh").debug("gh api repos/o/r")
+    finally:
+        cli.configure_logging(0)
+    output = stream.getvalue()
+    assert ("tick started" in output) is info
+    assert ("gh api repos/o/r" in output) is debug

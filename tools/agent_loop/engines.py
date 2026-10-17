@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import time
@@ -12,6 +13,8 @@ from pathlib import Path
 
 from .config import ModelRef
 from .quota import Classification, RateLimitSnapshot, classify_failure, claude_snapshot, codex_snapshot
+
+log = logging.getLogger(__name__)
 
 READ_ONLY = "read-only"
 WORKSPACE_WRITE = "workspace-write"
@@ -313,6 +316,8 @@ def run_engine(
 ) -> EngineRun:
     """Run a stage command with a time limit, then parse and classify the result."""
     run = EngineRun(engine=ref.engine, requested_model=ref.model, exit_code=None)
+    resuming = " (resuming its session)" if "resume" in command or "--resume" in command else ""
+    log.info("running %s in %s%s; time limit %s", ref, cwd, resuming, _duration(timeout_seconds))
     started = clock()
     stdout = ""
     stderr = ""
@@ -352,7 +357,29 @@ def run_engine(
         timed_out=run.timed_out,
         now=clock(),
     )
+    log.info("%s %s", ref.engine, describe_run(run))
     return run
+
+
+def _duration(seconds: float) -> str:
+    minutes, secs = divmod(int(round(seconds)), 60)
+    return f"{minutes}m{secs:02d}s" if minutes else f"{secs}s"
+
+
+def describe_run(run: EngineRun) -> str:
+    """One log line summarizing a finished run; never includes the model's output or error text."""
+    exit_text = "timed out" if run.timed_out else f"exit {run.exit_code}"
+    parts = [f"finished in {_duration(run.duration_seconds)}: {exit_text}"]
+    if run.classification is not None:
+        parts.append(f"outcome {run.classification.kind}")
+    if run.actual_models:
+        parts.append("model " + ", ".join(sorted(run.actual_models)))
+    if run.session_id:
+        parts.append(f"session {run.session_id}")
+    used = run.snapshot.used_percent if run.snapshot is not None else None
+    if used is not None:
+        parts.append(f"{run.engine} quota used {used:.0f}%")
+    return ", ".join(parts)
 
 
 def _decode(value) -> str:

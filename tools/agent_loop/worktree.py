@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import subprocess
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 class WorktreeError(RuntimeError):
@@ -104,17 +107,22 @@ def branch_worktree(repo_root: Path, branch: str, base_branch: str, path: Path, 
     git(repo_root, "fetch", "--quiet", remote, base_branch)
     git(repo_root, "fetch", "--quiet", remote, branch, check=False)
     if (path / ".git").exists():
+        log.info("reusing worktree %s on %s", path, branch)
         return path
     git(repo_root, "worktree", "prune")
     if path.exists():
         shutil.rmtree(path, ignore_errors=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     if _ref_exists(repo_root, f"refs/heads/{branch}"):
+        source = f"local {branch}"
         git(repo_root, "worktree", "add", "--quiet", str(path), branch)
     elif _ref_exists(repo_root, f"refs/remotes/{remote}/{branch}"):
+        source = f"{remote}/{branch}"
         git(repo_root, "worktree", "add", "--quiet", "-b", branch, str(path), f"{remote}/{branch}")
     else:
+        source = f"{remote}/{base_branch}"
         git(repo_root, "worktree", "add", "--quiet", "-b", branch, str(path), f"{remote}/{base_branch}")
+    log.info("created worktree %s on %s from %s", path, branch, source)
     return path
 
 
@@ -164,7 +172,9 @@ def commit_all(path: Path, message: str, author_name: str, author_email: str) ->
         "-m",
         message,
     )
-    return head_sha(path)
+    sha = head_sha(path)
+    log.info("committed %s as %s", sha[:12], author_name)
+    return sha
 
 
 _CREDENTIAL_HELPER = "!f() { echo username=x-access-token; echo password=$AGENT_LOOP_GIT_TOKEN; }; f"
@@ -179,6 +189,7 @@ def push_branch(path: Path, remote_url: str, branch: str, token: str, base_env: 
         raise WorktreeError(f"refusing to push to {branch}: the agent loop only pushes agent/* branches")
     env = {key: value for key, value in base_env.items() if key in ("PATH", "HOME", "LANG", "TMPDIR")}
     env.update({"AGENT_LOOP_GIT_TOKEN": token, "GIT_TERMINAL_PROMPT": "0"})
+    log.info("pushing %s to %s", branch, remote_url)
     git(
         path,
         "-c",

@@ -15,6 +15,8 @@ Operate the dispatcher in `tools/agent_loop/`. Read `docs/agent-loop.md` for set
 - Never make authorization decisions yourself. Only the dispatcher decides whether a comment or label came from a
   repository administrator.
 - Read-only commands (`doctor`, `status`, `tick --dry-run`, `labels` without `--apply`) need no confirmation.
+- Add `-v` before the command (for example `agent_loop -v tick`) to report each step on stderr, or `-vv` to also
+  show every GitHub CLI call. It changes no behavior.
 - A live `tick`, `labels --apply`, `pause`, and `resume` change shared state. Run them only when the user explicitly
   asks for that specific operation.
 - Never print, copy, or move the GitHub App private key or tokens, and never add API-key variables to the environment.

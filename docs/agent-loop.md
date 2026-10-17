@@ -199,7 +199,14 @@ PYTHONPATH=tools .venv/bin/python -m agent_loop tick --dry-run  # show planned a
 PYTHONPATH=tools .venv/bin/python -m agent_loop tick            # act (requires the App)
 PYTHONPATH=tools .venv/bin/python -m agent_loop pause           # pause on this machine
 PYTHONPATH=tools .venv/bin/python -m agent_loop resume
+PYTHONPATH=tools .venv/bin/python -m agent_loop -v tick         # also report each step on stderr
 ```
+
+`-v` (before the command) logs progress to stderr with timestamps: the items fetched and actions planned, each action
+and its result and duration, model runs (worktree, time limit, duration, outcome, actual model, session id, quota
+used), each verification command and its result, the diff policy verdict, commits, pushes, pull request creation,
+and CI states. `-vv` also logs every GitHub CLI call with its exit status and duration. The log never contains
+prompts, model output, comment bodies, field values, or credentials, and standard output is unchanged.
 
 Local state (quota ledger, tick log, pause marker, and locks) lives in `~/.local/state/agent-loop/<owner>-<repo>/`.
 Stage checkouts are disposable git worktrees under `~/.cache/agent-loop/<owner>-<repo>/worktrees/` (override with
