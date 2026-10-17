@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shlex
 import subprocess
@@ -13,6 +14,8 @@ from pathlib import Path
 
 from .config import VerifyConfig
 from .engines import stage_environment
+
+log = logging.getLogger(__name__)
 
 OUTPUT_TAIL_CHARS = 6000
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
@@ -90,6 +93,7 @@ def run_verification(
     result = VerifyResult()
     for template in config.commands:
         command = template.format(python=shlex.quote(python))
+        log.info("verify: %s", command)
         started = clock()
         try:
             completed = runner(
@@ -109,5 +113,9 @@ def run_verification(
             step = StepResult(command, None, _tail(partial), clock() - started, timed_out=True)
         except FileNotFoundError as exc:
             step = StepResult(command, 127, str(exc), clock() - started)
+        status = "passed" if step.ok else ("timed out" if step.timed_out else f"failed (exit {step.returncode})")
+        log.info("verify: %s in %.0fs", status, step.seconds)
         result.steps.append(step)
+    if result.test_summary():
+        log.info("verify: tests %s", result.test_summary())
     return result

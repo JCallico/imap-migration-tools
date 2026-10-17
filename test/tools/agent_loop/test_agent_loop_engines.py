@@ -11,12 +11,14 @@ from agent_loop.config import ModelRef
 from agent_loop.engines import (
     READ_ONLY,
     WORKSPACE_WRITE,
+    EngineRun,
     build_command,
+    describe_run,
     run_engine,
     stage_environment,
     subscription_status,
 )
-from agent_loop.quota import QUOTA_EXHAUSTED, SUCCESS
+from agent_loop.quota import QUOTA_EXHAUSTED, SUCCESS, Classification, RateLimitSnapshot, RateWindow
 
 CODEX = ModelRef("codex", "gpt-6-luna", "low")
 CLAUDE = ModelRef("claude", "claude-haiku-4-5-20251001", "low")
@@ -166,3 +168,23 @@ def test_subscription_status(engine, stdout, expected):
     ok, _detail = subscription_status(engine, runner=completed(stdout), env={})
 
     assert ok is expected
+
+
+def test_run_summary_reports_outcome_without_model_output():
+    run = EngineRun(
+        engine="codex",
+        requested_model="gpt-6.1-sol",
+        exit_code=0,
+        session_id="sess-1",
+        actual_models={"gpt-6.1-sol"},
+        final_message="SECRET_FINAL_MESSAGE",
+        error_messages=["SECRET_ERROR"],
+        snapshot=RateLimitSnapshot("codex", (RateWindow("primary", 34.0, None),)),
+        duration_seconds=751,
+        classification=Classification(SUCCESS),
+    )
+    summary = describe_run(run)
+    assert summary == (
+        "finished in 12m31s: exit 0, outcome success, model gpt-6.1-sol, session sess-1, codex quota used 34%"
+    )
+    assert "SECRET" not in summary

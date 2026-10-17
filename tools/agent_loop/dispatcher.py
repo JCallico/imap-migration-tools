@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -33,6 +34,8 @@ from .snapshot import fetch_open_items
 from .stages import StageContext
 from .stagestate import ProgressStore
 from .worktree import WorktreeError, delete_local_branch, issue_number_from_branch, remove_worktree, repository_root
+
+log = logging.getLogger(__name__)
 
 PAUSE_FILE = "paused"
 
@@ -152,6 +155,7 @@ def cleanup_worktrees(runtime: Runtime, items) -> list[str]:
             and (pull is None or state.IMPLEMENTING in pull.labels)
         ):
             continue
+        log.info("removing finished worktree %s", path)
         remove_worktree(runtime.repo_root, path)
         branch = store.load(number).branch
         if branch:
@@ -227,8 +231,16 @@ def tick(runtime: Runtime, *, dry_run: bool) -> list[str]:
         if runtime.bot_login is None and not dry_run:
             raise DispatcherError("bot login unknown; set [github] bot_login or configure the GitHub App")
         authorizer = _authorizer(runtime)
+        log.info("tick started for %s%s as %s", runtime.gh.repo, " (dry run)" if dry_run else "", runtime.bot_login)
         items = fetch_open_items(runtime.gh)
+        log.info(
+            "fetched %d open item(s): %d issue(s), %d pull request(s)",
+            len(items),
+            sum(1 for item in items if not item.is_pr),
+            sum(1 for item in items if item.is_pr),
+        )
         actions = plan_actions(runtime, authorizer, items)
+        log.info("planned %d action(s)", len(actions))
         if dry_run:
             lines = [f"[dry-run] {action.describe()}" for action in actions]
             if runtime.bot_login is None:
@@ -237,6 +249,7 @@ def tick(runtime: Runtime, *, dry_run: bool) -> list[str]:
             lines = _execute_all(runtime, actions, authorizer)
             lines += cleanup_worktrees(runtime, items)
         _log_tick(runtime, dry_run, lines)
+        log.info("tick finished")
         return lines or ["no open items require action"]
     finally:
         lock.release()
@@ -247,15 +260,19 @@ def _execute_all(runtime: Runtime, actions: list[state.Action], authorizer: Auth
     lines = []
     runtime.budget = runtime.config.policy.max_stage_runs_per_tick
     runtime.cache = {}
-    for action in actions:
+    for index, action in enumerate(actions, 1):
         if action.kind == state.RUN_STAGE and action.stage in RUNNERS:
             if not runtime.take_budget():
+                log.info("[%d/%d] deferred (stage run budget used): %s", index, len(actions), action.describe())
                 lines.append(f"deferred to the next tick: {action.describe()}")
                 continue
+        log.info("[%d/%d] %s", index, len(actions), action.describe())
+        started = time.monotonic()
         try:
             lines.append(execute(runtime, action, authorizer))
         except Exception as exc:  # one failing item must not stop the rest of the tick
             lines.append(f"error on #{action.item.number}: {type(exc).__name__}: {exc}")
+        log.info("[%d/%d] -> %s (%.0fs)", index, len(actions), lines[-1], time.monotonic() - started)
     return lines
 
 

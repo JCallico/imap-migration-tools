@@ -6,6 +6,7 @@ the diff policy, and performs every commit, push, and GitHub change itself as th
 
 from __future__ import annotations
 
+import logging
 import sys
 import time
 from dataclasses import dataclass
@@ -56,6 +57,8 @@ from .worktree import (
     sync_with_remote,
     unpushed_commits,
 )
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -146,6 +149,7 @@ def _run_model(
             store.save(progress)
         kind = run.classification.kind if run.classification else ""
         if resume and attempt == 1 and kind in ("unknown", "task_failure"):
+            log.info("could not resume session %s (%s); starting a fresh session", resume, kind)
             # The old session could not be resumed; start a fresh one that rediscovers the work from the worktree.
             progress.session_id = ""
             store.save(progress)
@@ -182,12 +186,16 @@ def _author_cycle(
         progress.status, progress.result_json = VERIFYING, run.final_message
         progress.model = str(_actual_model(run, ref))
         store.save(progress)
+        log.info("the model reports the change is complete; verifying outside the sandbox")
     model = ModelRef(*progress.model.split(":", 2)) if progress.model.count(":") == 2 else ref
     result = implementation.parse_result(progress.result_json)
     while True:
         verification = run_verification(worktree, ctx.config.verify, runtime.environ, python=sys.executable)
         if verification.ok:
+            log.info("verification passed")
             return Cycle(result=result, model=model, verification=verification)
+        failed = sum(1 for step in verification.steps if not step.ok)
+        log.info("verification failed (%d of %d steps)", failed, len(verification.steps))
         if progress.repair_rounds >= policy.max_verify_rounds:
             return Cycle(
                 line=_block(ctx, item, f"the checks still fail after {policy.max_verify_rounds} repair rounds")
@@ -196,6 +204,7 @@ def _author_cycle(
             return Cycle(line=f"deferred #{item.number}: stage time limit reached; verification continues next tick")
         progress.repair_rounds += 1
         store.save(progress)
+        log.info("repair round %d of %d", progress.repair_rounds, policy.max_verify_rounds)
         repair = implementation.build_verify_repair_prompt(
             verification.failure_report(), progress.repair_rounds, policy.max_verify_rounds
         )
@@ -246,6 +255,7 @@ def _commit_and_push(
     if sha is None and unpushed_commits(worktree, base, branch) == 0:
         return _block(ctx, item, "the model made no changes")
     violations = check_diff(worktree, f"origin/{base}", config.policy)
+    log.info("diff policy: %s", f"{len(violations)} violation(s)" if violations else "passed")
     if violations:
         return _block(ctx, item, "the change violates the diff policy: " + "; ".join(str(v) for v in violations[:5]))
     try:
@@ -290,6 +300,7 @@ def run_implementation(ctx: StageContext, action: state.Action) -> str:
             verb = "merged" if pull.get("merged_at") else "closed without merging"
             return _block(ctx, item, f"pull request #{progress.pr_number} was {verb}; decide whether to retry")
 
+    log.info("approval by %s of analysis revision %s is still valid", approver or "unknown", analysis.rev)
     repo_ops.set_labels(
         ctx.gh,
         item,
@@ -342,6 +353,7 @@ def run_implementation(ctx: StageContext, action: state.Action) -> str:
     owner, name = ctx.gh.repo_parts()
     pull = _existing_pull_request(ctx, branch)
     if pull is None:
+        log.info("opening a draft pull request from %s into %s", branch, base)
         pull = ctx.gh.api(
             f"repos/{owner}/{name}/pulls",
             method="POST",
@@ -397,6 +409,7 @@ def check_ci(ctx: StageContext, action: state.Action) -> str:
     if "required" not in cache:
         cache["required"] = ci.required_contexts(ctx.gh, base)
     status = ci.check_status(ctx.gh, sha, cache["required"])
+    log.info("CI for PR #%d at %s: %s (%s)", pr.number, sha[:12], status.state, status.describe())
     issue_number = issue_number_from_branch(pr.head_ref)
     if status.state == ci.PENDING:
         return f"waiting for CI on PR #{pr.number}: {status.describe()}"

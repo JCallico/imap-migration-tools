@@ -7,6 +7,7 @@ inherit. Configure the loop with ``.github/agent-loop.toml`` and ``AGENT_LOOP_*`
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 
 from .config import ConfigError, load_config
@@ -18,6 +19,13 @@ from .labels import bootstrap_labels
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent_loop", description="Issue-to-pull-request agent loop dispatcher.")
     parser.add_argument("--config", help="configuration file (default: .github/agent-loop.toml)")
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="report progress on stderr: -v for each step, -vv to also show every GitHub CLI call",
+    )
     parser.add_argument(
         "--stage-model",
         action="append",
@@ -37,8 +45,24 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def configure_logging(verbosity: int, stream=None) -> None:
+    """Send the dispatcher's progress log to ``stream`` (stderr by default); quiet unless ``verbosity`` is set."""
+    logger = logging.getLogger("agent_loop")
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+    if verbosity <= 0:
+        logger.setLevel(logging.WARNING)
+        logger.addHandler(logging.NullHandler())
+        return
+    handler = logging.StreamHandler(stream or sys.stderr)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG if verbosity > 1 else logging.INFO)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    configure_logging(args.verbose)
     try:
         config = load_config(args.config, stage_overrides=args.stage_model)
     except ConfigError as exc:

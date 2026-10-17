@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
+import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from .engines import is_blocked_variable
+
+log = logging.getLogger(__name__)
 
 
 class GhError(RuntimeError):
@@ -19,6 +23,14 @@ class GhError(RuntimeError):
         self.returncode = returncode
         self.stderr = stderr.strip()
         super().__init__(f"gh {' '.join(_redact(args)[:4])} failed ({returncode}): {self.stderr[:300]}")
+
+
+def describe_args(args: Sequence[str], limit: int = 4) -> str:
+    """A short, log-safe summary of ``gh`` arguments: field values, queries, and headers are elided."""
+    shown = []
+    for arg in _redact(args)[:limit]:
+        shown.append(arg.split("=", 1)[0] + "=..." if "=" in arg else arg)
+    return " ".join(shown)
 
 
 def _redact(args: Sequence[str]) -> list[str]:
@@ -61,6 +73,7 @@ class Gh:
 
     def run(self, args: Sequence[str], *, input_text: str | None = None, authenticated: bool = True) -> str:
         command = ["gh", *args]
+        started = time.monotonic()
         completed = self.runner(
             command,
             input=input_text,
@@ -70,6 +83,7 @@ class Gh:
             check=False,
             timeout=120,
         )
+        log.debug("gh %s -> exit %s in %.1fs", describe_args(args), completed.returncode, time.monotonic() - started)
         if completed.returncode != 0:
             raise GhError(args, completed.returncode, completed.stderr or completed.stdout or "")
         return completed.stdout or ""

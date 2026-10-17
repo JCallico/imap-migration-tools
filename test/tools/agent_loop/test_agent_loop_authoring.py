@@ -1,6 +1,7 @@
 """End-to-end tests for the implementation and CI-repair stages with real git, verification, and a local origin."""
 
 import json
+import logging
 import os
 import subprocess
 from dataclasses import replace
@@ -218,6 +219,36 @@ def test_implements_an_approved_issue_and_opens_a_draft_pull_request(tmp_path, w
     assert any("draft pull request #88" in post["body"] for post in api_posts(runner, "/issues/77/comments"))
     progress = ProgressStore(runtime.state_dir / "stages").load(77)
     assert (progress.status, progress.pr_number, progress.branch) == (PR_OPEN, 88, BRANCH)
+
+
+def test_verbose_log_traces_each_implementation_step_without_prompts_or_tokens(tmp_path, world, caplog):
+    caplog.set_level(logging.DEBUG, logger="agent_loop")
+    runner = make_gh()
+    author = FakeAuthor({"files": {"feature.txt": "done\n"}, "result": GOOD})
+    runtime = make_runtime(tmp_path, world, runner, author)
+
+    execute(runtime, implement(approved_issue()))
+
+    messages = [record.getMessage() for record in caplog.records]
+    expected = [
+        "approval by admin-user of analysis revision 1 is still valid",
+        "created worktree",
+        f"running {SOL} in",
+        "codex finished in",
+        "verifying outside the sandbox",
+        "verify: ",
+        "verification passed",
+        "committed ",
+        "diff policy: passed",
+        f"pushing {BRANCH} to",
+        "opening a draft pull request",
+    ]
+    positions = [next(i for i, text in enumerate(messages) if step in text) for step in expected]
+    assert positions == sorted(positions), messages
+    assert any(text.startswith("gh api --method POST repos/") for text in messages)
+    log_text = "\n".join(messages)
+    for secret in ("ghs_app_token", "user-token", "sk-x", "Create feature.txt per the spec.", "Adds the feature."):
+        assert secret not in log_text
 
 
 def test_failing_verification_is_repaired_by_resuming_the_same_session_with_the_failure_output(tmp_path, world):

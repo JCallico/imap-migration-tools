@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass, replace
 
@@ -20,6 +21,8 @@ from .engines import (
 from .notify import GitHubNotifier, Notification
 from .quota import AUTH, QUOTA_EXHAUSTED, SUCCESS, TRANSIENT, UNCLASSIFIED
 from .worktree import WorktreeError, detached_checkout
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -52,6 +55,7 @@ def _notify(ctx: StageContext, item, key: str, message: str) -> None:
 
 def _block(ctx: StageContext, item, reason: str) -> str:
     """Stop work on an item and ask the administrator to decide; never echoes model output."""
+    log.info("blocking %s #%d and notifying the administrator", "PR" if item.is_pr else "issue", item.number)
     repo_ops.set_labels(ctx.gh, item, add=[state.BLOCKED], remove=[state.WAITING_QUOTA])
     _notify(ctx, item, f"blocked-{item.number}-{len(item.comments)}", f"Needs your decision: {reason.rstrip('. ')}.")
     return f"blocked {'PR' if item.is_pr else 'issue'} #{item.number}: {reason}"
@@ -110,6 +114,7 @@ def run_analysis(ctx: StageContext, action: state.Action) -> str:
         )
     try:
         with detached_checkout(runtime.repo_root, config.github.base_branch, checkout) as base_sha:
+            log.info("analysis checkout %s at %s %s", checkout, config.github.base_branch, base_sha[:12])
             prompt = analysis.build_prompt(
                 item,
                 ctx.authorizer,
@@ -180,6 +185,7 @@ def run_analysis(ctx: StageContext, action: state.Action) -> str:
     if secrets:
         return _block(ctx, item, f"the analysis output contained a possible {', '.join(secrets)} and was not posted")
 
+    log.info("posting %s on issue #%d (%d characters)", result.outcome, item.number, len(body))
     repo_ops.post_comment(ctx.gh, item.number, body)
     repo_ops.clear_status(ctx.gh, item, runtime.bot_login)
     current = (item.labels - set(action.remove_labels)) | {state.ANALYZING, *action.add_labels}
