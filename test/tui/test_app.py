@@ -1441,11 +1441,14 @@ def test_project_controls_refresh_retries_while_the_selector_is_still_composing(
     selector.set_options.side_effect = NoMatches("No nodes match 'SelectOverlay'")
     monkeypatch.setattr(app, "query_one_optional", lambda *_args: selector)
     retries = []
-    monkeypatch.setattr(app, "call_after_refresh", lambda callback: retries.append(callback))
+    monkeypatch.setattr(app, "call_after_refresh", lambda callback, *args: retries.append((callback, args)))
 
     app.refresh_project_controls()
+    assert retries == [(app.refresh_project_controls, (2,))]
 
-    assert retries == [app.refresh_project_controls]
+    retries.clear()
+    app.refresh_project_controls(retries=0)  # out of retries: give up instead of looping
+    assert retries == []
 
 
 def test_unmounted_and_entrypoint_guard_branches(tmp_path, monkeypatch):
