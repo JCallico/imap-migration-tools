@@ -422,3 +422,15 @@ def test_published_text_neutralizes_mentions_and_detects_credentials():
     assert "Closes #77" in body and "@<!-- -->bob" in body and "`@dataclass`" in body and "approved by @admin" in body
     assert "(9 passed)" in body and "@<!-- -->alice" in message and "codex" not in message + body
     assert implementation.contains_secret("fine", "ghs_" + "b" * 36) == ["GitHub token"]
+
+
+def test_commit_all_works_when_gitignore_also_lists_the_checkpoint_directory(repos, tmp_path):
+    _origin, root = repos
+    wt = branch_worktree(root, "agent/issue-3-x", "main", tmp_path / "wt")
+    (wt / ".gitignore").write_text(".agent-loop/\n")
+    (wt / ".agent-loop").mkdir()
+    (wt / ".agent-loop" / "progress.md").write_text("notes\n")
+
+    sha = commit_all(wt, "add ignore", "bot", "bot@example.com")
+
+    assert sha and run_git(wt, "show", "--name-only", "--format=", "HEAD").splitlines() == [".gitignore"]
