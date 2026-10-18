@@ -6,6 +6,7 @@ import asyncio
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual.css.query import NoMatches
 from textual.widgets import Button, Checkbox, DataTable, Input, Label, OptionList, RichLog, Select, Static
 
 import tui.app as app_module
@@ -1432,6 +1433,22 @@ def test_button_and_confirmation_dispatch_branches(tmp_path, monkeypatch):
             assert app.configuration_save_timer is new_timer
 
     asyncio.run(run_test())
+
+
+def test_project_controls_refresh_retries_while_the_selector_is_still_composing(tmp_path, monkeypatch):
+    app = ImapToolsApp(tmp_path / ".env")
+    selector = Mock()
+    selector.set_options.side_effect = NoMatches("No nodes match 'SelectOverlay'")
+    monkeypatch.setattr(app, "query_one_optional", lambda *_args: selector)
+    retries = []
+    monkeypatch.setattr(app, "call_after_refresh", lambda callback, *args: retries.append((callback, args)))
+
+    app.refresh_project_controls()
+    assert retries == [(app.refresh_project_controls, (2,))]
+
+    retries.clear()
+    app.refresh_project_controls(retries=0)  # out of retries: give up instead of looping
+    assert retries == []
 
 
 def test_unmounted_and_entrypoint_guard_branches(tmp_path, monkeypatch):

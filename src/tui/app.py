@@ -12,6 +12,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.content import Content
+from textual.css.query import NoMatches
 from textual.events import Resize
 from textual.screen import ModalScreen
 from textual.timer import Timer
@@ -688,14 +689,23 @@ class ImapToolsApp(App[None]):
             options.append((f"{self.project.name} (missing)", self.project.name))
         return options
 
-    def refresh_project_controls(self) -> None:
-        """Synchronize the selector and management buttons with the projects directory."""
+    def refresh_project_controls(self, retries: int = 3) -> None:
+        """Synchronize the selector and management buttons with the projects directory.
+
+        A refresh that arrives while the selector is still composing is retried after the next screen refresh, at most
+        ``retries`` times, so a selector that never finishes composing cannot keep the event loop busy.
+        """
         select = self.query_one_optional("#project-select", Select)
         if select is None:  # a poll timer can fire while the workspace is being torn down
             return
-        with self.prevent(Select.Changed):
-            select.set_options(self.project_options())
-            select.value = self.project.name
+        try:
+            with self.prevent(Select.Changed):
+                select.set_options(self.project_options())
+                select.value = self.project.name
+        except NoMatches:  # the selector exists but has not finished composing its option list
+            if retries > 0:
+                self.call_after_refresh(self.refresh_project_controls, retries - 1)
+            return
         managed = self.project.managed
         self.query_one("#rename-project", Button).disabled = not managed
         self.query_one("#delete-project", Button).disabled = not managed
