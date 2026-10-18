@@ -209,13 +209,16 @@ def _reply_after_needs_info(item: Item, ctx: Context) -> bool:
 
 
 def _implementations_in_flight(item: Item, ctx: Context) -> list[int]:
-    """Other issues whose implementation has started and whose pull request is not yet ready for review."""
+    """Other issues whose implementation is running: started, not blocked, and not yet ready for review.
+
+    A blocked issue or pull request waits for an administrator, so it does not hold an implementation slot.
+    """
     busy = []
     for number, issue in ctx.issues_by_number.items():
-        if number == item.number or IMPLEMENTING not in issue.labels:
+        if number == item.number or IMPLEMENTING not in issue.labels or BLOCKED in issue.labels:
             continue
         pr = ctx.prs_by_issue.get(number)
-        if pr is None or IMPLEMENTING in pr.labels:
+        if pr is None or (IMPLEMENTING in pr.labels and BLOCKED not in pr.labels):
             busy.append(number)
     return busy
 
