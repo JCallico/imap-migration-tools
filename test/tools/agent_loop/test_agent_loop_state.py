@@ -396,6 +396,19 @@ def test_a_pull_request_still_in_ci_keeps_the_implementation_slot_busy():
     assert not [a for a in actions if a.item.number == 71 and a.kind == state.RUN_STAGE]
 
 
+def test_a_blocked_implementation_does_not_hold_the_slot():
+    ctx, _ = context()
+    blocked_issue = make_item(number=70, labels=(state.IMPLEMENTING, state.BLOCKED))
+    blocked_pr_issue = make_item(number=72, labels=(state.IMPLEMENTING,))
+    blocked_pr = impl_pr(88, 72, (state.IMPLEMENTING, state.BLOCKED))
+
+    for items in ([blocked_issue, approved_issue_item(71)], [blocked_pr_issue, blocked_pr, approved_issue_item(71)]):
+        actions = state.plan(items, ctx)
+
+        started = [a for a in actions if a.item.number == 71 and a.kind == state.RUN_STAGE]
+        assert started and started[0].stage == "implementation"
+
+
 def test_a_higher_limit_allows_parallel_implementations():
     ctx, _ = context()
     config = replace(ctx.config, policy=replace(ctx.config.policy, max_concurrent_implementations=2))
