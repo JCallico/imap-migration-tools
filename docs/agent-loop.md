@@ -15,13 +15,15 @@ Implemented:
 - **Phase 2 (analysis and approval):** the read-only issue analysis stage, the `issue-analysis` skill, `/approve` and
   conversational revisions (any administrator comment, `/revise`, or a mention of the bot), reporter follow-up for `agent:needs-info`, quota pauses with a status comment, and
   administrator notification.
-
 - **Phase 3 (implementation):** after `/approve`, the implementation stage builds the change on an `agent/issue-<n>-*`
   branch, the dispatcher verifies it, applies the diff policy, pushes it, and opens a draft pull request; each tick then
   watches CI, repairs failures, and marks the pull request ready for AI review once the required checks pass.
+- **Phase 4 (review and feedback):** a model distinct from the authors reviews each green pull request against the
+  approved analysis; blocking findings go back to the author model, which fixes, declines, or escalates each one and
+  replies in the review threads. Once a review has no blocking findings, you are asked to review the pull request.
+  Your own "Request changes" review goes through the same feedback loop.
 
-Review and feedback stages (AI review, responding to review comments) arrive in the next phase. Until then, a pull
-request labeled `agent:ai-review` waits for you; you can review and merge it yourself.
+Unattended operation (the systemd timer) arrives in Phase 5; until then, run `tick` yourself or in a shell loop.
 
 ## Administrator workflow
 
@@ -35,8 +37,9 @@ request labeled `agent:ai-review` waits for you; you can review and merge it you
 | Issue | Close the issue | The loop stops |
 | Issue | Reply `/approve` | The issue becomes `agent:implementing`; a draft PR with `Closes #<n>` appears when the change is verified |
 | Pull request | Wait | CI runs on each push; failures are repaired automatically (up to `max_ci_fix_attempts`); the PR is marked ready and labeled `agent:ai-review` when the required checks pass |
-| Pull request | Merge or close | Done |
-| Pull request | Submit a "Request changes" review | The loop addresses your comments and returns the PR for review |
+| Pull request | Wait | A different model reviews it; blocking findings are addressed and re-reviewed (up to `max_ai_review_rounds`), then the PR is labeled `agent:ready-for-admin` and you are requested as reviewer |
+| Pull request | Approve and merge, or close | Done. The bot authored the PR, so your approval satisfies the branch rules without `--admin` |
+| Pull request | Submit a "Request changes" review (summary and/or inline comments) | The loop addresses each comment, replies to it, and returns the PR through CI and AI review to you |
 | Issue or PR | Apply `agent:paused` | The loop leaves the item alone until you remove the label |
 | Existing issue or PR | Apply `agent:adopt` | Opts in an item created before `enabled_since` (or a PR the loop did not create) |
 
@@ -260,6 +263,42 @@ A subscription limit, transient error, or restart never loses work. The worktree
 to a fresh session that rediscovers the work from the worktree) and the status comment says when work continues.
 Every stage step is idempotent: an existing pull request for the branch is reused, and a finished model run is not
 repeated when only verification or pushing remained.
+
+## Review stage
+
+A pull request labeled `agent:ai-review` (after its required checks pass) is reviewed by the `review` model:
+
+1. **Reviewer selection:** the reviewer must differ from every model recorded as an author of the pull request
+   (implementation, CI repair, and feedback runs) and, by default, from their vendors. If no configured reviewer
+   qualifies, the review waits; the model the engine actually used is checked again before anything is posted.
+2. **Read-only checkout:** the pull request head (`refs/pull/<n>/head`) is checked out detached under the worktree
+   directory, with `origin/<base_branch>` for the diff. The reviewer gets the `cross-model-pr-review` skill, the
+   approved analysis, the diff, and earlier review rounds with the author's responses, so settled items are not
+   raised again. It cannot edit files or use the network.
+3. **The review is posted by the App** as a comment review bound to the head commit: inline comments on changed lines,
+   other findings in the review body. The bot never approves or merges. If GitHub rejects an inline position, every
+   finding is posted in the body instead.
+4. **Routing:** any blocking finding labels the pull request `agent:changes-requested`; otherwise it becomes
+   `agent:ready-for-admin`, you are mentioned, and you are requested as reviewer. After `max_ai_review_rounds`
+   reviews without reaching you, the pull request is blocked and you decide. Each "Request changes" review of yours
+   starts a new budget.
+
+## Feedback stage
+
+A pull request labeled `agent:changes-requested` is handled by the `feedback` model in the issue's worktree:
+
+1. **Only trusted items are collected:** unresolved review threads started by an administrator or by the AI review,
+   your latest "Request changes" review summary, and the AI review's findings outside changed lines. Threads, reviews,
+   and comments from anyone else are ignored before any model runs. A thread counts again once you reply to it.
+2. **The model decides each item:** fix it, decline it with evidence, or mark it as needing your decision, following
+   the `address-review-feedback` skill. Every item must get exactly one response.
+3. **Changes go through the same verification, diff policy, and push** as the implementation stage; when every item
+   was declined, nothing is committed and verification is skipped.
+4. **Replies:** each thread gets a reply with the decision, and threads the AI reviewer opened are resolved when they
+   were fixed. Your threads are left for you to resolve. A summary comment lists every item.
+5. **Next:** the pull request returns to `agent:implementing`, so CI runs and the next AI review round follows. If any
+   item needs your decision, the pull request is blocked and you are notified; reply in the thread (or review again)
+   and remove `agent:blocked`.
 
 ### Isolation limits
 

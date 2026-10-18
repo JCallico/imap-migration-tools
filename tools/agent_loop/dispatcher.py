@@ -152,7 +152,7 @@ def cleanup_worktrees(runtime: Runtime, items) -> list[str]:
         if (
             issue is not None
             and state.IMPLEMENTING in issue.labels
-            and (pull is None or state.IMPLEMENTING in pull.labels)
+            and (pull is None or {state.IMPLEMENTING, state.CHANGES_REQUESTED} & pull.labels)
         ):
             continue
         log.info("removing finished worktree %s", path)

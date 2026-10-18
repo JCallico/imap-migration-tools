@@ -16,7 +16,9 @@ from agent_loop_fakes import (
     analysis_comment,
     comment,
     make_item,
+    make_world,
     permission_route,
+    run_git,
 )
 
 from agent_loop import state
@@ -43,10 +45,6 @@ VERIFY = VerifyConfig(
 )
 
 
-def run_git(cwd, *args):
-    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout.strip()
-
-
 class FakeAuthor:
     """Stands in for the Codex CLI: each call applies a scripted edit to the worktree and returns its final message."""
 
@@ -71,21 +69,7 @@ class FakeAuthor:
 
 @pytest.fixture
 def world(tmp_path):
-    origin = tmp_path / "origin.git"
-    root = tmp_path / "checkout"
-    subprocess.run(["git", "init", "--quiet", "--bare", "-b", "main", str(origin)], check=True)
-    subprocess.run(["git", "clone", "--quiet", str(origin), str(root)], check=True, capture_output=True)
-    run_git(root, "config", "user.email", "t@example.com")
-    run_git(root, "config", "user.name", "T")
-    run_git(root, "checkout", "-q", "-b", "main")
-    (root / "README.md").write_text("project\n")
-    skill = root / ".claude" / "skills" / "implement-approved-issue" / "SKILL.md"
-    skill.parent.mkdir(parents=True)
-    skill.write_text("# Implement\nFollow AGENTS.md.\n")
-    run_git(root, "add", "-A")
-    run_git(root, "commit", "-q", "-m", "init")
-    run_git(root, "push", "-q", "origin", "main")
-    return origin, root
+    return make_world(tmp_path)
 
 
 def make_gh(ci_runs=None, rules=None, logs="FAILED test_x: assert 1 == 2", pull_state="open"):

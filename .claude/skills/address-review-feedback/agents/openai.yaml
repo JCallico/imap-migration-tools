@@ -1,0 +1,4 @@
+interface:
+  display_name: "Address Review Feedback"
+  short_description: "Fix, decline, or escalate each review item on a pull request"
+  default_prompt: "Address each review item on this branch and report your responses as JSON."

@@ -420,5 +420,5 @@ def test_published_text_neutralizes_mentions_and_detects_credentials():
     message = implementation.commit_message(result, 77, SOL)
 
     assert "Closes #77" in body and "@<!-- -->bob" in body and "`@dataclass`" in body and "approved by @admin" in body
-    assert "(9 passed)" in body and "@<!-- -->alice" in message and "codex:gpt-6.1-sol" in message
+    assert "(9 passed)" in body and "@<!-- -->alice" in message and "codex" not in message + body
     assert implementation.contains_secret("fine", "ghs_" + "b" * 36) == ["GitHub token"]

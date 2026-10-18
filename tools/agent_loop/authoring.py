@@ -9,12 +9,13 @@ from __future__ import annotations
 import logging
 import sys
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from . import ci, implementation, repo_ops, state
+from . import ci, feedback, implementation, repo_ops, state
 from .analysis import StageOutputError
 from .authz import (
     APPROVE,
@@ -69,6 +70,17 @@ class Cycle:
     result: implementation.ImplementationResult | None = None
     model: ModelRef | None = None
     verification: VerifyResult | None = None
+    unchanged: bool = False  # the model changed nothing, which the stage allows; verification was skipped
+
+
+@dataclass(frozen=True)
+class CycleRules:
+    """How a code-authoring stage's cycle differs from the implementation stage's."""
+
+    contract: str = implementation.OUTPUT_CONTRACT
+    validate: Callable[[str], object] | None = None  # extra output checks; raises StageOutputError
+    allow_unchanged: bool = False  # a run that changes nothing is a valid outcome (for example, declined feedback)
+    branch: str = ""
 
 
 def _worktree_path(ctx: StageContext, issue_number: int) -> Path:
@@ -115,6 +127,7 @@ def _run_model(
     store: ProgressStore,
     deadline: float,
     interrupted: bool = False,
+    contract: str = implementation.OUTPUT_CONTRACT,
 ) -> EngineRun:
     """Run the author model in the sandboxed worktree, resuming its session when there is one.
 
@@ -138,7 +151,7 @@ def _run_model(
         run = run_engine(
             ref,
             command,
-            implementation.build_resume_prompt() if resume and interrupted else prompt,
+            implementation.build_resume_prompt(contract) if resume and interrupted else prompt,
             cwd=worktree,
             env=stage_environment(runtime.environ, config.env_passthrough),
             timeout_seconds=max(60.0, deadline - time.monotonic()),
@@ -168,17 +181,22 @@ def _author_cycle(
     store: ProgressStore,
     prompt: str,
     deadline: float,
+    rules: CycleRules = CycleRules(),
 ) -> Cycle:
     """Run the model until its work passes the dispatcher's verification, or the cycle must stop."""
     runtime = ctx.runtime
     policy = ctx.config.policy
     if progress.status == CODING:
-        run = _run_model(ctx, ref, worktree, prompt, progress, store, deadline, interrupted=True)
+        run = _run_model(
+            ctx, ref, worktree, prompt, progress, store, deadline, interrupted=True, contract=rules.contract
+        )
         stopped = settle_run(ctx, item, ref, run, "implementation")
         if stopped:
             return Cycle(line=stopped)
         try:
             result = implementation.parse_result(run.final_message)
+            if rules.validate is not None and result.outcome != implementation.OUTCOME_BLOCKED:
+                rules.validate(run.final_message)
         except StageOutputError as exc:
             return Cycle(line=_block(ctx, item, f"the implementation output was invalid ({exc})"))
         if result.outcome == implementation.OUTCOME_BLOCKED:
@@ -189,6 +207,13 @@ def _author_cycle(
         log.info("the model reports the change is complete; verifying outside the sandbox")
     model = ModelRef(*progress.model.split(":", 2)) if progress.model.count(":") == 2 else ref
     result = implementation.parse_result(progress.result_json)
+    if (
+        rules.allow_unchanged
+        and not has_uncommitted_changes(worktree)
+        and unpushed_commits(worktree, ctx.config.github.base_branch, rules.branch) == 0
+    ):
+        log.info("the model changed nothing; skipping verification")
+        return Cycle(result=result, model=model, unchanged=True)
     while True:
         verification = run_verification(worktree, ctx.config.verify, runtime.environ, python=sys.executable)
         if verification.ok:
@@ -206,9 +231,9 @@ def _author_cycle(
         store.save(progress)
         log.info("repair round %d of %d", progress.repair_rounds, policy.max_verify_rounds)
         repair = implementation.build_verify_repair_prompt(
-            verification.failure_report(), progress.repair_rounds, policy.max_verify_rounds
+            verification.failure_report(), progress.repair_rounds, policy.max_verify_rounds, rules.contract
         )
-        run = _run_model(ctx, ref, worktree, repair, progress, store, deadline)
+        run = _run_model(ctx, ref, worktree, repair, progress, store, deadline, contract=rules.contract)
         stopped = settle_run(ctx, item, ref, run, "repair")
         if stopped:
             progress.repair_rounds -= 1
@@ -216,6 +241,8 @@ def _author_cycle(
             return Cycle(line=stopped)
         try:
             result = implementation.parse_result(run.final_message)
+            if rules.validate is not None and result.outcome != implementation.OUTCOME_BLOCKED:
+                rules.validate(run.final_message)
         except StageOutputError as exc:
             return Cycle(line=_block(ctx, item, f"the repair output was invalid ({exc})"))
         if result.outcome == implementation.OUTCOME_BLOCKED:
@@ -316,7 +343,7 @@ def run_implementation(ctx: StageContext, action: state.Action) -> str:
         worktree = branch_worktree(runtime.repo_root, branch, base, path)
     except WorktreeError as exc:
         return _block(ctx, item, f"could not prepare the branch worktree ({exc})")
-    progress.branch, progress.worktree = branch, str(worktree)
+    progress.branch, progress.worktree, progress.stage = branch, str(worktree), "implementation"
     store.save(progress)
 
     skill = implementation.load_skill(runtime.repo_root)
@@ -472,6 +499,7 @@ def _repair_ci(
     )
     progress.branch, progress.worktree = branch, str(worktree)
     progress.status, progress.session_id, progress.result_json, progress.repair_rounds = CODING, "", "", 0
+    progress.stage = "ci_fix"
     store.save(progress)
     deadline = time.monotonic() + config.quota.max_stage_minutes * 60
     cycle = _author_cycle(ctx, pr, ref, worktree, progress, store, prompt, deadline)
@@ -481,8 +509,7 @@ def _repair_ci(
         return _block(ctx, pr, "the model's summary contained a possible credential and was not published")
     message = (
         f"{implementation.public_text(cycle.result.title)}\n\n{implementation.public_text(cycle.result.summary)}\n\n"
-        f"Repairs failing CI for #{issue_number} (attempt {attempt}).\n"
-        f"Generated by the agent loop ({cycle.model.engine}:{cycle.model.model})."
+        f"Repairs failing CI for #{issue_number} (attempt {attempt})."
     )
     stopped = _commit_and_push(ctx, pr, worktree, branch, cycle, message)
     if stopped:
@@ -499,3 +526,131 @@ def _repair_ci(
     progress.status = PR_OPEN
     store.save(progress)
     return f"repaired CI on PR #{pr.number} with {cycle.model} (attempt {attempt}); waiting for new checks"
+
+
+FEEDBACK_SKILL_PATH = Path(".claude") / "skills" / "address-review-feedback" / "SKILL.md"
+
+
+def _feedback_reply(response: feedback.Response, changed: bool, sha: str) -> str:
+    commit = f" Changed in `{sha[:12]}`." if response.decision == feedback.FIXED and changed else ""
+    return f"**{feedback.decision_label(response.decision)}.** {implementation.public_text(response.reply)}{commit}"
+
+
+def run_feedback(ctx: StageContext, action: state.Action) -> str:
+    """Address administrator and AI review feedback on a pull request, then send it back through CI and review."""
+    runtime = ctx.runtime
+    config = ctx.config
+    pr = action.item
+    ref = action.model
+    assert ref is not None
+    branch = pr.head_ref or ""
+    issue_number = issue_number_from_branch(branch)
+    if issue_number is None or not branch.startswith("agent/"):
+        return _block(ctx, pr, "review feedback is applied only to agent/* branches the loop created")
+    repo_ops.set_labels(
+        ctx.gh,
+        pr,
+        add=[state.CHANGES_REQUESTED, *action.add_labels],
+        remove=[state.WAITING_QUOTA, *action.remove_labels],
+    )
+    items = feedback.collect_items(pr, feedback.fetch_review_threads(ctx.gh, pr.number), ctx.authorizer)
+    if not items:
+        return _block(
+            ctx, pr, "changes were requested, but no review item from an administrator or the AI reviewer is open"
+        )
+    log.info("addressing %d review item(s) on PR #%d", len(items), pr.number)
+    store = _store(ctx)
+    progress = store.load(issue_number)
+    path = _worktree_path(ctx, issue_number)
+    base = config.github.base_branch
+    if not is_readable_by_stages(path):
+        return _block(ctx, pr, f"the worktree directory {path} lies inside a location stages may not read")
+    try:
+        worktree = branch_worktree(runtime.repo_root, branch, base, path)
+        sync_with_remote(worktree, branch)
+    except WorktreeError as exc:
+        return _block(ctx, pr, f"could not prepare the branch worktree ({exc})")
+    issue = action.related
+    analysis = latest_analysis(issue, ctx.authorizer) if issue is not None else None
+    skill_path = runtime.repo_root / FEEDBACK_SKILL_PATH
+    if not skill_path.is_file():
+        raise FileNotFoundError(f"feedback skill not found: {skill_path}")
+    prompt = feedback.build_prompt(
+        skill_path.read_text(encoding="utf-8"),
+        title=issue.title if issue else pr.title,
+        spec=strip_analysis_marker(analysis.comment.body) if analysis else "",
+        items=items,
+        base_branch=base,
+        python=sys.executable,
+    )
+    if progress.stage != "feedback" or progress.status == PR_OPEN:
+        progress.status, progress.session_id, progress.result_json, progress.repair_rounds = CODING, "", "", 0
+        progress.stage = "feedback"
+    progress.branch, progress.worktree = branch, str(worktree)
+    store.save(progress)
+    ids = [item.id for item in items]
+    rules = CycleRules(
+        contract=feedback.FEEDBACK_CONTRACT,
+        validate=lambda text: feedback.parse_responses(text, ids),
+        allow_unchanged=True,
+        branch=branch,
+    )
+    deadline = time.monotonic() + config.quota.max_stage_minutes * 60
+    cycle = _author_cycle(ctx, pr, ref, worktree, progress, store, prompt, deadline, rules)
+    if (
+        cycle.line
+        or cycle.result is None
+        or cycle.model is None
+        or (cycle.verification is None and not cycle.unchanged)
+    ):
+        return cycle.line or f"deferred PR #{pr.number}"
+    try:
+        responses = feedback.parse_responses(progress.result_json, ids)
+    except StageOutputError as exc:
+        return _block(ctx, pr, f"the feedback responses no longer match the open review items ({exc})")
+    texts = [cycle.result.summary, *cycle.result.notes, *(response.reply for response in responses.values())]
+    if implementation.contains_secret(*texts):
+        return _block(ctx, pr, "the feedback responses contained a possible credential and were not published")
+
+    changed = not cycle.unchanged
+    if changed:
+        message = (
+            f"Address review feedback on #{pr.number}\n\n{implementation.public_text(cycle.result.summary)}\n\n"
+            f"Responds to {len(items)} review item(s) for #{issue_number}."
+        )
+        stopped = _commit_and_push(ctx, pr, worktree, branch, cycle, message)
+        if stopped:
+            return stopped
+    sha = head_sha(worktree)
+    lines = []
+    for item in items:
+        response = responses[item.id]
+        reply = _feedback_reply(response, changed, sha)
+        if item.is_thread:
+            repo_ops.reply_to_review_thread(ctx.gh, item.thread_id, reply)
+            if response.decision == feedback.FIXED and changed and item.source == "ai_reviewer":
+                repo_ops.resolve_review_thread(ctx.gh, item.thread_id)
+        lines.append(f"- {item.describe()}: {reply}")
+    heading = f"Addressed review feedback in `{sha[:12]}`." if changed else "Answered review feedback; no code changed."
+    verified = f"\n\nVerified before pushing ({cycle.verification.test_summary()})." if cycle.verification else ""
+    repo_ops.post_comment(
+        ctx.gh,
+        pr.number,
+        f"{heading} {implementation.public_text(cycle.result.summary)}\n\n"
+        + "\n".join(lines)
+        + verified
+        + f"\n\n{state.run_marker('feedback', cycle.model)}",
+    )
+    current = (pr.labels | {state.CHANGES_REQUESTED, *action.add_labels}) - set(action.remove_labels)
+    repo_ops.set_labels(
+        ctx.gh,
+        replace(pr, labels=frozenset(current)),
+        add=[state.IMPLEMENTING],
+        remove=[state.CHANGES_REQUESTED, state.WAITING_QUOTA],
+    )
+    progress.status, progress.stage = PR_OPEN, ""
+    store.save(progress)
+    escalated = [item.describe() for item in items if responses[item.id].decision == feedback.NEEDS_ADMIN]
+    if escalated:
+        return _block(ctx, pr, "the author model needs your decision on: " + "; ".join(escalated))
+    return f"addressed {len(items)} review item(s) on PR #{pr.number} with {cycle.model}; waiting for CI"

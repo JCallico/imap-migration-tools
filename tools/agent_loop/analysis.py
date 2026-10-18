@@ -221,7 +221,7 @@ def neutralize_mentions(text: str) -> str:
 
 
 def _footer_model(model: ModelRef, base_branch: str, base_sha: str) -> str:
-    return f"<sub>Analyzed by {model.engine}:{model.model} ({model.effort}) against `{base_branch}` at `{base_sha[:12]}`.</sub>"
+    return f"<sub>Analyzed against `{base_branch}` at `{base_sha[:12]}`.</sub>"
 
 
 def render_analysis(

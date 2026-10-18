@@ -117,12 +117,15 @@ class Context:
 
 
 def run_markers(item: Item, authorizer: Authorizer) -> list[tuple[str, ModelRef]]:
-    """Return ``(stage, model)`` pairs recorded by the bot for completed stage runs on an item."""
+    """Return ``(stage, model)`` pairs recorded by the bot for completed stage runs on an item.
+
+    Markers are read from the bot's comments and from its pull request reviews (the review stage records itself there).
+    """
     markers = []
-    for comment in item.comments:
-        if not authorizer.is_bot(comment.author):
-            continue
-        for stage, model in _RUN_MARKER.findall(comment.body):
+    bodies = [comment.body for comment in item.comments if authorizer.is_bot(comment.author)]
+    bodies += [review.body for review in item.reviews if authorizer.is_bot(review.author)]
+    for body in bodies:
+        for stage, model in _RUN_MARKER.findall(body):
             try:
                 markers.append((stage, parse_model_ref(model)))
             except ValueError:
@@ -321,8 +324,23 @@ def _reanalysis(item: Item, ctx: Context, reason: str, remove: tuple[str, ...]) 
     ]
 
 
-def _ai_review_rounds(item: Item, ctx: Context) -> int:
-    return sum(1 for stage, _model in run_markers(item, ctx.authorizer) if stage == "review")
+def ai_review_rounds(item: Item, authorizer: Authorizer) -> int:
+    """AI reviews since the administrator last requested changes; each administrator request starts a new budget."""
+    admin_requests = [
+        review.submitted_at
+        for review in item.reviews
+        if review.submitted_at is not None
+        and review.state == "CHANGES_REQUESTED"
+        and authorizer.is_admin(review.author)
+    ]
+    since = max(admin_requests, default=None)
+    return sum(
+        1
+        for review in item.reviews
+        if authorizer.is_bot(review.author)
+        and any(stage == "review" for stage, _model in _RUN_MARKER.findall(review.body))
+        and (since is None or (review.submitted_at is not None and review.submitted_at > since))
+    )
 
 
 def _admin_requested_changes(item: Item, ctx: Context) -> bool:
@@ -341,10 +359,20 @@ def _admin_requested_changes(item: Item, ctx: Context) -> bool:
 
 
 def _decide_pr(item: Item, labels: set[str], ctx: Context) -> list[Action]:
+    number = issue_number_from_branch(item.head_ref)
+    related = ctx.issues_by_number.get(number) if number is not None else None
     if not any(label in labels for label in STATE_LABELS):
         if label_applied_by_admin(item, ADOPT, ctx.authorizer):
             return [
-                _stage_action(ctx, item, "review", "review", add_labels=(AI_REVIEW,), reason="adopted by administrator")
+                _stage_action(
+                    ctx,
+                    item,
+                    "review",
+                    "review",
+                    add_labels=(AI_REVIEW,),
+                    related=related,
+                    reason="adopted by administrator",
+                )
             ]
         return [Action(SKIP, item, reason="not managed by the agent loop")]
     if READY_FOR_ADMIN in labels:
@@ -357,14 +385,15 @@ def _decide_pr(item: Item, labels: set[str], ctx: Context) -> list[Action]:
                     "admin_changes",
                     add_labels=(CHANGES_REQUESTED,),
                     remove_labels=(READY_FOR_ADMIN,),
+                    related=related,
                     reason="administrator requested changes",
                 )
             ]
         return [Action(SKIP, item, reason="waiting for administrator review")]
     if CHANGES_REQUESTED in labels:
-        return [_stage_action(ctx, item, "feedback", "feedback", reason="addressing review feedback")]
+        return [_stage_action(ctx, item, "feedback", "feedback", related=related, reason="addressing review feedback")]
     if AI_REVIEW in labels:
-        rounds = _ai_review_rounds(item, ctx)
+        rounds = ai_review_rounds(item, ctx.authorizer)
         if rounds >= ctx.config.policy.max_ai_review_rounds:
             return [
                 Action(
@@ -375,15 +404,14 @@ def _decide_pr(item: Item, labels: set[str], ctx: Context) -> list[Action]:
                     reason=f"{rounds} AI review rounds reached; escalating to the administrator",
                 )
             ]
-        return [_stage_action(ctx, item, "review", "review", reason=f"AI review round {rounds + 1}")]
+        return [_stage_action(ctx, item, "review", "review", related=related, reason=f"AI review round {rounds + 1}")]
     if IMPLEMENTING in labels:
-        number = issue_number_from_branch(item.head_ref)
         return [
             Action(
                 CHECK_CI,
                 item,
                 priority=PRIORITY["ci_fix"],
-                related=ctx.issues_by_number.get(number) if number is not None else None,
+                related=related,
                 reason="implementation pull request",
             )
         ]
