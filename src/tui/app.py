@@ -12,6 +12,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.content import Content
+from textual.css.query import NoMatches
 from textual.events import Resize
 from textual.screen import ModalScreen
 from textual.timer import Timer
@@ -693,9 +694,13 @@ class ImapToolsApp(App[None]):
         select = self.query_one_optional("#project-select", Select)
         if select is None:  # a poll timer can fire while the workspace is being torn down
             return
-        with self.prevent(Select.Changed):
-            select.set_options(self.project_options())
-            select.value = self.project.name
+        try:
+            with self.prevent(Select.Changed):
+                select.set_options(self.project_options())
+                select.value = self.project.name
+        except NoMatches:  # the selector exists but has not finished composing its option list; retry once it has
+            self.call_after_refresh(self.refresh_project_controls)
+            return
         managed = self.project.managed
         self.query_one("#rename-project", Button).disabled = not managed
         self.query_one("#delete-project", Button).disabled = not managed
