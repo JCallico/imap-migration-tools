@@ -172,15 +172,46 @@ def test_author_fallback_that_would_leave_no_reviewer_is_skipped(tmp_path):
     assert "would leave no valid reviewer" in selection.reason
 
 
+def ai_review(minutes):
+    return review(BOT, "COMMENTED", minutes, f"findings\n{state.run_marker('review', SONNET)}")
+
+
 def test_ai_review_round_limit_escalates():
     ctx, _ = context()
-    reviews = [run_comment("review", SONNET, minute) for minute in (10, 20, 30)]
-    pr = make_item(is_pr=True, labels=(state.AI_REVIEW,), comments=[run_comment("implementation", SOL, 5), *reviews])
+    reviews = [ai_review(minute) for minute in (10, 20, 30)]
+    pr = make_item(
+        is_pr=True, labels=(state.AI_REVIEW,), comments=[run_comment("implementation", SOL, 5)], reviews=reviews
+    )
 
     action = only(state.decide(pr, ctx))
 
     assert action.kind == state.SET_LABELS
     assert action.add_labels == (state.BLOCKED,)
+
+
+def test_administrator_change_request_starts_a_new_ai_review_budget():
+    ctx, _ = context()
+    reviews = [ai_review(10), ai_review(20), ai_review(30), review(ADMIN, "CHANGES_REQUESTED", 40), ai_review(50)]
+    pr = make_item(
+        is_pr=True, labels=(state.AI_REVIEW,), comments=[run_comment("implementation", SOL, 5)], reviews=reviews
+    )
+
+    action = only(state.decide(pr, ctx))
+
+    assert (action.kind, action.stage, action.model) == (state.RUN_STAGE, "review", SONNET)
+    assert action.reason == "AI review round 2"
+    assert state.run_markers(pr, ctx.authorizer)[-1] == ("review", SONNET)  # markers in bot reviews count
+
+
+def test_review_and_feedback_actions_carry_the_linked_issue():
+    ctx, _ = context()
+    issue = make_item(number=77, labels=(state.IMPLEMENTING,))
+    pr = replace(make_item(number=88, is_pr=True, labels=(state.CHANGES_REQUESTED,)), head_ref="agent/issue-77-x")
+
+    actions = state.plan([issue, pr], ctx)
+
+    feedback = next(action for action in actions if action.item.number == 88)
+    assert (feedback.stage, feedback.related) == ("feedback", issue)
 
 
 def test_admin_change_request_on_ready_pr_has_top_priority():

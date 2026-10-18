@@ -85,3 +85,18 @@ def assign(gh: Gh, number: int, logins: Iterable[str]) -> None:
     logins = list(logins)
     if logins:
         gh.api(f"{_issue_path(gh, number)}/assignees", method="POST", body={"assignees": logins})
+
+
+def reply_to_review_thread(gh: Gh, thread_id: str, body: str) -> None:
+    gh.graphql(
+        "mutation($id: ID!, $body: String!) { addPullRequestReviewThreadReply(input: "
+        "{pullRequestReviewThreadId: $id, body: $body}) { comment { id } } }",
+        {"id": thread_id, "body": body},
+    )
+
+
+def resolve_review_thread(gh: Gh, thread_id: str) -> None:
+    gh.graphql(
+        "mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { isResolved } } }",
+        {"id": thread_id},
+    )

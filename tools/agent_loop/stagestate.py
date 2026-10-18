@@ -25,6 +25,7 @@ class IssueProgress:
     result_json: str = ""  # the model's accepted final message, kept so verification can resume without re-running it
     model: str = ""  # engine:model:effort the model actually ran as
     repair_rounds: int = 0
+    stage: str = ""  # the authoring stage that owns an unfinished run: implementation, ci_fix, or feedback
 
 
 class ProgressStore:

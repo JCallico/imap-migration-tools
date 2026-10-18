@@ -52,6 +52,27 @@ def detached_checkout(repo_root: Path, base_branch: str, path: Path, remote: str
         remove_worktree(repo_root, path)
 
 
+@contextmanager
+def pull_request_checkout(
+    repo_root: Path, number: int, base_branch: str, path: Path, remote: str = "origin"
+) -> Iterator[str]:
+    """Check out pull request ``number``'s head (detached) at ``path`` with ``remote/base_branch`` fetched.
+
+    Uses GitHub's ``refs/pull/<n>/head``, which also exists for pull requests from forks; yields the head SHA.
+    """
+    local_ref = f"refs/agent-loop/pull/{number}"
+    _git(repo_root, "fetch", "--quiet", remote, base_branch)
+    _git(repo_root, "fetch", "--quiet", remote, f"+refs/pull/{number}/head:{local_ref}")
+    remove_worktree(repo_root, path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _git(repo_root, "worktree", "add", "--quiet", "--detach", str(path), local_ref)
+    try:
+        yield _git(path, "rev-parse", "HEAD")
+    finally:
+        remove_worktree(repo_root, path)
+        _git(repo_root, "update-ref", "-d", local_ref)
+
+
 # --- persistent branch worktrees, commits, and pushes (implementation and CI repair stages) --------------------------
 
 CHECKPOINT_DIR = ".agent-loop"

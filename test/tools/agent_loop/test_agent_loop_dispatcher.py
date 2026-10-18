@@ -151,23 +151,22 @@ def test_cli_reports_configuration_errors(tmp_path, capsys):
 
 
 def test_review_round_limit_blocks_and_notifies_admin(tmp_path):
-    runs = [
-        comment_node(
-            f"r{n}",
-            BOT_SLUG,
-            "<!-- agent-loop:run stage=review model=claude:claude-sonnet-5-5:medium -->",
-            f"2026-10-07T12:0{n}:00Z",
-            True,
-        )
+    reviews = [
+        {
+            "state": "COMMENTED",
+            "submittedAt": f"2026-10-07T12:0{n}:00Z",
+            "body": "<!-- agent-loop:run stage=review model=claude:claude-sonnet-5-5:medium -->",
+            "author": actor(BOT_SLUG, bot=True),
+            "commit": {"oid": "abc"},
+        }
         for n in range(3)
     ]
     pr = issue_node(
         9,
         labels=["agent:ai-review"],
-        comments=runs,
         events=[labeled("agent:ai-review", BOT_SLUG, "2026-10-07T12:00:00Z", bot=True)],
     )
-    pr.update({"isDraft": False, "headRefOid": "abc", "reviews": {"nodes": []}})
+    pr.update({"isDraft": False, "headRefOid": "abc", "reviews": {"nodes": reviews}})
     runner = github([], pulls=[pr])
 
     tick(runtime(tmp_path, runner), dry_run=False)

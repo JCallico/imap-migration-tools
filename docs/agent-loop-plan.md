@@ -1,7 +1,8 @@
 # Agent loop implementation plan
 
-Status: Phases 1 (foundations), 2 (analysis and approval), and 3 (implementation) implemented on
-`feat/agent-loop-foundations`; the GitHub App, labels, and branch rules are set up. Review and feedback phases pending. See [agent-loop.md](agent-loop.md) for operation.
+Status: Phases 1 (foundations), 2 (analysis and approval), 3 (implementation), and 4 (review and feedback)
+implemented; the GitHub App, labels, and branch rules are set up. Phase 5 (unattended operation) is pending. See
+[agent-loop.md](agent-loop.md) for operation.
 
 ## Goal
 
@@ -261,15 +262,15 @@ existing `setup-development-environment` pattern, so either engine can run any s
    opens a draft PR with `Closes #n`, and runs the green loop: it watches CI each tick, repairs failures, and marks the
    PR ready. (Design change from the first draft: the plan had the model run `pr-green-loop` itself, which would have
    required giving it GitHub credentials and a network-enabled sandbox.)
-3. **`address-review-feedback`** — Collects unresolved review threads through `gh api graphql`, keeping only items
-   whose author is a repository administrator or the dispatcher-recorded AI reviewer run (see
-   [Trigger authorization](#trigger-authorization)); all other comments are ignored. Classifies each kept item as
-   valid (fix), invalid (rebut with evidence), or needs administrator decision (escalate). Applies fixes, runs
-   `pr-green-loop`, replies to every item with the fixing commit SHA or rationale, and resolves only threads it fixed;
-   administrator-opened threads are left for the administrator.
+3. **`address-review-feedback`** — Guides the sandboxed feedback model. The dispatcher collects unresolved review
+   threads through `gh api graphql`, keeping only items whose author is a repository administrator or the loop's AI
+   reviewer (see [Trigger authorization](#trigger-authorization)); all other comments are ignored. The model classifies
+   each item as valid (fix), invalid (rebut with evidence), or needs administrator decision (escalate) and edits
+   files. The dispatcher verifies, pushes, replies to every item with the fixing commit SHA or rationale, and resolves
+   only AI-reviewer threads that were fixed; administrator-opened threads are left for the administrator.
 4. **`cross-model-pr-review`** — Reviews the diff against the approved spec and repository conventions. Receives the
-   PR's author-model set from the dispatcher. Posts a GitHub review with inline comments and a verdict bound to the head
-   SHA. Never approves for merge or merges.
+   PR's author-model set from the dispatcher. The dispatcher posts its result as a comment-only GitHub review with
+   inline comments and a verdict marker bound to the head SHA. Never approves for merge or merges.
 5. **`agent-loop`** — Operator skill: run one tick or `--dry-run`, show status and quota, run `doctor`, pause or resume.
 6. **`pr-green-loop` and `release-green-loop`** — Unchanged and still available for manual delivery work. The agent
    loop does not run them: their commit, push, and CI-monitoring steps are implemented in the dispatcher (scoped to
@@ -384,7 +385,8 @@ tools/agent_loop/
   notify.py                           # notifier interface and GitHub backend
   labels.py                           # agent:* label definitions and bootstrap
   dispatcher.py                       # tick, status, doctor
-  policy.py                           # diff policy gate (Phase 4)
+  policy.py                           # diff policy gate
+  review.py, feedback.py              # review and feedback stages (Phase 4)
   requirements.txt
 packaging/systemd/agent-loop.{service,timer}   # Phase 5
 .claude/skills/{issue-analysis,implement-approved-issue,address-review-feedback,cross-model-pr-review,agent-loop}/
@@ -412,8 +414,13 @@ are delivered together on `feat/agent-loop-foundations` (PR #76).
    ready) that replaces a model-driven `pr-green-loop`, so the model never holds GitHub credentials. Checkpoints in
    `.agent-loop/progress.md`, persisted session ids with resume and fresh-session fallback, and quota pauses that keep
    the worktree. Next: exercise on a small throwaway issue.
-4. **Review and feedback** — `cross-model-pr-review`, `address-review-feedback`, reviewer selection, actual-model
-   verification, and the diff policy gate.
+4. **Review and feedback** *(implemented)* — `cross-model-pr-review` and `address-review-feedback` skills; a read-only
+   reviewer on a detached checkout of the pull request head, re-checked against the actual model used; comment-only
+   reviews bound to the head commit with inline findings; a feedback stage that answers every trusted review item
+   (fixed, declined, or needs the administrator), replies in threads, resolves only the AI reviewer's fixed threads,
+   and returns the pull request through CI and review; AI review rounds counted per administrator request. The
+   diff policy gate shipped in Phase 3. Deviation: the feedback model edits files only, so the dispatcher, not
+   `pr-green-loop`, verifies, pushes, and posts the replies.
 5. **Operation** — enable the systemd timer, run logs in `~/.local/state/agent-loop/`, operator guide finalized.
 
 ## Testing

@@ -120,5 +120,29 @@ def make_item(
     )
 
 
-def review(author: str, state: str, minutes: int) -> Review:
-    return Review(author, state, at(minutes), "abc123")
+def review(author: str, state: str, minutes: int, body: str = "") -> Review:
+    return Review(author, state, at(minutes), "abc123", body)
+
+
+def run_git(cwd, *args):
+    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def make_world(tmp_path: Path) -> tuple[Path, Path]:
+    """A bare "origin" and a clone with the skills the stages load; returns ``(origin, checkout)``."""
+    origin = tmp_path / "origin.git"
+    root = tmp_path / "checkout"
+    subprocess.run(["git", "init", "--quiet", "--bare", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "clone", "--quiet", str(origin), str(root)], check=True, capture_output=True)
+    run_git(root, "config", "user.email", "t@example.com")
+    run_git(root, "config", "user.name", "T")
+    run_git(root, "checkout", "-q", "-b", "main")
+    (root / "README.md").write_text("project\n")
+    for skill in ("implement-approved-issue", "cross-model-pr-review", "address-review-feedback"):
+        path = root / ".claude" / "skills" / skill / "SKILL.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(f"# {skill}\nFollow AGENTS.md.\n")
+    run_git(root, "add", "-A")
+    run_git(root, "commit", "-q", "-m", "init")
+    run_git(root, "push", "-q", "origin", "main")
+    return origin, root

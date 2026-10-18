@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cross-Model PR Review"
+  short_description: "Review a pull request against its approved specification"
+  default_prompt: "Review this branch against its specification and AGENTS.md and report findings as JSON."
