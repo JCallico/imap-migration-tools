@@ -9,10 +9,12 @@ from datetime import datetime
 
 from .authz import (
     AGENT_LABEL_PREFIX,
+    NOTE,
     Authorizer,
     evaluate_approval,
     label_applied_by_admin,
     parse_analysis,
+    parse_command,
     untrusted_label_changes,
 )
 from .config import LoopConfig, ModelRef, parse_model_ref
@@ -421,6 +423,33 @@ def _decide_pr(item: Item, labels: set[str], ctx: Context) -> list[Action]:
     return [Action(SKIP, item, reason="no pull request action for current labels")]
 
 
+def administrator_reply_to_block(item: Item, labels: set[str] | frozenset[str], ctx: Context) -> bool:
+    """True when an administrator answered the loop's own block, so work can resume without removing the label.
+
+    Only a block the loop applied counts (an administrator's own ``agent:blocked`` stays until they remove it), the
+    item must still carry a state label to resume from, and ``/note`` comments are not replies.
+    """
+    events = [event for event in item.label_events if event.label == BLOCKED]
+    if not events or not any(label in labels for label in STATE_LABELS):
+        return False
+    blocked = max(events, key=lambda event: event.created_at)
+    if not blocked.added or not ctx.authorizer.is_bot(blocked.actor):
+        return False
+    for comment in item.comments:
+        if comment.created_at <= blocked.created_at or not ctx.authorizer.comment_is_trusted(comment):
+            continue
+        command = parse_command(comment.body)
+        if command is None or command.name != NOTE:
+            return True
+    return any(
+        review.submitted_at is not None
+        and review.submitted_at > blocked.created_at
+        and review.state == "CHANGES_REQUESTED"
+        and ctx.authorizer.is_admin(review.author)
+        for review in item.reviews
+    )
+
+
 def decide(item: Item, ctx: Context) -> list[Action]:
     """Return the dispatcher actions for one open item, most important first."""
     if item.is_pr and not has_agent_label(item):
@@ -433,6 +462,9 @@ def decide(item: Item, ctx: Context) -> list[Action]:
     if PAUSED in labels:
         return [*actions, Action(SKIP, item, reason=f"{PAUSED} applied by an administrator")]
     if BLOCKED in labels:
+        if administrator_reply_to_block(item, labels, ctx):
+            reason = f"an administrator replied after the block; removing {BLOCKED} so work resumes"
+            return [*actions, Action(SET_LABELS, item, remove_labels=(BLOCKED,), reason=reason)]
         return [*actions, Action(SKIP, item, reason=f"{BLOCKED}; waiting for an administrator")]
     if item.is_pr:
         return actions + _decide_pr(item, labels, ctx)

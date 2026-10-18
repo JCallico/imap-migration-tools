@@ -417,3 +417,65 @@ def test_a_higher_limit_allows_parallel_implementations():
     actions = state.plan([make_item(number=70, labels=(state.IMPLEMENTING,)), approved_issue_item(71)], ctx)
 
     assert [a for a in actions if a.item.number == 71 and a.kind == state.RUN_STAGE]
+
+
+def blocked_issue(number=81, *comments, blocked_by=BOT, labels=(state.IMPLEMENTING,)):
+    events = [label_event(label, BOT, 1) for label in labels] + [label_event(state.BLOCKED, blocked_by, 5)]
+    return make_item(number=number, labels=(*labels, state.BLOCKED), events=events, comments=comments)
+
+
+def test_an_administrator_reply_after_the_block_removes_the_label():
+    ctx, _ = context()
+
+    actions = state.plan([blocked_issue(81, comment("c1", ADMIN, "The checkpoint folder must stay out.", 6))], ctx)
+
+    action = only(actions, state.SET_LABELS)
+    assert action.remove_labels == (state.BLOCKED,) and not action.add_labels
+    assert not [a for a in actions if a.kind == state.RUN_STAGE]
+
+
+def test_the_block_stays_without_an_administrator_reply():
+    ctx, _ = context()
+    replies = [
+        comment("early", ADMIN, "Before the block.", 3),
+        comment("other", "someone", "Looks fine to me.", 6),
+        comment("bot", BOT, "Status update.", 7),
+        comment("note", ADMIN, "/note just thinking aloud", 8),
+    ]
+
+    actions = state.plan([blocked_issue(81, *replies)], ctx)
+
+    assert not [a for a in actions if a.kind == state.SET_LABELS]
+    assert only(actions, state.SKIP).reason.startswith(state.BLOCKED)
+
+
+def test_a_block_applied_by_an_administrator_is_not_removed_automatically():
+    ctx, _ = context()
+
+    actions = state.plan([blocked_issue(81, comment("c1", ADMIN, "Continue.", 6), blocked_by=ADMIN)], ctx)
+
+    assert not [a for a in actions if a.kind == state.SET_LABELS]
+
+
+def test_a_block_without_a_state_label_to_resume_from_stays():
+    ctx, _ = context()
+
+    actions = state.plan([blocked_issue(81, comment("c1", ADMIN, "Continue.", 6), labels=())], ctx)
+
+    assert not [a for a in actions if a.kind == state.SET_LABELS]
+
+
+def test_an_administrator_change_request_review_unblocks_a_pull_request():
+    ctx, _ = context()
+    events = [label_event(state.IMPLEMENTING, BOT, 1), label_event(state.BLOCKED, BOT, 5)]
+    pr = make_item(
+        number=88,
+        is_pr=True,
+        labels=(state.IMPLEMENTING, state.BLOCKED),
+        events=events,
+        reviews=[review(ADMIN, "CHANGES_REQUESTED", 6, "Please rename it.")],
+    )
+
+    actions = state.plan([pr], ctx)
+
+    assert only(actions, state.SET_LABELS).remove_labels == (state.BLOCKED,)

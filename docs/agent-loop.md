@@ -297,8 +297,8 @@ A pull request labeled `agent:changes-requested` is handled by the `feedback` mo
 4. **Replies:** each thread gets a reply with the decision, and threads the AI reviewer opened are resolved when they
    were fixed. Your threads are left for you to resolve. A summary comment lists every item.
 5. **Next:** the pull request returns to `agent:implementing`, so CI runs and the next AI review round follows. If any
-   item needs your decision, the pull request is blocked and you are notified; reply in the thread (or review again)
-   and remove `agent:blocked`.
+   item needs your decision, the pull request is blocked and you are notified; reply in the thread (or review again);
+   your reply lifts the block.
 
 ### Isolation limits
 
@@ -332,7 +332,14 @@ is analyzed by the configured `analysis` model, at most `max_stage_runs_per_tick
 
 A subscription limit labels the issue `agent:waiting-quota` and keeps one status comment up to date until the work
 resumes. Invalid output, a possible credential, an authentication problem, or a failed run labels the issue
-`agent:blocked` and notifies the administrator; remove the label to retry.
+`agent:blocked` and notifies the administrator.
+
+An administrator's reply lifts a block the loop applied: any comment you write after the block (other than `/note`), or
+a "Request changes" review, makes the next tick remove `agent:blocked` and resume from the label the item still
+carries, so you never remove it by hand. The reply is passed to the model with the rest of your comments. A block you
+applied yourself stays until you remove it, and so does a block with no state label left to resume from (for
+example after `max_revisions_per_issue` revisions); remove the label by hand in those cases. If the same problem
+blocks the work again, a new reply is needed.
 
 ## Subscription limits
 
