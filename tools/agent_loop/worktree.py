@@ -177,7 +177,10 @@ def unpushed_commits(path: Path, base_branch: str, branch: str, remote: str = "o
 
 def commit_all(path: Path, message: str, author_name: str, author_email: str) -> str | None:
     """Commit every change except the checkpoint directory; return the new SHA, or ``None`` when nothing changed."""
-    git(path, "add", "-A", "--", ".", f":(exclude){CHECKPOINT_DIR}")
+    staged = git(path, "add", "-A", "--", ".", f":(exclude){CHECKPOINT_DIR}", check=False)
+    # When .gitignore also lists the checkpoint directory, git stages everything else but exits 1 with this notice.
+    if staged.returncode and "ignored by one of your .gitignore files" not in staged.stderr:
+        raise WorktreeError(f"git add failed: {staged.stderr.strip()[:400]}")
     if not git(path, "diff", "--cached", "--quiet", check=False).returncode:
         return None
     git(
