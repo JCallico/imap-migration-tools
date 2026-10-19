@@ -296,9 +296,9 @@ existing `setup-development-environment` pattern, so either engine can run any s
 - **Diff policy gate** before `agent:ready-for-admin`: reject changes to `.github/workflows/**`, secret-like content,
   oversized diffs, and files outside the spec's declared scope unless justified in the PR.
 - **Branch protection on `main`** (applied 2026-10-14 by updating the existing `main_branch_ruleset`): pull requests
-  only, squash merges only, one approval dismissed on new pushes, resolved conversations, twelve required CI checks, no
-  force-push or deletion. The Admin role may bypass only through pull requests, because GitHub forbids approving your
-  own pull request; bot pull requests always need the administrator's approval.
+  only, squash merges only, resolved conversations, twelve required CI checks, no force-push or deletion, and an Admin
+  bypass through pull requests only. It required one approval until 2026-10-19, when the count was set to 0 because
+  GitHub forbids approving your own pull request; since then, the dispatcher's code alone keeps the bot from merging.
 - **Budgets:** one concurrent implementation, three AI review rounds, three materially identical CI failures, and
   per-stage time and turn caps; exceeding a budget sets `agent:blocked` and notifies.
 - **Opt-in only** for pre-existing issues and pull requests; `agent:paused` and a global flag act as kill switches.
