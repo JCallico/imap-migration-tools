@@ -33,7 +33,15 @@ from .selection import reviewer_allowed
 from .snapshot import fetch_open_items
 from .stages import StageContext
 from .stagestate import ProgressStore
-from .worktree import WorktreeError, delete_local_branch, issue_number_from_branch, remove_worktree, repository_root
+from .worktree import (
+    WorktreeError,
+    delete_local_branch,
+    has_uncommitted_changes,
+    issue_number_from_branch,
+    remove_worktree,
+    repository_root,
+    unpushed_commits,
+)
 
 log = logging.getLogger(__name__)
 
@@ -134,8 +142,32 @@ def plan_actions(runtime: Runtime, authorizer: Authorizer | None = None, items=N
     return state.plan(items if items is not None else fetch_open_items(runtime.gh), ctx)
 
 
-def cleanup_worktrees(runtime: Runtime, items) -> list[str]:
-    """Remove implementation worktrees (and their local branches) for work that is no longer in progress."""
+def _acted_on(actions: list[state.Action]) -> set[int]:
+    """Issue numbers this tick's actions touched, including the issues behind pull requests."""
+    numbers = set()
+    for action in actions:
+        for item in (action.item, action.related):
+            if item is None:
+                continue
+            numbers.add(item.number)
+            if item.is_pr and (linked := issue_number_from_branch(item.head_ref)) is not None:
+                numbers.add(linked)
+    return numbers
+
+
+def _has_unsaved_work(path: Path, base_branch: str, branch: str) -> bool:
+    try:
+        return has_uncommitted_changes(path) or bool(branch and unpushed_commits(path, base_branch, branch))
+    except WorktreeError:
+        return True  # cannot tell: keep it
+
+
+def cleanup_worktrees(runtime: Runtime, items, acted: set[int] | frozenset[int] = frozenset()) -> list[str]:
+    """Remove implementation worktrees (and their local branches) for work that is no longer in progress.
+
+    ``items`` were fetched before this tick's actions ran, so their labels may be stale: worktrees of issues the tick
+    acted on are kept, and so is any worktree of an open issue holding uncommitted or unpushed work.
+    """
     root = runtime.config.resolved_worktree_dir()
     if not root.is_dir():
         return []
@@ -149,15 +181,20 @@ def cleanup_worktrees(runtime: Runtime, items) -> list[str]:
             continue
         number = int(suffix)
         issue, pull = issues.get(number), pulls.get(number)
+        if number in acted:
+            continue
         if (
             issue is not None
             and state.IMPLEMENTING in issue.labels
             and (pull is None or {state.IMPLEMENTING, state.CHANGES_REQUESTED} & pull.labels)
         ):
             continue
+        branch = store.load(number).branch
+        if issue is not None and _has_unsaved_work(path, runtime.config.github.base_branch, branch):
+            log.info("keeping worktree %s: it holds work that was never pushed", path)
+            continue
         log.info("removing finished worktree %s", path)
         remove_worktree(runtime.repo_root, path)
-        branch = store.load(number).branch
         if branch:
             delete_local_branch(runtime.repo_root, branch)
         removed.append(f"removed finished worktree {path.name}")
@@ -247,7 +284,7 @@ def tick(runtime: Runtime, *, dry_run: bool) -> list[str]:
                 lines.insert(0, "[dry-run] bot identity unknown: existing analyses and run markers are not recognized")
         else:
             lines = _execute_all(runtime, actions, authorizer)
-            lines += cleanup_worktrees(runtime, items)
+            lines += cleanup_worktrees(runtime, items, _acted_on(actions))
         _log_tick(runtime, dry_run, lines)
         log.info("tick finished")
         return lines or ["no open items require action"]

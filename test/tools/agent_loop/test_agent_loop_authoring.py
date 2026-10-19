@@ -27,7 +27,7 @@ from agent_loop.dispatcher import Runtime, cleanup_worktrees, execute
 from agent_loop.gh import Gh
 from agent_loop.quota import SUCCESS, Classification, QuotaLedger
 from agent_loop.snapshot import Item
-from agent_loop.stagestate import PR_OPEN, ProgressStore
+from agent_loop.stagestate import PR_OPEN, VERIFYING, IssueProgress, ProgressStore
 
 SOL = ModelRef("codex", "gpt-6.1-sol", "medium")
 TITLE, BODY = "Add feature", "Please add it. ISSUE_BODY_MARKER"
@@ -588,3 +588,56 @@ def test_item_snapshot_carries_node_id_and_branch():
     item: Item = item_from_node(node, is_pr=True)
 
     assert (item.node_id, item.head_ref, item.is_draft, item.head_sha) == ("PR_1", BRANCH, True, "abc")
+
+
+def test_a_failed_commit_keeps_the_worktree_even_with_stale_labels_and_a_resume_finishes_the_work(
+    tmp_path, world, monkeypatch
+):
+    import agent_loop.authoring as authoring
+    from agent_loop.worktree import WorktreeError
+
+    runner = make_gh()
+    author = FakeAuthor({"files": {"feature.txt": "done\n"}, "result": GOOD})
+    runtime = make_runtime(tmp_path, world, runner, author)
+    real_commit = authoring.commit_all
+    monkeypatch.setattr(authoring, "commit_all", lambda *args: (_ for _ in ()).throw(WorktreeError("git add failed")))
+    issue = approved_issue()  # fetched before the tick ran, so it still says agent:awaiting-approval
+
+    line = execute(runtime, implement(issue))
+    removed = cleanup_worktrees(runtime, [issue], {77}) + cleanup_worktrees(runtime, [issue])
+
+    assert line.startswith("blocked issue #77: could not commit the change")
+    assert removed == [] and (tmp_path / "worktrees" / "impl-77" / "feature.txt").exists()
+    monkeypatch.setattr(authoring, "commit_all", real_commit)
+    resumed = execute(runtime, replace(implement(issue), add_labels=(), remove_labels=()))
+    assert resumed == f"implemented issue #77 with {SOL}: opened draft PR #88" and len(author.calls) == 1
+
+
+def test_a_finished_run_whose_changes_were_lost_runs_the_model_again(tmp_path, world):
+    runner = make_gh()
+    author = FakeAuthor({"files": {"feature.txt": "done\n"}, "result": GOOD, "session": "sess-2"})
+    runtime = make_runtime(tmp_path, world, runner, author)
+    store = ProgressStore(runtime.state_dir / "stages")
+    # The model finished in an earlier tick, then its uncommitted changes were lost with the worktree.
+    store.save(
+        IssueProgress(
+            77, branch=BRANCH, status=VERIFYING, engine="codex", session_id="sess-1", result_json=json.dumps(GOOD)
+        )
+    )
+
+    line = execute(runtime, implement(approved_issue()))
+
+    assert line == f"implemented issue #77 with {SOL}: opened draft PR #88"
+    assert len(author.calls) == 1 and "resume" not in author.calls[0]["command"]
+    assert store.load(77).session_id == "sess-2"
+
+
+def test_cleanup_removes_a_closed_issues_worktree_even_with_unsaved_work(tmp_path, world):
+    _origin, root = world
+    runtime = make_runtime(tmp_path, world, make_gh(), FakeAuthor())
+    path = tmp_path / "worktrees" / "impl-79"
+    subprocess.run(["git", "-C", str(root), "worktree", "add", "-q", "-b", "agent/issue-79-x", str(path), "main"])
+    (path / "draft.txt").write_text("unsaved\n")
+
+    assert cleanup_worktrees(runtime, [make_item(number=79, labels=())]) == []
+    assert cleanup_worktrees(runtime, []) == ["removed finished worktree impl-79"]

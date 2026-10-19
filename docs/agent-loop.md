@@ -261,6 +261,9 @@ branch's rules (falling back to every reported check):
 A subscription limit, transient error, or restart never loses work. The worktree and the model's session id are kept
 (`~/.local/state/agent-loop/<owner>-<repo>/stages/issue-<n>.json`); the next tick resumes the session (falling back
 to a fresh session that rediscovers the work from the worktree) and the status comment says when work continues.
+A worktree that holds uncommitted or unpushed work is never removed while its issue is open. If a run the model
+finished left no changes behind (for example because its worktree was lost before the commit), the model runs again
+instead of the issue being blocked with "the model made no changes".
 Every stage step is idempotent: an existing pull request for the branch is reused, and a finished model run is not
 repeated when only verification or pushing remained.
 
