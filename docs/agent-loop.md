@@ -23,7 +23,8 @@ Implemented:
   replies in the review threads. Once a review has no blocking findings, you are asked to review the pull request.
   Your own "Request changes" review goes through the same feedback loop.
 
-Unattended operation (the systemd timer) arrives in Phase 5; until then, run `tick` yourself or in a shell loop.
+Unattended operation (the systemd timer) arrives in Phase 5; until then, run `tick` yourself, or `tick --repeat N` to
+keep ticking until only your actions remain.
 
 ## Administrator workflow
 
@@ -203,7 +204,14 @@ PYTHONPATH=tools .venv/bin/python -m agent_loop tick            # act (requires 
 PYTHONPATH=tools .venv/bin/python -m agent_loop pause           # pause on this machine
 PYTHONPATH=tools .venv/bin/python -m agent_loop resume
 PYTHONPATH=tools .venv/bin/python -m agent_loop -v tick         # also report each step on stderr
+PYTHONPATH=tools .venv/bin/python -m agent_loop -v tick --repeat 30  # tick until nothing is left for the loop
 ```
+
+`tick --repeat N` runs up to `N` live ticks, `--interval` seconds apart (default 120), and stops early after a tick
+that planned nothing but skips, that is, when only you can move things forward (an `/approve`, a reply to a block, a
+review, or a merge). Waiting for CI or for a subscription limit counts as work, so the run continues through it until
+`N` is reached. Each tick's results are printed under a `== tick <n>` header, followed by why the run stopped.
+`--repeat` cannot be combined with `--dry-run`.
 
 `-v` (before the command) logs progress to stderr with timestamps: the items fetched and actions planned, each action
 and its result and duration, model runs (worktree, time limit, duration, outcome, actual model, session id, quota
