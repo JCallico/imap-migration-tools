@@ -1,4 +1,4 @@
-.PHONY: test coverage clean lint format install-dev
+.PHONY: test coverage clean lint format install-dev audit
 
 # Install development dependencies
 install-dev:
@@ -28,6 +28,10 @@ coverage:
 # Security scan
 security:
 	bandit -r src/ -ll -ii
+
+# Audit the installed environment for known dependency vulnerabilities
+audit:
+	pip-audit
 
 # Type check
 typecheck:
