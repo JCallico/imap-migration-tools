@@ -175,6 +175,11 @@ def unpushed_commits(path: Path, base_branch: str, branch: str, remote: str = "o
     return int(git(path, "rev-list", "--count", f"{target}..HEAD").stdout.strip() or 0)
 
 
+def commits_ahead_of_base(path: Path, base_branch: str, remote: str = "origin") -> int:
+    """Commits on HEAD that are not on the base branch, pushed or not."""
+    return int(git(path, "rev-list", "--count", f"{remote}/{base_branch}..HEAD").stdout.strip() or 0)
+
+
 def commit_all(path: Path, message: str, author_name: str, author_email: str) -> str | None:
     """Commit every change except the checkpoint directory; return the new SHA, or ``None`` when nothing changed."""
     # Naming an ignored path in an exclude pathspec makes git add exit 1 after staging the rest, so only exclude the

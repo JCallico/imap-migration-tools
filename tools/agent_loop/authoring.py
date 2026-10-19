@@ -48,6 +48,7 @@ from .worktree import (
     WorktreeError,
     branch_worktree,
     commit_all,
+    commits_ahead_of_base,
     delete_local_branch,
     has_uncommitted_changes,
     head_sha,
@@ -344,6 +345,18 @@ def run_implementation(ctx: StageContext, action: state.Action) -> str:
     except WorktreeError as exc:
         return _block(ctx, item, f"could not prepare the branch worktree ({exc})")
     progress.branch, progress.worktree, progress.stage = branch, str(worktree), "implementation"
+    if (
+        progress.status == VERIFYING
+        and not has_uncommitted_changes(worktree)
+        and not commits_ahead_of_base(worktree, base)
+    ):
+        # The model finished earlier, but its changes are gone (for example the worktree was removed before they were
+        # committed). Run the model again from scratch rather than reporting that it made no changes.
+        log.warning(
+            "the finished implementation of #%d left no changes in %s; running the model again", item.number, path
+        )
+        progress.status, progress.session_id, progress.result_json = CODING, "", ""
+        progress.model, progress.repair_rounds = "", 0
     store.save(progress)
 
     skill = implementation.load_skill(runtime.repo_root)
