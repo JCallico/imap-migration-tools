@@ -11,9 +11,19 @@ import logging
 import sys
 
 from .config import ConfigError, load_config
-from .dispatcher import DispatcherError, build_runtime, doctor, set_paused, status, tick
+from .dispatcher import DispatcherError, build_runtime, doctor, run_ticks, set_paused, status, tick
 from .gh import GhError
 from .labels import bootstrap_labels
+
+
+def _positive_int(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        value = 0
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {text!r}")
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,6 +46,20 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     tick_parser = commands.add_parser("tick", help="run one dispatcher pass")
     tick_parser.add_argument("--dry-run", action="store_true", help="show planned actions without changing GitHub")
+    tick_parser.add_argument(
+        "--repeat",
+        type=_positive_int,
+        default=1,
+        metavar="N",
+        help="run up to N ticks, stopping early once only administrator actions remain (default: 1)",
+    )
+    tick_parser.add_argument(
+        "--interval",
+        type=_positive_int,
+        default=120,
+        metavar="SECONDS",
+        help="pause between repeated ticks (default: 120)",
+    )
     commands.add_parser("status", help="show configuration, quota, and managed items")
     commands.add_parser("doctor", help="verify GitHub access, App identity, subscriptions, and models")
     labels_parser = commands.add_parser("labels", help="create or update the agent:* labels")
@@ -60,8 +84,18 @@ def configure_logging(verbosity: int, stream=None) -> None:
     logger.setLevel(logging.DEBUG if verbosity > 1 else logging.INFO)
 
 
+def _print_tick(number: int, lines: list[str]) -> None:
+    print(f"== tick {number}")
+    for line in lines:
+        print(line)
+    sys.stdout.flush()
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "tick" and args.dry_run and args.repeat > 1:
+        parser.error("--repeat cannot be combined with --dry-run: a dry run changes nothing, so it would repeat itself")
     configure_logging(args.verbose)
     try:
         config = load_config(args.config, stage_overrides=args.stage_model)
@@ -76,7 +110,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if all(check.ok or check.warning for check in checks) else 1
         require_app = (args.command == "tick" and not args.dry_run) or (args.command == "labels" and args.apply)
         runtime = build_runtime(config, require_app=require_app)
-        if args.command == "tick":
+        if args.command == "tick" and args.repeat > 1:
+            ran = run_ticks(runtime, args.repeat, args.interval, _print_tick)
+            lines = [
+                f"stopped after {ran} tick(s): " + ("nothing left to do" if not runtime.actionable else "limit reached")
+            ]
+        elif args.command == "tick":
             lines = tick(runtime, dry_run=args.dry_run)
         elif args.command == "status":
             lines = status(runtime)

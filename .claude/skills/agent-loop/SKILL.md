@@ -19,6 +19,8 @@ Operate the dispatcher in `tools/agent_loop/`. Read `docs/agent-loop.md` for set
   show every GitHub CLI call. It changes no behavior.
 - A live `tick`, `labels --apply`, `pause`, and `resume` change shared state. Run them only when the user explicitly
   asks for that specific operation.
+- `tick --repeat N [--interval SECONDS]` runs up to `N` live ticks and stops once only administrator actions remain;
+  it is a live tick, so the same confirmation applies.
 - Never print, copy, or move the GitHub App private key or tokens, and never add API-key variables to the environment.
 
 ## Workflow

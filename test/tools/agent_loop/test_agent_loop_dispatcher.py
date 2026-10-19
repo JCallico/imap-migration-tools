@@ -11,7 +11,7 @@ from filelock import FileLock
 
 from agent_loop import __main__ as cli
 from agent_loop.config import load_config
-from agent_loop.dispatcher import DispatcherError, Runtime, set_paused, status, tick
+from agent_loop.dispatcher import DispatcherError, Runtime, run_ticks, set_paused, status, tick
 from agent_loop.gh import Gh
 from agent_loop.quota import QuotaLedger
 
@@ -224,3 +224,44 @@ def test_verbose_flag_sends_progress_to_stderr_at_the_requested_detail(flags, in
     output = stream.getvalue()
     assert ("tick started" in output) is info
     assert ("gh api repos/o/r" in output) is debug
+
+
+def test_repeated_ticks_stop_once_only_the_administrator_can_act(tmp_path):
+    forged = issue_node(
+        4, labels=["agent:ai-review"], events=[labeled("agent:ai-review", "maintainer", "2026-10-07T12:05:00Z")]
+    )
+    rt = runtime(tmp_path, github([forged]))
+    emitted, sleeps = [], []
+
+    ran = run_ticks(rt, 5, 30, lambda number, lines: emitted.append((number, lines)), sleeps.append)
+
+    # The first tick reverts the forged label; the snapshot is unchanged, so the fake keeps planning it: limit reached.
+    assert ran == 5 and sleeps == [30] * 4 and [number for number, _ in emitted] == [1, 2, 3, 4, 5]
+    assert rt.actionable
+
+
+def test_repeated_ticks_stop_at_the_first_idle_tick(tmp_path):
+    rt = runtime(tmp_path, github([]))
+    emitted, sleeps = [], []
+
+    ran = run_ticks(rt, 5, 30, lambda number, lines: emitted.append((number, lines)), sleeps.append)
+
+    assert (ran, sleeps, emitted) == (1, [], [(1, ["no open items require action"])])
+    assert rt.actionable == 0
+
+
+def test_a_paused_loop_is_idle(tmp_path):
+    rt = runtime(tmp_path, github([issue_node(3)]))
+    set_paused(rt, True)
+
+    assert run_ticks(rt, 3, 1, lambda *_: None, lambda _: None) == 1
+
+
+def test_repeat_options_are_validated(capsys):
+    args = cli.build_parser().parse_args(["tick", "--repeat", "4", "--interval", "60"])
+    assert (args.repeat, args.interval) == (4, 60)
+    assert cli.build_parser().parse_args(["tick"]).repeat == 1
+    for argv in (["tick", "--repeat", "0"], ["tick", "--interval", "x"], ["tick", "--dry-run", "--repeat", "2"]):
+        with pytest.raises(SystemExit):
+            cli.main(argv)
+    assert "--repeat cannot be combined with --dry-run" in capsys.readouterr().err

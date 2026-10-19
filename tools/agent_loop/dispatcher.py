@@ -66,6 +66,7 @@ class Runtime:
     remote_url: str | None = None  # push target override; defaults to the repository's GitHub HTTPS URL
     budget: int = 1  # model-backed stage runs still allowed in this tick
     cache: dict = field(default_factory=dict)  # per-tick lookups such as the required status checks
+    actionable: int = 0  # planned actions other than skips in the last tick; 0 means only the administrator can act
 
     def take_budget(self) -> bool:
         """Use one of this tick's model-backed stage runs; ``False`` when none remain."""
@@ -260,6 +261,7 @@ def tick(runtime: Runtime, *, dry_run: bool) -> list[str]:
         lock.acquire(timeout=0)
     except Timeout as exc:
         raise DispatcherError("another tick is already running") from exc
+    runtime.actionable = 0
     try:
         if is_paused(runtime):
             return ["agent loop is paused; no actions taken"]
@@ -278,6 +280,7 @@ def tick(runtime: Runtime, *, dry_run: bool) -> list[str]:
         )
         actions = plan_actions(runtime, authorizer, items)
         log.info("planned %d action(s)", len(actions))
+        runtime.actionable = sum(1 for action in actions if action.kind != state.SKIP)
         if dry_run:
             lines = [f"[dry-run] {action.describe()}" for action in actions]
             if runtime.bot_login is None:
@@ -290,6 +293,27 @@ def tick(runtime: Runtime, *, dry_run: bool) -> list[str]:
         return lines or ["no open items require action"]
     finally:
         lock.release()
+
+
+def run_ticks(
+    runtime: Runtime,
+    count: int,
+    interval: float,
+    emit: Callable[[int, list[str]], None],
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    """Run up to ``count`` live ticks, ``interval`` seconds apart, stopping once a tick planned only skips.
+
+    Returns the number of ticks run. Waiting for CI or quota counts as work, so the run continues through it.
+    """
+    for number in range(1, count + 1):
+        emit(number, tick(runtime, dry_run=False))
+        if not runtime.actionable:
+            return number
+        if number < count:
+            log.info("waiting %.0fs before tick %d of %d", interval, number + 1, count)
+            sleep(interval)
+    return count
 
 
 def _execute_all(runtime: Runtime, actions: list[state.Action], authorizer: Authorizer) -> list[str]:
