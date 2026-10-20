@@ -39,7 +39,7 @@ keep ticking until only your actions remain.
 | Issue | Reply `/approve` | The issue becomes `agent:implementing`; a draft PR with `Closes #<n>` appears when the change is verified |
 | Pull request | Wait | CI runs on each push; failures are repaired automatically (up to `max_ci_fix_attempts`); the PR is marked ready and labeled `agent:ai-review` when the required checks pass |
 | Pull request | Wait | A different model reviews it; blocking findings are addressed and re-reviewed (up to `max_ai_review_rounds`), then the PR is labeled `agent:ready-for-admin` and you are requested as reviewer |
-| Pull request | Approve and merge, or close | Done. The bot authored the PR, so your approval satisfies the branch rules without `--admin` |
+| Pull request | Merge, or close | Done. No approval is required; approving first records your review on the PR |
 | Pull request | Submit a "Request changes" review (summary and/or inline comments) | The loop addresses each comment, replies to it, and returns the PR through CI and AI review to you |
 | Issue or PR | Apply `agent:paused` | The loop leaves the item alone until you remove the label |
 | Existing issue or PR | Apply `agent:adopt` | Opts in an item created before `enabled_since` (or a PR the loop did not create) |
@@ -158,20 +158,22 @@ PYTHONPATH=tools .venv/bin/python -m agent_loop labels --apply   # create or upd
 
 ### Branch protection
 
-`main` is protected so that even a malfunctioning loop cannot merge. The repository ruleset `main_branch_ruleset`
-(**Settings → Rules → Rulesets**) enforces:
+`main` is protected so that nothing reaches it without a pull request and green checks. The repository ruleset
+`main_branch_ruleset` (**Settings → Rules → Rulesets**) enforces:
 
 - pull requests for every change, squash merges only, and resolved review conversations;
-- one approving review, dismissed when new commits are pushed;
+- no required approving reviews (set to 0 on 2026-10-19, because the only maintainer cannot approve their own pull
+  requests); an approval that is given is still dismissed when new commits are pushed;
 - these status checks: `Lint`, `Test (Python 3.10)` through `Test (Python 3.13)`, `Security Scan`, `Build Check`,
   `PyPI README`, `Native GUI (ubuntu-24.04)`, `Native GUI (macos-latest)`, `Native GUI (windows-latest)`, and the
   Android `build`;
 - no force-pushes and no deletion of `main`;
-- a bypass for the repository **Admin** role in pull-request mode only: administrators can merge their own pull
-  requests (GitHub does not allow self-approval) with "bypass rules" or `gh pr merge --squash --admin`, but nobody can
-  push to `main` directly.
+- a bypass for the repository **Admin** role in pull-request mode only, so nobody can push to `main` directly.
 
-Pull requests opened by the bot therefore need an administrator's approval and green checks. The ruleset as it was
+With no required approval, GitHub no longer stops the App from merging its own pull requests; the dispatcher never
+merges, and that rule is enforced only in its code. To make GitHub enforce it again, set **Required approvals** to 1:
+bot pull requests then need your approval, and you merge your own pull requests with "bypass rules" or
+`gh pr merge --squash --admin` (GitHub does not allow self-approval). The ruleset as it was
 before the agent loop is saved locally at `~/.local/state/agent-loop/main_branch_ruleset.backup.json`.
 
 ## Configuration
