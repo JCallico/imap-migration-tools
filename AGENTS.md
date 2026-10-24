@@ -42,6 +42,20 @@ PYTHONPATH=src .venv/bin/python -m pytest test/ -v
 
 `make test`, `make lint`, and `make format-check` provide the same common checks. CI also runs Bandit, a non-blocking mypy check, syntax/import checks, and tests on Python 3.10 through 3.13.
 
+Dependabot proposes weekly, grouped updates for Python dependencies in `/` and `/tools/agent_loop`, Gradle dependencies
+in `/android`, and GitHub Actions. Run `make audit` to check the installed environment with PyPA's `pip-audit`:
+
+```bash
+.venv/bin/python -m pip install -e ".[tui]" -r requirements.txt -r tools/agent_loop/requirements.txt
+PATH="$PWD/.venv/bin:$PATH" make audit
+```
+
+The audit exits unsuccessfully on known vulnerabilities; no advisories are ignored by default. Any future
+`--ignore-vuln` entry must name the advisory and include a justification comment. The GUI extra (`wxPython`) is excluded
+from this audit setup because of its heavy Linux build; this is an accepted coverage gap.
+A maintainer must add the blocking CI dependency-audit job and explicit `gradle/actions/wrapper-validation` step
+after Android checkout in a separate workflow change; those checks are not yet enabled by this configuration.
+
 Tests use local mock IMAP servers and bind loopback ports. In restricted environments, rerun them with the permission needed for local socket binding rather than changing the tests to avoid integration coverage.
 
 CI test jobs must install the project (for example, `pip install .`) before
@@ -114,6 +128,8 @@ gradle -p android lintDebug testDebugUnitTest assembleDebug
 - The bot may commit and push only to `agent/*` branches it created for an approved issue. It never force-pushes,
   merges, edits `.github/workflows/`, or changes `main`. The dispatcher performs every commit, push, and GitHub
   change; models only edit files in a sandboxed worktree and never receive GitHub credentials.
+- `.github/workflows/**` is protected because bot PRs from same-repository branches run CI with repository secrets
+  before human review; workflow changes must be made by a maintainer.
 - Implementation and review must never use the same model and, by default, not the same vendor. Model choices are
   configuration, not code.
 - Reaching a subscription limit pauses work; never switch a stage to paid API billing or pass API-key variables to it.

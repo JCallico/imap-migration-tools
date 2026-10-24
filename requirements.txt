@@ -4,6 +4,7 @@ pytest-cov>=4.0.0
 pytest-xvfb>=3.1.1,<4; sys_platform == "linux"
 ruff>=0.4.0
 bandit>=1.7.0
+pip-audit
 mypy>=1.0.0
 platformdirs>=3.6,<5
 python-dotenv>=1.2.1
