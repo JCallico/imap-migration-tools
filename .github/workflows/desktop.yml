@@ -15,8 +15,8 @@ jobs:
         os: [ubuntu-24.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         if: runner.os != 'Linux'
         with:
           python-version: '3.12'
@@ -41,7 +41,7 @@ jobs:
         run: python -m pytest test/gui test/ui -v --cov=src/gui --cov=src/ui --cov-report=xml:coverage-gui.xml
       - name: Upload desktop coverage to Codecov
         if: runner.os == 'Linux'
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: ./coverage-gui.xml
           flags: desktop-gui
@@ -61,7 +61,7 @@ jobs:
           else
             dist/imap-tools-gui/worker/imap-tools-worker --imap-worker imap_count --help
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: imap-tools-gui-${{ runner.os }}-${{ runner.arch }}
           path: |
