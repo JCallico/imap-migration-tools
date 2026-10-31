@@ -99,6 +99,9 @@ your own comments) and so that bot activity is clearly separated from yours.
    - **Metadata**: Read-only (mandatory)
 
    Leave everything else, especially **Workflows** and **Administration**, at **No access**.
+   Bot PRs from same-repository branches run CI with repository secrets before human review, so workflow changes must
+   be made by a maintainer. The App's lack of Workflows permission, the `.github/workflows/**` diff policy, and the
+   stage prompts enforce this boundary; keep all three protections in place.
 4. Under "Where can this GitHub App be installed?", choose **Only on this account**, then create the App.
 5. Note the **App ID** (the Client ID is not needed). Under **Private keys**, generate a key and move it to a private
    location outside the repository and outside synced folders such as OneDrive. This repository's machine uses
