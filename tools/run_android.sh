@@ -151,7 +151,7 @@ run_gradle() {
     fi
 }
 
-sdk_packages=("platform-tools" "platforms;android-37" "build-tools;36.0.0")
+sdk_packages=("platform-tools" "platforms;android-37.0" "build-tools;36.0.0")
 if [[ "$target" == "emulator" ]]; then
     host_arch="$(uname -m)"
     case "$host_arch" in

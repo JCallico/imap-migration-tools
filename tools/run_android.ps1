@@ -92,7 +92,7 @@ function Invoke-Gradle([string[]]$GradleArgs) {
     if ($LASTEXITCODE -ne 0) { throw "Gradle failed with exit code $LASTEXITCODE." }
 }
 
-$SdkPackages = @("platform-tools", "platforms;android-37", "build-tools;36.0.0")
+$SdkPackages = @("platform-tools", "platforms;android-37.0", "build-tools;36.0.0")
 if ($Target -eq "emulator") {
     $ImageArchitecture = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64-v8a" } else { "x86_64" }
     if ($PageSize16Kb) {
