@@ -12,7 +12,7 @@ python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e .
 .venv/bin/python -m pip install -r requirements.txt
-PYTHONPATH=src .venv/bin/python -m pytest test/ -v
+TERM=xterm-256color PYTHONPATH=src .venv/bin/python -m pytest test/ -v
 ```
 
 For TUI work, install the editable `tui` extra. For GUI work, install `gui,tui` and a virtual X server. Ubuntu/Debian
@@ -23,7 +23,7 @@ sudo apt-get install python3-venv python3-wxgtk4.0 xvfb
 python3 -m venv --system-site-packages .venv
 .venv/bin/python -m pip install -e '.[gui,tui]'
 .venv/bin/python -m pip install -r requirements.txt
-PYTHONPATH=src .venv/bin/python -m pytest test/gui test/ui -v
+TERM=xterm-256color PYTHONPATH=src .venv/bin/python -m pytest test/gui test/ui -v
 ```
 
 On Arch-derived systems, install the equivalent Python, wxWidgets/GTK, and Xvfb packages, then prefer a compatible

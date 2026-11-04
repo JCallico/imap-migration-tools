@@ -106,8 +106,11 @@ The source tree is not installed during direct test execution, so set `PYTHONPAT
 On macOS or Linux:
 
 ```bash
-PYTHONPATH=src python -m pytest test/ -v
+TERM=xterm-256color PYTHONPATH=src python -m pytest test/ -v
 ```
+
+The Unix test commands set `TERM=xterm-256color` so Unicode UI assertions run consistently in headless shells.
+Tests of ASCII fallback explicitly set `TERM=dumb` themselves; this setting applies only to test runs.
 
 Linux GUI tests automatically run on a private Xvfb display when the development requirements and the `xvfb` system
 package are installed. They are skipped if isolation is unavailable, preventing test windows from appearing on the
@@ -131,7 +134,7 @@ Run one module while iterating on macOS or Linux. In PowerShell or Command Promp
 remains active for subsequent test commands.
 
 ```bash
-PYTHONPATH=src python -m pytest test/test_imap_count.py -v
+TERM=xterm-256color PYTHONPATH=src python -m pytest test/test_imap_count.py -v
 ```
 
 Tests isolate themselves from the repository's real `.env`. CLI `.env` integration cases use temporary files and real

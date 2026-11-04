@@ -137,7 +137,7 @@ fi
 
 if command -v mise >/dev/null 2>&1; then
     printf 'Ensuring repository-pinned JDK, Gradle, and Python are installed...\n'
-    mise install gradle@8.13 java@temurin-17 python@3.13
+    mise install gradle@9.8.2 java@temurin-17 python@3.13
 fi
 
 run_gradle() {
@@ -146,12 +146,12 @@ run_gradle() {
     elif command -v gradle >/dev/null 2>&1; then
         gradle "$@"
     else
-        printf 'Gradle 8.13 was not found. Install mise and run "mise install", or install Gradle 8.13.\n' >&2
+        printf 'Gradle 9.8.2 was not found. Install mise and run "mise install", or install Gradle 9.8.2.\n' >&2
         return 127
     fi
 }
 
-sdk_packages=("platform-tools" "platforms;android-36" "build-tools;35.0.0")
+sdk_packages=("platform-tools" "platforms;android-37.0" "build-tools;36.0.0")
 if [[ "$target" == "emulator" ]]; then
     host_arch="$(uname -m)"
     case "$host_arch" in

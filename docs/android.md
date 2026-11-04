@@ -26,7 +26,8 @@ so its behavior is covered by the normal Python test suite.
 
 ## Build from source
 
-Install Android Studio with Android SDK 36, JDK 17, Gradle 8.13, and Python 3.13. From the repository root:
+Install Android Studio with Android SDK 37, JDK 17, Gradle 9.8.2, and Python 3.13.
+The app uses AGP 9.5 built-in Kotlin support; do not apply `org.jetbrains.kotlin.android`. From the repository root:
 
 ```bash
 gradle -p android testDebugUnitTest assembleDebug
@@ -81,7 +82,7 @@ it; the emulator needs none.
 The repository launchers install missing SDK packages, create or reuse an emulator, wait for Android, run the local
 build checks, install the APK, and open the application. They can also select a connected physical device. The only
 one-time host prerequisite is Android Studio/SDK command-line tools plus either `mise` or an existing JDK 17 and Gradle
-8.13 installation. When `mise` is available, the launchers install the repository-pinned JDK, Gradle, and Python
+9.8.2 installation. When `mise` is available, the launchers install the repository-pinned JDK, Gradle, and Python
 versions automatically.
 
 On Linux or macOS, run this from the repository root and choose a target:
@@ -216,7 +217,7 @@ checks and optional instrumentation suite, and launches the app. It does not rep
 To audit an already-built APK without starting an emulator, install NDK 28 and run:
 
 ```bash
-sdkmanager "build-tools;35.0.0" "ndk;28.2.13676358"
+sdkmanager "build-tools;36.0.0" "ndk;28.2.13676358"
 ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}" \
     tools/check_android_16kb.sh android/app/build/outputs/apk/debug/app-debug.apk
 ```

@@ -27,11 +27,11 @@ jobs:
           packages: platform-tools
 
       - name: Install Android SDK
-        run: sdkmanager "platforms;android-36" "build-tools;35.0.0" "ndk;28.2.13676358"
+        run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;28.2.13676358"
 
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: "8.13"
+          gradle-version: "9.8.2"
 
       - name: Test and build Android application
         run: gradle -p android lintDebug testDebugUnitTest assembleDebug bundleDebug
