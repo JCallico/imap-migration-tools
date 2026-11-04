@@ -18,11 +18,11 @@ format-check:
 
 # Run tests with pytest
 test:
-	PYTHONPATH=src pytest test/ -v
+	TERM=xterm-256color PYTHONPATH=src pytest test/ -v
 
 # Run tests with coverage
 coverage:
-	PYTHONPATH=src pytest test/ -v --cov=src --cov-report=term-missing --cov-report=html
+	TERM=xterm-256color PYTHONPATH=src pytest test/ -v --cov=src --cov-report=term-missing --cov-report=html
 	@echo "Coverage report generated in htmlcov/index.html"
 
 # Security scan

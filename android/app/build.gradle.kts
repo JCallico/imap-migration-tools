@@ -16,14 +16,13 @@ val microsoftSignatureHash = localProperty("oauth.microsoft.signatureHash")
 
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.chaquo.python")
 }
 
 android {
     namespace = "com.callicode.imaptools"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.callicode.imaptools"

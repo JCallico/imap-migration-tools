@@ -77,7 +77,7 @@ if (-not $SdkManager -or -not (Test-Path $Adb)) {
 
 if (Get-Command mise -ErrorAction SilentlyContinue) {
     Write-Host "Ensuring repository-pinned JDK, Gradle, and Python are installed..."
-    & mise install "gradle@8.13" "java@temurin-17" "python@3.13"
+    & mise install "gradle@9.8.2" "java@temurin-17" "python@3.13"
     if ($LASTEXITCODE -ne 0) { throw "mise could not install the repository-pinned build tools." }
 }
 
@@ -87,12 +87,12 @@ function Invoke-Gradle([string[]]$GradleArgs) {
     } elseif (Get-Command gradle -ErrorAction SilentlyContinue) {
         & gradle @GradleArgs
     } else {
-        throw 'Gradle 8.13 was not found. Install mise and run "mise install", or install Gradle 8.13.'
+        throw 'Gradle 9.8.2 was not found. Install mise and run "mise install", or install Gradle 9.8.2.'
     }
     if ($LASTEXITCODE -ne 0) { throw "Gradle failed with exit code $LASTEXITCODE." }
 }
 
-$SdkPackages = @("platform-tools", "platforms;android-36", "build-tools;35.0.0")
+$SdkPackages = @("platform-tools", "platforms;android-37", "build-tools;36.0.0")
 if ($Target -eq "emulator") {
     $ImageArchitecture = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") { "arm64-v8a" } else { "x86_64" }
     if ($PageSize16Kb) {

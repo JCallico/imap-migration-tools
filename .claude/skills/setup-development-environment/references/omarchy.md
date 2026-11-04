@@ -5,7 +5,7 @@ Use public `omarchy windows vm ...` commands; do not edit files under `/usr/shar
 
 ## Native Linux work
 
-Omarchy is Arch-based. Use `mise install` for the repository-pinned Python 3.13, JDK 17, and Gradle 8.13 toolchain.
+Omarchy is Arch-based. Use `mise install` for the repository-pinned Python 3.13, JDK 17, and Gradle 9.8.2 toolchain.
 For GUI testing, ensure wxPython/GTK and Xvfb are available, and keep tests on their private Xvfb display. A running
 Wayland session must never receive GUI-test windows or synthetic input.
 

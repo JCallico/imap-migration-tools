@@ -35,7 +35,7 @@ Use Python 3.10+ and run commands from the repository root. The source tree is n
 python3 -m venv .venv
 .venv/bin/python -m pip install -e .  # install declared runtime dependencies
 .venv/bin/python -m pip install -r requirements.txt
-PYTHONPATH=src .venv/bin/python -m pytest test/ -v
+TERM=xterm-256color PYTHONPATH=src .venv/bin/python -m pytest test/ -v
 .venv/bin/python -m ruff check src/ tools/ test/
 .venv/bin/python -m ruff format --check src/ tools/ test/
 ```
@@ -62,7 +62,7 @@ CI test jobs must install the project (for example, `pip install .`) before
 running pytest. Installing test tools alone can hide missing runtime
 dependencies locally and cause collection failures in the clean CI matrix.
 
-The native Android application requires JDK 17, Gradle 8.13, Python 3.13, and Android SDK 36. Its repository-pinned
+The native Android application requires JDK 17, Gradle 9.8.2, Python 3.13, and Android SDK 37. Its repository-pinned
 tool versions are in `.mise.toml`. Configure the Android SDK with `ANDROID_HOME` or ignored `android/local.properties`,
 then verify Android changes with:
 
@@ -150,7 +150,7 @@ Run focused tests while iterating. After the final edit and before every commit 
 and the complete lint, format, and whitespace sequence:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m pytest test/ -v
+TERM=xterm-256color PYTHONPATH=src .venv/bin/python -m pytest test/ -v
 .venv/bin/python -m ruff check src/ tools/ test/
 .venv/bin/python -m ruff format --check src/ tools/ test/
 git diff --check
